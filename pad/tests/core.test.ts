@@ -85,7 +85,7 @@ test('stdout limit measures bytes, stderr is drained, children are cleaned',asyn
   let state='unknown';
   for(let attempt=0;attempt<100;attempt++){
    try{const stat=await readFile('/proc/'+pid+'/stat','utf8');state=stat.slice(stat.lastIndexOf(')')+2).split(' ')[0];}
-   catch(e:any){if(e.code==='ENOENT'){state='gone';break;}throw e;}
+   catch(e:any){if(e.code==='ENOENT'||e.code==='ESRCH'){state='gone';break;}throw e;}
    if(state==='Z'||state==='X')break;
    await new Promise(resolve=>setTimeout(resolve,20));
   }

@@ -32,7 +32,7 @@ function reportCursor(state:EditorState){
 }
 function extensions(){
  return [basicSetup,cpp(),highlightWhitespace(),keymap.of([indentWithTab,{key:'Mod-Shift-z',run:redo,preventDefault:true},{key:'Mod-h',run:openSearchPanel,scope:'editor search-panel'},{key:'Shift-Alt-f',run:()=>{emit('format');return true;}}]),
-  indentation.of(indentConfig()),colorTheme.of(colors()),readOnly.of(EditorState.readOnly.of(!!props.disabled)),
+  indentation.of(indentConfig()),colorTheme.of(colors()),readOnly.of([EditorState.readOnly.of(!!props.disabled),EditorView.editable.of(!props.disabled)]),
   EditorView.contentAttributes.of({'aria-label':'源码编辑器'}),
   EditorView.theme({'&':{height:'100%'},'.cm-scroller':{overflow:'auto',fontFamily:'"Cascadia Code","JetBrains Mono",Consolas,monospace',fontSize:'14px',lineHeight:'1.7'},
    '.cm-gutters':{border:'none'},'.cm-content':{padding:'16px 0'}}),
@@ -51,7 +51,7 @@ watch(()=>[props.documentId,props.modelValue] as const,([id,text],[previousId])=
  else if(view.state.doc.toString()!==text)applyText(text);
 });
 watch(()=>[props.indentSize,props.theme],()=>view?.dispatch({effects:[indentation.reconfigure(indentConfig()),colorTheme.reconfigure(colors())]}));
-watch(()=>props.disabled,value=>view?.dispatch({effects:readOnly.reconfigure(EditorState.readOnly.of(!!value))}));
+watch(()=>props.disabled,value=>view?.dispatch({effects:readOnly.reconfigure([EditorState.readOnly.of(!!value),EditorView.editable.of(!value)])}));
 onBeforeUnmount(()=>view?.destroy());
 defineExpose({applyText,focus:()=>view?.focus()});
 </script>

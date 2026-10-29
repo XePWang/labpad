@@ -8,10 +8,13 @@ import {readFile,writeFile,mkdir,stat,access,realpath,rename} from 'node:fs/prom
 import type {IPty} from 'node-pty';
 import {createRequire} from 'node:module';
 import {Compiler} from '../core/compiler';
+import writeFileAtomic from 'write-file-atomic';
+import {parseLabPackage,parseTestCases} from '../shared/project-format';
+import {prepareSource,prepareProject,submissionZip,fingerprint,checkRecord,type Submission} from '../core/submission';
 import {judge} from '../core/judge';
-import {Storage,decodeText,readJSON,importPairs,exists,exportName,writeSource} from '../core/storage';
-import {filePart,selection,validateConfig,validateDraft,validateProblem,validateLayout} from '../shared/validate';
-import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,PathKind,SaveResult} from '../shared/types';
+import {Storage,decodeText,readJSON,importPairs,exists,writeSource} from '../core/storage';
+import {filePart,selection,validateConfig,validateDraft,validateLayout} from '../shared/validate';
+import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,LoadedDraft,PathKind,SaveResult} from '../shared/types';
 app.setName('LabPad');if(process.platform==='win32')app.setAppUserModelId('cn.xep.labpad');
 const root=path.resolve(__dirname,'../../..'),chromeData=path.join(tmpdir(),'labpad-ui-'+process.pid);
 mkdirSync(chromeData,{recursive:true});app.setPath('userData',chromeData);app.setPath('sessionData',chromeData);
@@ -57,7 +60,7 @@ async function persist(value:Draft):Promise<SaveResult>{
  const task=saves.catch(()=>{}).then(async()=>{
   let formatWarning:string|undefined;
   if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
-  if(file)await writeSource(file,snapshot.source,encoding);
+  if(file){await writeSource(file,snapshot.source,encoding);await storage.bindSource(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language,file,encoding);}
   await storage.save(snapshot,!file);
   config={...config,currentLab:snapshot.problem.labId,currentProblem:snapshot.problem.problemId,language:snapshot.language};
   await storage.saveConfig(config);
@@ -66,26 +69,36 @@ async function persist(value:Draft):Promise<SaveResult>{
  });
  saves=task.catch(()=>{});return task;
 }
-async function selectDraft(lab:string,problem:string,language:Language){
+async function selectDraft(lab:string,problem:string,language:Language,preferStored=true){
  requireIdle();selection(lab,problem);if(!['c','cpp'].includes(language))throw new Error('无效语言');await saves;await storage.flush();
- const draft=await storage.load(lab,problem,language);
- config={...config,currentLab:lab,currentProblem:problem,language,sourceFile:null};await storage.saveConfig(config);
- currentDocument=draft;documentDirty=false;sourceEncoding='UTF-8';return draft;
+ const draft=await storage.load(lab,problem,language,preferStored);
+ config={...config,currentLab:lab,currentProblem:problem,language:draft.language,sourceFile:draft.sourceFile??null};await storage.saveConfig(config);
+ currentDocument=draft;documentDirty=false;sourceEncoding=draft.sourceEncoding??'UTF-8';return draft;
 }
 async function settingsResult(){
  return {config,dataRoot:storage.root,projects:await storage.projects(),compilerLabel:await compiler.info(config.compiler).catch((e:Error)=>'编译器尚不可用：'+e.message)};
 }
 async function bootstrap(){
- let draft=currentDocument?structuredClone(currentDocument):await storage.load(config.currentLab,config.currentProblem,config.language),warning:string|undefined;
+ let draft:LoadedDraft=currentDocument?structuredClone(currentDocument):await storage.load(config.currentLab,config.currentProblem,config.language),warning:string|undefined;
+ if(!currentDocument&&draft.sourceFile){config.sourceFile=draft.sourceFile;sourceEncoding=draft.sourceEncoding??'UTF-8';}
+ if(draft.warning){warning=draft.warning;config.sourceFile=null;}
  if(!currentDocument&&config.sourceFile){
   try{
    const decoded=decodeText(await readFile(config.sourceFile));draft.source=decoded.text;sourceEncoding=decoded.encoding;
-   draft.language=path.extname(config.sourceFile).toLowerCase()==='.cpp'?'cpp':'c';
+   draft.language=path.extname(config.sourceFile).toLowerCase()==='.cpp'?'cpp':'c';draft.sourceFile=config.sourceFile;draft.sourceEncoding=sourceEncoding;
+   await storage.bindSource(draft.problem.labId,draft.problem.problemId,draft.language,config.sourceFile,sourceEncoding);
   }catch(e){warning='无法打开原源码：'+config.sourceFile+'\n'+String(e);config={...config,sourceFile:null};await storage.saveConfig(config);}
  }
  const managed=storage.paths(draft.problem.labId,draft.problem.problemId,draft.language).source;
  if(!currentDocument){currentDocument=structuredClone(draft);documentDirty=false;}
  return {...await settingsResult(),draft,sourcePath:config.sourceFile||(await exists(managed)?managed:null),version:app.getVersion(),warning};
+}
+function submissionServices(){const options=structuredClone(config.compiler);return {identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
+async function confirmExport(prepared:Submission){
+ if(!prepared.warnings.length)return true;
+ const result=await dialog.showMessageBox(win,{type:'warning',title:'导出前请确认',message:'以下内容需要确认，仍要导出吗？',
+  detail:prepared.warnings.join('\n\n')+'\n\n将导出当前代码；未保存的编辑也会包含在内。',buttons:['取消导出','仍然导出'],defaultId:0,cancelId:0,noLink:true});
+ return result.response===1;
 }
 async function confirmUnsaved(){
  const result=await dialog.showMessageBox(win,{type:'question',title:'保存修改',message:'当前源码或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
@@ -154,7 +167,7 @@ async function initialize(){
    next.compiler.cPath=next.compiler.cPath.trim();next.compiler.cppPath=next.compiler.cppPath.trim();
    await requirePath(next.compiler.cPath,'executable');
    if(next.compiler.cppPath)await requirePath(next.compiler.cppPath,'executable');
-   else if(next.language==='cpp'&&next.compiler.kind!=='zig')throw new Error('请填写 C++ 驱动路径');
+   else if(next.language==='cpp'&&next.compiler.kind!=='zig')throw new Error('请填写 C++ 编译器路径');
   }
   await compiler.info(next.compiler);
   if(target!==await realpath(storage.root)){
@@ -174,30 +187,61 @@ async function initialize(){
   const file=selected.filePaths[0],extension=path.extname(file).toLowerCase();
   if(!['.c','.cpp'].includes(extension))throw new Error('仅支持 .c / .cpp 单文件');
   const decoded=decodeText(await readFile(file));sourceEncoding=decoded.encoding;
-  config={...config,sourceFile:file,language:extension==='.c'?'c':'cpp'};await storage.saveConfig(config);
+  const language:Language=extension==='.c'?'c':'cpp';await storage.bindSource(config.currentLab,config.currentProblem,language,file,decoded.encoding);
+  config={...config,sourceFile:file,language};await storage.saveConfig(config);
   return {source:decoded.text,encoding:decoded.encoding,path:file,language:config.language};
  });
  handle('problem:import',async(lab:string,problem:string)=>{
-  const selected=await dialog.showOpenDialog(win,{title:'导入题目 JSON 或完整 I/O 文件对',properties:['openFile','multiSelections'],filters:[{name:'题目或测试点',extensions:['json','in','out','ans']}]});
+  requireIdle();selection(lab,problem);await saves;
+  const current=currentDocument?.problem.labId===lab&&currentDocument.problem.problemId===problem?structuredClone(currentDocument):await storage.load(lab,problem,config.language);
+  const selected=await dialog.showOpenDialog(win,{title:'导入标准 I/O · 当前题目',properties:['openFile','multiSelections'],filters:[{name:'标准 I/O',extensions:['json','in','out','ans']}]});
   if(selected.canceled)return null;
   const imported=selected.filePaths.length===1&&path.extname(selected.filePaths[0]).toLowerCase()==='.json'
-   ?validateProblem(await readJSON(selected.filePaths[0])):await importPairs(selected.filePaths,lab,problem);
-  await storage.save({source:'',language:config.language,problem:imported},false);
-  config={...config,currentLab:imported.labId,currentProblem:imported.problemId};await storage.saveConfig(config);return imported;
+   ?parseTestCases(await readJSON(selected.filePaths[0]),current.problem):{...current.problem,testCases:(await importPairs(selected.filePaths,lab,problem)).testCases};
+  await storage.save({...current,problem:imported},false);return imported;
+ });
+ handle('project:import',async()=>{
+  requireIdle();await saves;
+  const selected=await dialog.showOpenDialog(win,{title:'导入实验项目',properties:['openFile'],filters:[{name:'实验项目 JSON',extensions:['json']}]});
+  if(selected.canceled)return null;
+  const lab=parseLabPackage(await readJSON(selected.filePaths[0])),name=await storage.nextLabName(lab.labId);
+  if(name!==lab.labId){
+   const choice=await dialog.showMessageBox(win,{type:'question',title:'导入项目副本',message:'“'+lab.labId+'”已存在。',detail:'将导入为“'+name+'”，原项目保留。',buttons:['取消导入','导入副本'],defaultId:0,cancelId:0,noLink:true});
+   if(choice.response!==1)return null;
+  }
+  const imported=await storage.importProject(lab,name);await selectDraft(imported.labId,imported.problemId,imported.language);
+  return bootstrap();
  });
  handle('source:export',async(value:Draft)=>{
-  const d=validateDraft(value),name=exportName(d,config.studentId);
-  const selected=await dialog.showSaveDialog(win,{title:'导出当前源码 · 选择保存位置',defaultPath:name,filters:[{name:'源码文件',extensions:[d.language==='c'?'c':'cpp']}]});
+  requireIdle();await saves;
+  const d=structuredClone(validateDraft(value)),prepared=await prepareSource(storage,d,structuredClone(config),submissionServices());
+  if(!await confirmExport(prepared))return null;
+  const selected=await dialog.showSaveDialog(win,{title:'导出源码 · 选择保存位置',defaultPath:prepared.name,filters:[{name:'源码文件',extensions:[d.language==='c'?'c':'cpp']}]});
   if(selected.canceled||!selected.filePath)return null;
-  await writeSource(selected.filePath,d.source);return selected.filePath;
+  await writeSource(selected.filePath,prepared.files[0].source);return selected.filePath;
+ });
+ handle('project:export',async(value:Draft)=>{
+  requireIdle();await saves;
+  const prepared=await prepareProject(storage,value,structuredClone(config),submissionServices());
+  if(!await confirmExport(prepared))return null;
+  const selected=await dialog.showSaveDialog(win,{title:'导出实验项目 · 选择保存位置',defaultPath:prepared.name,filters:[{name:'ZIP 压缩包',extensions:['zip']}]});
+  if(selected.canceled||!selected.filePath)return null;
+  const file=path.extname(selected.filePath)?selected.filePath:selected.filePath+'.zip';
+  if(path.extname(file).toLowerCase()!=='.zip')throw new Error('实验项目请保存为 .zip 格式');
+  await writeFileAtomic(file,Buffer.from(submissionZip(prepared)));return file;
  });
  handle('problem:show',async(value:Draft)=>{
   const d=validateDraft(value),file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
   if(!await exists(file))throw new Error('请先保存当前题目，再打开题目文件');shell.showItemInFolder(file);
  });
  handle('judge',async(value:Draft)=>{
-  requireIdle();const d=structuredClone(validateDraft(value)),abort=new AbortController();controller=abort;
-  const task=Promise.resolve().then(()=>judge(compiler,d,structuredClone(config.compiler),abort.signal,judgeEvent));active=task;
+  requireIdle();const d=structuredClone(validateDraft(value)),options=structuredClone(config.compiler),abort=new AbortController();controller=abort;
+  const task=(async()=>{
+   const hash=fingerprint(d,options,await compiler.identity(options,d.language));
+   await storage.recordCheck(d,checkRecord(d,hash));
+   const result=await judge(compiler,d,options,abort.signal,judgeEvent);
+   await storage.recordCheck(d,checkRecord(d,hash,result));return result;
+  })();active=task;
   try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
  });
  handle('cancel',stop);handle('debug:stop',stop);handle('debug:start',startDebug);
@@ -212,6 +256,7 @@ app.whenReady().then(async()=>{
  ] as Electron.MenuItemConstructorOptions[]));
  const icon=nativeImage.createFromPath(iconPath);if(process.platform==='darwin'&&!icon.isEmpty())app.dock?.setIcon(icon);
  win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:720,title:'LabPad',icon,backgroundColor:'#0c111b',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+ if(process.platform!=='darwin'){win.setAutoHideMenuBar(false);win.setMenuBarVisibility(false);}
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',event=>event.preventDefault());
  try{await initialize();}catch(e){dialog.showErrorBox('无法打开 LabPad 数据目录',storage.root+'\n\n'+String(e));await compiler.dispose();await formatter.dispose();win.destroy();app.quit();return;}
  win.on('close',event=>{

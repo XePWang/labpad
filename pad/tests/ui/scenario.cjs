@@ -16,7 +16,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
   await page.locator('.toolbar').waitFor();
   await app.evaluate(({dialog})=>{
    globalThis.__files=[];globalThis.__nextAnswer=2;globalThis.__saveFile='';globalThis.__saveNames=[];
-   dialog.showMessageBox=async()=>({response:globalThis.__nextAnswer,checkboxChecked:false});
+   dialog.showMessageBox=async(...args)=>({response:args.at(-1).title==='导出前请确认'?1:globalThis.__nextAnswer,checkboxChecked:false});
    dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});
    dialog.showSaveDialog=async(...args)=>{globalThis.__saveNames.push(args.at(-1).defaultPath);return{canceled:false,filePath:globalThis.__saveFile};};
   });
@@ -34,7 +34,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
  async function files(paths){await app.evaluate((_,p)=>{globalThis.__files=p;},paths);}
  async function exportFile(expected){
   const target=path.join(temporary,expected);await app.evaluate((_,file)=>{globalThis.__saveFile=file;},target);
-  await page.getByRole('button',{name:/导出源码/}).click();await until(()=>fs.stat(target).then(()=>true,()=>false),'export file');
+  await button('导出').click();await page.getByRole('menuitem',{name:'导出源码',exact:true}).click();await until(()=>fs.stat(target).then(()=>true,()=>false),'export file');
   assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),expected);return target;
  }
  const printing=n=>'#include <stdio.h>\nint main(void){puts("'+n+'");return 0;}\n';
@@ -136,7 +136,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
   console.log('COMPILATION_TIMES',JSON.stringify({firstSuccessfulMs:times[0],afterRestartMs:afterRestart}));
 
   const ioIn=path.join(temporary,'例子.IN'),ioOut=path.join(temporary,'例子.OUT');
-  await fs.writeFile(ioIn,'9\n');await fs.writeFile(ioOut,'12\n');await files([ioIn,ioOut]);await button('导入标准 I/O').click();
+  await fs.writeFile(ioIn,'9\n');await fs.writeFile(ioOut,'12\n');await files([ioIn,ioOut]);await button('导入').click();await page.getByRole('menuitem',{name:'导入标准 I/O',exact:true}).click();
   await until(()=>page.getByRole('status').textContent().then(t=>t.includes('已导入')),'I/O import');
   assert.equal(await fs.readFile(external,'utf8'),printing(12));
   const problemFile=path.join(relocated,'projects','Lab 2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(problemFile,'utf8'));

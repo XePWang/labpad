@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.project",
+  "labId": "实验2",
+  "problems": [
+    {
+      "problemId": "warmup 2-1",
+      "title": "整数求和示例",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 读取两个整数并输出它们的和",
+        "    return 0;",
+        "}"
+      ],
+      "timeLimitMs": 1000,
+      "outputLimitBytes": 65536,
+      "comparison": {
+        "type": "wcmp"
+      },
+      "testCases": [
+        {
+          "id": "1",
+          "input": "1 2\n",
+          "expectedOutput": "3\n"
+        },
+        {
+          "id": "2",
+          "input": "-7 7\n",
+          "expectedOutput": "0\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 2-1",
+      "title": "浮点求和示例",
+      "language": "cpp",
+      "source": [
+        "#include <iostream>",
+        "",
+        "int main() {",
+        "    // 读取两个数并输出它们的和",
+        "    return 0;",
+        "}"
+      ],
+      "comparison": {
+        "type": "floatTokens",
+        "absoluteTolerance": 1e-06,
+        "relativeTolerance": 1e-06
+      },
+      "testCases": [
+        {
+          "id": "1",
+          "input": "0.1 0.2\n",
+          "expectedOutput": "0.3\n"
+        }
+      ]
+    }
+  ]
+}

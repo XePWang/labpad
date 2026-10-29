@@ -1,4 +1,4 @@
-import {mkdtemp,mkdir,writeFile,access,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {runProcess} from './process';
@@ -25,6 +25,9 @@ export class Compiler {
    :(language==='c'?config.cPath:config.cppPath|| (config.kind==='zig'?config.cPath:''));
   if(!program)throw new Error('请在设置中指定'+(language==='c'?'C':'C++')+'编译器可执行文件');
   return {program,prefix:zig?[language==='c'?'cc':'c++']:[]};
+ }
+ async identity(config:CompilerConfig,language:Language):Promise<string>{
+  try{const file=await realpath(this.resolve(config,language).program),info=await stat(file);return JSON.stringify([file,info.size,info.mtimeMs]);}catch{return 'unavailable';}
  }
  async info(config:CompilerConfig):Promise<string>{
   const {program}=this.resolve(config,'c');
