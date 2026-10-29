@@ -5,10 +5,14 @@ export function filePart(value:unknown,label:string):string {
  throw new Error(label+'不能为空，也不能包含路径或不合法的文件名字符');
  return value;
 }
+export function selection(lab:unknown,problem:unknown){
+ if(typeof lab!=='string'||typeof problem!=='string')throw new Error('项目和题号格式无效');
+ if(lab)filePart(lab,'实验名称');if(problem){if(!lab)throw new Error('请先选择实验项目');filePart(problem,'题号');}
+}
 export function validateProblem(value:unknown):Problem {
  const p=value as Problem;
  if(!p||p.schemaVersion!==1)throw new Error('题目 schemaVersion 必须为 1');
- filePart(p.labId,'实验名称');filePart(p.problemId,'题号');
+ selection(p.labId,p.problemId);
  if(typeof p.title!=='string')throw new Error('题目 title 必须为字符串');
  if(!Number.isSafeInteger(p.timeLimitMs)||p.timeLimitMs<=0||!Number.isSafeInteger(p.outputLimitBytes)||p.outputLimitBytes<=0)
  throw new Error('timeLimitMs 和 outputLimitBytes 必须为正整数');
@@ -37,7 +41,8 @@ export function validateConfig(value:unknown):Config {
  const c=value as Config;
  if(!c||c.schemaVersion!==1||!['classId','name','studentId'].every(k=>typeof(c as any)[k]==='string'))
  throw new Error('个人配置格式无效');
- filePart(c.currentLab,'实验名称');filePart(c.currentProblem,'题号');
+ selection(c.currentLab,c.currentProblem);
+ if(!['manual','auto'].includes(c.saveMode)||!(c.sourceFile===null||typeof c.sourceFile==='string'))throw new Error('保存设置无效');
  if(!['c','cpp'].includes(c.language))throw new Error('源码语言无效');
  const b=c.compiler;
  if(!b||!['builtin','custom'].includes(b.mode)||!['zig','gcc','clang'].includes(b.kind)||

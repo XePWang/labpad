@@ -8,10 +8,11 @@ module.exports = {
  extraResources:[
  {from:'../.work/toolchains/\u0024{os}-\u0024{arch}',to:'toolchain'},
  {from:'../.work/checkers/\u0024{os}-\u0024{arch}',to:'checkers'},
- {from:'THIRD_PARTY_NOTICES.md',to:'THIRD_PARTY_NOTICES.md'}],
+ {from:'THIRD_PARTY_NOTICES.md',to:'THIRD_PARTY_NOTICES.md'},
+ {from:'assets/icon.png',to:'icon.png'}],
  npmRebuild:false,artifactName:'LabPad-\u0024{version}-\u0024{os}-\u0024{arch}.\u0024{ext}',
  afterPack:async context=>(await import('./scripts/sign-mac-dev.mjs')).default(context),
- linux:{target:['tar.gz'],category:'Development'},win:{target:['zip'],signAndEditExecutable:false},
- mac:{target:['zip'],category:'public.app-category.developer-tools',identity:null},
+ linux:{target:['tar.gz'],category:'Development',icon:'assets/icon.png'},win:{target:['zip'],icon:'assets/icon.ico',signExecutable:false},
+ mac:{target:['zip'],category:'public.app-category.developer-tools',identity:null,icon:'assets/icon.icns'},
  publish:{provider:'github',owner:'XePWang',repo:'labpad',releaseType:'prerelease'}
 };

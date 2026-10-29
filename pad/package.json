@@ -1,6 +1,6 @@
 {
   "name": "labpad",
-  "version": "0.1.0-dev.1",
+  "version": "0.1.0-dev.2",
   "description": "C 语言实验自测与源码导出工具",
   "author": "Wang Xianlin",
   "license": "MIT",

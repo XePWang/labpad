@@ -126,3 +126,48 @@ test('a new problem with no test data never reports accepted',async()=>{
  const result=await judge(compiler,d,settings);
  assert.equal(result.status,'error');assert.equal(result.compilation,undefined);assert.equal(result.cases.length,0);
 });
+
+test('empty selection, project creation and export names work without identity',async()=>{
+ const {exportName}=await import('../core/storage');
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-projects-'));
+ try{
+  const s=new Storage(dir),c=await s.init();assert.equal(c.currentLab,'');assert.equal(c.currentProblem,'');assert.equal(c.saveMode,'manual');
+  const d:Draft={source:'int main(void){return 0;}',language:'c',problem:defaultProblem('','')};
+  assert.equal(exportName(d,''),'空项目.c');assert.equal(exportName(d,'12345678'),'12345678_空项目.c');
+  d.language='cpp';assert.equal(exportName(d,''),'空项目.cpp');
+  await s.save(d);assert.equal((await s.load('','','cpp')).source,d.source);assert.deepEqual(await s.projects(),[]);
+  await s.createLab('实验 A');await s.createProblem('实验 A','第 1 题','c');
+  assert.deepEqual(await s.projects(),[{labId:'实验 A',problems:['第 1 题']}]);
+  await assert.rejects(s.createLab('实验 A'));await assert.rejects(s.createProblem('实验 A','第 1 题','c'));
+  d.problem=defaultProblem('实验 A','第 1 题');assert.equal(exportName(d,'12345678'),'12345678_第 1 题.cpp');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('importing only I/O leaves the current source file untouched',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-rule-only-'));
+ try{
+  const s=new Storage(dir);await s.init();await s.createLab('Lab 2');const d=await s.createProblem('Lab 2','Lab 2-1','c');
+  const file=s.paths('Lab 2','Lab 2-1','c').source,before=await readFile(file,'utf8');
+  d.source='unsaved replacement';d.problem.testCases=[{id:'1',input:'1',expectedOutput:'2'}];await s.save(d,false);
+  assert.equal(await readFile(file,'utf8'),before);assert.equal((await s.load('Lab 2','Lab 2-1','c')).problem.testCases[0].input,'1');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('data relocation copies saved data and rejects an occupied target',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'labpad-relocate-'));
+ try{
+  const s=new Storage(path.join(root,'old'));const c=await s.init();c.studentId='12345678';await s.saveConfig(c);
+  await s.createLab('Lab 2');const d=await s.createProblem('Lab 2','Lab 2-1','c');d.source='// preserved';await s.save(d);
+  const target=path.join(root,'new');await mkdir(target);await s.copyDataTo(target);
+  const next=new Storage(target);await next.saveConfig(c);
+  assert.equal((await next.init()).studentId,'12345678');assert.equal((await next.load('Lab 2','Lab 2-1','c')).source,'// preserved');
+  assert.equal((await s.load('Lab 2','Lab 2-1','c')).source,'// preserved');
+  await assert.rejects(s.copyDataTo(target));assert.equal((await next.load('Lab 2','Lab 2-1','c')).source,'// preserved');
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('old dev configs gain manual saving without changing existing identity',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-upgrade-'));
+ try{
+  const c:any=defaultConfig();delete c.saveMode;delete c.sourceFile;c.studentId='00123456';c.currentLab='Lab 2';c.currentProblem='Lab 2-1';
+  await writeFile(path.join(dir,'config.json'),JSON.stringify(c));const upgraded=await new Storage(dir).init();
+  assert.equal(upgraded.saveMode,'manual');assert.equal(upgraded.studentId,'00123456');assert.equal(upgraded.currentProblem,'Lab 2-1');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

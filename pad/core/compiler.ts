@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {runProcess} from './process';
 import type {CompilerConfig,Language,Compilation} from '../shared/types';
-export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string}
+export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string}
 export interface Prepared {compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
  readonly session:Promise<string>;
@@ -12,9 +12,10 @@ export class Compiler {
  }
  async environment():Promise<NodeJS.ProcessEnv>{
   const root=await this.session;
-  await mkdir(path.join(root,'cache'),{recursive:true});
+  const cache=this.paths.cacheDirectory??path.join(tmpdir(),'labpad-compiler-cache-'+(process.getuid?.()??'user'));
+  await mkdir(cache,{recursive:true});
   return {...process.env,LANG:'C.UTF-8',LC_ALL:'C.UTF-8',
-   ZIG_GLOBAL_CACHE_DIR:path.join(root,'cache'),ZIG_LOCAL_CACHE_DIR:path.join(root,'cache')};
+   ZIG_GLOBAL_CACHE_DIR:cache,ZIG_LOCAL_CACHE_DIR:path.join(root,'cache')};
  }
  resolve(config:CompilerConfig,language:Language):{program:string;prefix:string[]}{
   const zig=config.mode==='builtin'||config.kind==='zig';
