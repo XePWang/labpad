@@ -26,3 +26,35 @@
 .editor-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}.editor-actions .format-button{font-size:11px;padding:4px 8px}
 .checkbox-field{display:flex;flex-direction:row;align-items:center;gap:8px;margin:16px 0;font-size:12px}
 .checkbox-field input{width:15px;height:15px;padding:0;margin:0;accent-color:var(--accent)}
+
+.settings-section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.settings-section-heading h3{margin-bottom:0}
+.settings-section-heading button{font-size:12px}
+.compiler-picker-backdrop{z-index:30}.compiler-picker{width:min(780px,100%);max-height:85vh;display:flex;flex-direction:column;gap:16px;padding:24px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:0 24px 80px #0008;outline:none}
+.compiler-picker>p{font-size:12px;line-height:1.7}.compiler-options{overflow:auto;display:flex;flex-direction:column;gap:10px}
+.compiler-option{display:flex;flex-direction:row;gap:12px;align-items:flex-start;padding:13px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--app)}
+.compiler-option:has(input:checked){border-color:var(--accent)}.compiler-option input{margin:4px 0 0;accent-color:var(--accent)}
+.compiler-option>span{display:flex;flex-direction:column;gap:5px;min-width:0}.compiler-option strong{font-size:14px}.compiler-option strong small{font-weight:400}.compiler-option span span,.compiler-option small{font-size:11px;color:var(--muted)}
+.compiler-option code{font:12px/1.5 Consolas,monospace;overflow-wrap:anywhere}.compiler-picker-actions{display:flex;justify-content:flex-end;gap:10px}.compiler-not-found{padding:20px 0}
+
+.project-select{flex-wrap:wrap}.run-actions{display:flex;gap:8px;align-items:center}.run-actions .phase{margin-left:2px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.run-actions button{font-size:12px}
+.work-layout.splitpanes{flex:1;min-height:0}.workspace.splitpanes{display:flex;min-height:0}.workspace .editor-pane{border-right:0}
+.work-layout .splitpanes__splitter{background:var(--border);flex-shrink:0;position:relative;transition:background .15s}.work-layout .splitpanes__splitter:hover,.work-layout .splitpanes__splitter:focus-visible{background:var(--accent);outline:none}
+.work-layout.splitpanes--horizontal>.splitpanes__splitter{height:5px;min-height:5px}.work-layout .splitpanes--vertical>.splitpanes__splitter{width:5px;min-width:5px}
+.work-layout .bottom-panel{height:100%;max-height:none;min-height:0;resize:none;border-top:0}.work-layout .splitpanes__pane{min-height:0;min-width:0}
+.statusbar{height:29px;gap:12px}.status-location{display:flex;align-items:center;gap:6px;min-width:0;max-width:29%}
+.app-shell[data-theme] .status-folder{display:flex;gap:7px;align-items:center;border:0;border-radius:0;background:none;padding:0;font-size:10px;min-width:0;color:var(--muted)}.status-folder .footer-path{max-width:none;min-width:0}
+.statusbar .compiler-label{font:10px Consolas,monospace;flex-shrink:0;max-width:19%}.status-hint{flex:1;min-width:0;overflow:hidden;color:var(--secondary);font-size:10px;white-space:nowrap;text-overflow:ellipsis}.status-hint>span{display:block;overflow:hidden;text-overflow:ellipsis}
+.cursor-position,.status-save{flex-shrink:0;font-size:10px;color:var(--muted);white-space:nowrap}.status-save{min-width:38px;text-align:right}
+.status-slide-enter-active,.status-slide-leave-active{transition:opacity .12s,transform .12s}.status-slide-enter-from{opacity:0;transform:translateY(5px)}.status-slide-leave-to{opacity:0;transform:translateY(-5px)}
+@media(max-width:1150px){.status-folder .footer-path{display:none}.status-location{max-width:none}.statusbar{gap:9px}.brandbar{height:52px}.toolbar{padding:10px 15px}.project-select{gap:9px}.run-actions .phase{max-width:130px}}
+@media(prefers-reduced-motion:reduce){.status-slide-enter-active,.status-slide-leave-active{transition:none}.splitpanes--ready .splitpanes__pane{transition:none}}
+
+html,body{height:100%;overflow:clip}.app-shell{overflow:clip}
+.editor-pane,.cases-pane{container-type:inline-size}
+.pane-heading>div:first-child{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+@container(max-width:380px){
+ .pane-heading{height:auto;min-height:43px;flex-wrap:wrap;gap:6px;padding:8px 10px}
+ .pane-heading>div:first-child{flex-basis:100%}.pane-heading .editor-actions{margin-left:auto}
+ .pane-heading .small-actions{flex-wrap:wrap;gap:2px}.io-pair{grid-template-columns:1fr}
+ .case-heading{flex-wrap:wrap;gap:6px}.case-heading>div{gap:5px}
+}

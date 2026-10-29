@@ -20,7 +20,7 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
    const cwd=path.join(prepared.directory,'case-'+index);await mkdir(cwd);
    const r=await runProcess(prepared.executable,[],{cwd,input:Buffer.from(test.input,'utf8'),
     timeLimitMs:draft.problem.timeLimitMs,outputLimitBytes:draft.problem.outputLimitBytes,
-    signal,env:await compiler.environment(),processHost:compiler.paths.processHost});
+    signal,env:await compiler.environment(config),processHost:compiler.paths.processHost});
    const c:CaseResult={id:test.id,status:'completed',elapsedMs:r.elapsedMs,stdout:r.stdout.toString('utf8'),
     stderr:r.stderr.toString('utf8')+(r.stderrTruncated?'\n[stderr 已截断]':''),
     exitCode:r.code,signal:r.signal,message:''};
@@ -37,7 +37,7 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
     if(comparison.type==='floatTokens')args.push(comparison.absoluteTolerance===undefined?'-':String(comparison.absoluteTolerance),
      comparison.relativeTolerance===undefined?'-':String(comparison.relativeTolerance));
     const checked=await runProcess(checker,args,{cwd,timeLimitMs:10000,outputLimitBytes:32768,
-     signal,env:await compiler.environment(),processHost:compiler.paths.processHost});
+     signal,env:await compiler.environment(config),processHost:compiler.paths.processHost});
     c.message=checked.stderr.toString('utf8')||checked.stdout.toString('utf8');
     if(checked.reason==='cancelled'){c.status='cancelled';result.status='cancelled';}
     else if(checked.reason||checked.signal||![0,1,2,4,8].includes(checked.code??-1)){

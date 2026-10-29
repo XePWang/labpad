@@ -1,4 +1,4 @@
-import type {Config,Draft,Problem} from './types';
+import type {Config,Draft,Problem,LayoutConfig} from './types';
 export function filePart(value:unknown,label:string):string {
  if(typeof value!=='string'||!value.trim()||/[<>:"/\\|?*\x00-\x1f]/.test(value)||/[. ]$/.test(value)||
  value==='.'||value==='..'||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(value))
@@ -37,6 +37,11 @@ export function validateDraft(value:unknown):Draft {
  if(!d||typeof d.source!=='string'||!['c','cpp'].includes(d.language))throw new Error('源码数据无效');
  validateProblem(d.problem);return d;
 }
+export function validateLayout(value:unknown):LayoutConfig{
+ const l=value as LayoutConfig;
+ if(!l||!Number.isFinite(l.editorPercent)||l.editorPercent<20||l.editorPercent>80||!Number.isFinite(l.outputPercent)||l.outputPercent<12||l.outputPercent>65)throw new Error('布局比例超出可调整范围');
+ return {editorPercent:l.editorPercent,outputPercent:l.outputPercent};
+}
 export function validateConfig(value:unknown):Config {
  const c=value as Config;
  if(!c||c.schemaVersion!==1||!['classId','name','studentId'].every(k=>typeof(c as any)[k]==='string'))
@@ -45,6 +50,7 @@ export function validateConfig(value:unknown):Config {
  if(!['manual','auto'].includes(c.saveMode)||!(c.sourceFile===null||typeof c.sourceFile==='string'))throw new Error('保存设置无效');
  if(!['c','cpp'].includes(c.language))throw new Error('源码语言无效');
  if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean')throw new Error('编辑器设置无效');
+ validateLayout(c.layout);
  const b=c.compiler;
  if(!b||!['builtin','custom'].includes(b.mode)||!['zig','gcc','clang'].includes(b.kind)||
  typeof b.cPath!=='string'||typeof b.cppPath!=='string'||

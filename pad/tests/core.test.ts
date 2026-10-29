@@ -166,9 +166,9 @@ test('data relocation copies saved data and rejects an occupied target',async()=
 test('old dev configs gain manual saving without changing existing identity',async()=>{
  const dir=await mkdtemp(path.join(tmpdir(),'labpad-upgrade-'));
  try{
-  const c:any=defaultConfig();delete c.saveMode;delete c.sourceFile;delete c.indentSize;delete c.theme;delete c.formatOnSave;c.studentId='00123456';c.currentLab='Lab 2';c.currentProblem='Lab 2-1';
+  const c:any=defaultConfig();delete c.saveMode;delete c.sourceFile;delete c.indentSize;delete c.theme;delete c.formatOnSave;delete c.layout;c.studentId='00123456';c.currentLab='Lab 2';c.currentProblem='Lab 2-1';
   await writeFile(path.join(dir,'config.json'),JSON.stringify(c));const upgraded=await new Storage(dir).init();
-  assert.equal(upgraded.indentSize,4);assert.equal(upgraded.theme,'dark');assert.equal(upgraded.formatOnSave,true);assert.equal(upgraded.saveMode,'manual');assert.equal(upgraded.studentId,'00123456');assert.equal(upgraded.currentProblem,'Lab 2-1');
+  assert.deepEqual(upgraded.layout,{editorPercent:53,outputPercent:28});assert.equal(upgraded.indentSize,4);assert.equal(upgraded.theme,'dark');assert.equal(upgraded.formatOnSave,true);assert.equal(upgraded.saveMode,'manual');assert.equal(upgraded.studentId,'00123456');assert.equal(upgraded.currentProblem,'Lab 2-1');
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
@@ -205,4 +205,10 @@ test('atomic original-file writes leave prior contents intact on failure',async(
   assert.match(await readFile(file,'utf8'),/中文/);
   assert.deepEqual(await (await import('node:fs/promises')).readdir(dir),['source.c']);
  }finally{await chmod(dir,0o700);await rm(dir,{recursive:true,force:true});}
+});
+
+test('layout settings accept adjustable proportions and reject invalid bounds',async()=>{
+ const {validateLayout}=await import('../shared/validate');
+ assert.deepEqual(validateLayout({editorPercent:61.5,outputPercent:39.2}),{editorPercent:61.5,outputPercent:39.2});
+ for(const layout of [null,{editorPercent:19,outputPercent:28},{editorPercent:81,outputPercent:28},{editorPercent:53,outputPercent:11},{editorPercent:53,outputPercent:66},{editorPercent:NaN,outputPercent:28}])assert.throws(()=>validateLayout(layout));
 });

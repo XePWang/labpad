@@ -1,8 +1,8 @@
 {
   "name": "labpad",
-  "version": "0.1.0-dev.3",
+  "version": "0.1.0-dev.4",
   "description": "C 语言实验自测与源码导出工具",
-  "author": "Wang Xianlin",
+  "author": "LabPad contributors",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -32,6 +32,7 @@
     "diff": "^8.0.2",
     "iconv-lite": "^0.7.0",
     "node-pty": "1.1.0",
+    "splitpanes": "4.1.2",
     "tree-kill": "^1.2.2",
     "vue": "^3.5.35",
     "write-file-atomic": "8.0.0"

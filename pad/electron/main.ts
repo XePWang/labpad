@@ -1,5 +1,6 @@
 import {app,BrowserWindow,dialog,ipcMain,Menu,shell,nativeImage,nativeTheme} from 'electron';
 import {Formatter} from '../core/formatter';
+import {detectCompilers} from '../core/toolchains';
 import path from 'node:path';
 import {mkdirSync,rmSync,constants} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -9,7 +10,7 @@ import {createRequire} from 'node:module';
 import {Compiler} from '../core/compiler';
 import {judge} from '../core/judge';
 import {Storage,decodeText,readJSON,importPairs,exists,exportName,writeSource} from '../core/storage';
-import {filePart,selection,validateConfig,validateDraft,validateProblem} from '../shared/validate';
+import {filePart,selection,validateConfig,validateDraft,validateProblem,validateLayout} from '../shared/validate';
 import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,PathKind,SaveResult} from '../shared/types';
 app.setName('LabPad');if(process.platform==='win32')app.setAppUserModelId('cn.xep.labpad');
 const root=path.resolve(__dirname,'../../..'),chromeData=path.join(tmpdir(),'labpad-ui-'+process.pid);
@@ -101,7 +102,7 @@ async function startDebug(value:Draft){
    if(prepared.compilation.status==='cancelled'){debugState({status:'stopped'});return;}
    if(prepared.compilation.status==='CE'){debugState({status:'error',message:'编译失败，请查看“输出”页'});return;}
    if(abort.signal.aborted){debugState({status:'stopped'});return;}
-   const env=await compiler.environment();
+   const env=await compiler.environment(settings.compiler);
    await new Promise<void>((resolve,reject)=>{
     let timer:ReturnType<typeof setTimeout>|undefined,pending='',scheduled:ReturnType<typeof setTimeout>|undefined;
     const flush=()=>{if(pending){send('debug:data',pending);pending='';}scheduled=undefined;};
@@ -147,7 +148,7 @@ async function initialize(){
  handle('path:reveal',async(value:string,kind:PathKind)=>{await requirePath(value,kind);if(kind==='directory'){const error=await shell.openPath(value);if(error)throw new Error(error);}else shell.showItemInFolder(value);});
  handle('config:save',async(value:Config,dataRoot:string)=>{
   requireIdle();await saves;
-  const next=structuredClone(validateConfig({...value,currentLab:config.currentLab,currentProblem:config.currentProblem,sourceFile:config.sourceFile}));
+  const next=structuredClone(validateConfig({...value,currentLab:config.currentLab,currentProblem:config.currentProblem,sourceFile:config.sourceFile,layout:config.layout}));
   await requirePath(dataRoot,'directory');const target=await realpath(dataRoot.trim());
   if(next.compiler.mode==='custom'){
    next.compiler.cPath=next.compiler.cPath.trim();next.compiler.cppPath=next.compiler.cppPath.trim();
@@ -163,6 +164,8 @@ async function initialize(){
   config=next;nativeTheme.themeSource=next.theme;win.setBackgroundColor(next.theme==='light'?'#ffffff':'#1e1e1e');return settingsResult();
  });
  handle('source:format',(source:string,language:Language,indentSize:number)=>{if(typeof source!=='string'||!['c','cpp'].includes(language))throw new Error('源码数据无效');return formatter.format(source,language,indentSize);});
+ handle('layout:save',async(value:unknown)=>{const layout=validateLayout(value);await saves;config={...config,layout};await storage.saveConfig(config);return layout;});
+ handle('compiler:detect',async()=>{requireIdle();return detectCompilers({cwd:await compiler.session,exclude:[toolchain],processHost:compiler.paths.processHost});});
  handle('compiler:info',(value:CompilerConfig)=>compiler.info(validateConfig({...config,compiler:value}).compiler));
  handle('source:open',async()=>{
   requireIdle();await saves;

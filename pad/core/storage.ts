@@ -32,7 +32,7 @@ export class Storage{
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true});
+   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28}});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }
