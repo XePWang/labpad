@@ -1,16 +1,16 @@
-import {app,BrowserWindow,dialog,ipcMain,Menu,shell,nativeImage} from 'electron';
+import {app,BrowserWindow,dialog,ipcMain,Menu,shell,nativeImage,nativeTheme} from 'electron';
+import {Formatter} from '../core/formatter';
 import path from 'node:path';
 import {mkdirSync,rmSync,constants} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {readFile,writeFile,mkdir,stat,access,realpath,rename} from 'node:fs/promises';
 import type {IPty} from 'node-pty';
 import {createRequire} from 'node:module';
-import iconv from 'iconv-lite';
 import {Compiler} from '../core/compiler';
 import {judge} from '../core/judge';
-import {Storage,decodeText,readJSON,importPairs,exists,exportName} from '../core/storage';
+import {Storage,decodeText,readJSON,importPairs,exists,exportName,writeSource} from '../core/storage';
 import {filePart,selection,validateConfig,validateDraft,validateProblem} from '../shared/validate';
-import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,PathKind} from '../shared/types';
+import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,PathKind,SaveResult} from '../shared/types';
 app.setName('LabPad');if(process.platform==='win32')app.setAppUserModelId('cn.xep.labpad');
 const root=path.resolve(__dirname,'../../..'),chromeData=path.join(tmpdir(),'labpad-ui-'+process.pid);
 mkdirSync(chromeData,{recursive:true});app.setPath('userData',chromeData);app.setPath('sessionData',chromeData);
@@ -29,6 +29,8 @@ function dataLocation(){
 }
 const defaultRoot=dataLocation(),locationFile=path.join(defaultRoot,'location.json');
 let storage=new Storage(defaultRoot);
+const formatterRoot=app.isPackaged?path.join(process.resourcesPath,'app.asar.unpacked/package.json'):path.join(root,'pad/package.json');
+const formatter=new Formatter(app.isPackaged?path.join(process.resourcesPath,'formatter-worker.cjs'):path.join(__dirname,'formatter-worker.cjs'),createRequire(formatterRoot).resolve('@wasm-fmt/clang-format/node'));
 const compiler=new Compiler({toolchain,checkers,processHost:process.platform==='win32'?path.join(checkers,'process-host.exe'):undefined});
 let win:BrowserWindow,config:Config,currentDocument:Draft|undefined,documentDirty=false,sourceEncoding='UTF-8';
 let controller:AbortController|undefined,active:Promise<unknown>|undefined,terminal:IPty|undefined;
@@ -49,19 +51,17 @@ async function validatePath(value:string,kind:PathKind,allowEmpty=false){
  }catch(e:any){return {valid:false,message:e.code==='ENOENT'?'路径不存在，请重新选择或输入':e.code==='EACCES'?'没有访问该路径的权限':'无法访问路径：'+e.message};}
 }
 async function requirePath(value:string,kind:PathKind){const result=await validatePath(value,kind);if(!result.valid)throw new Error(result.message);}
-async function persist(value:Draft):Promise<string>{
- const snapshot=structuredClone(validateDraft(value)),file=config.sourceFile,encoding=sourceEncoding;
+async function persist(value:Draft):Promise<SaveResult>{
+ const snapshot=structuredClone(validateDraft(value)),original=JSON.stringify(snapshot),file=config.sourceFile,encoding=sourceEncoding,options=structuredClone(config);
  const task=saves.catch(()=>{}).then(async()=>{
-  if(file){
-   const text=snapshot.source.replace(/^\uFEFF/,'');
-   const bytes=encoding==='GBK / CP936'?iconv.encode(text,'cp936'):Buffer.from(text,'utf8');
-   if(encoding==='GBK / CP936'&&iconv.decode(bytes,'cp936')!==text)throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
-   await writeFile(file,bytes);
-  }
+  let formatWarning:string|undefined;
+  if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
+  if(file)await writeSource(file,snapshot.source,encoding);
   await storage.save(snapshot,!file);
   config={...config,currentLab:snapshot.problem.labId,currentProblem:snapshot.problem.problemId,language:snapshot.language};
   await storage.saveConfig(config);
-  return file||storage.paths(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language).source;
+  if(currentDocument&&(JSON.stringify(currentDocument)===original||JSON.stringify(currentDocument)===JSON.stringify(snapshot))){currentDocument=structuredClone(snapshot);documentDirty=false;}
+  return {path:file||storage.paths(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language).source,source:snapshot.source,formatWarning};
  });
  saves=task.catch(()=>{});return task;
 }
@@ -128,7 +128,7 @@ async function initialize(){
  if(await exists(locationFile)){
   const value=await readJSON(locationFile) as {dataDirectory:string};await requirePath(value.dataDirectory,'directory');storage=new Storage(await realpath(value.dataDirectory));
  }
- config=await storage.init();initialized=true;
+ config=await storage.init();initialized=true;nativeTheme.themeSource=config.theme;win.setBackgroundColor(config.theme==='light'?'#ffffff':'#1e1e1e');
  const projects=await storage.projects();
  if(!projects.some(p=>p.labId===config.currentLab)){config.currentLab='';config.currentProblem='';}
  else if(!projects.find(p=>p.labId===config.currentLab)!.problems.includes(config.currentProblem))config.currentProblem='';
@@ -160,8 +160,9 @@ async function initialize(){
    await storage.copyDataTo(target);const replacement=new Storage(target);await replacement.saveConfig(next);
    await mkdir(defaultRoot,{recursive:true});await writeFile(locationFile+'.tmp',JSON.stringify({dataDirectory:target},null,2)+'\n','utf8');await rename(locationFile+'.tmp',locationFile);storage=replacement;
   }else await storage.saveConfig(next);
-  config=next;return settingsResult();
+  config=next;nativeTheme.themeSource=next.theme;win.setBackgroundColor(next.theme==='light'?'#ffffff':'#1e1e1e');return settingsResult();
  });
+ handle('source:format',(source:string,language:Language,indentSize:number)=>{if(typeof source!=='string'||!['c','cpp'].includes(language))throw new Error('源码数据无效');return formatter.format(source,language,indentSize);});
  handle('compiler:info',(value:CompilerConfig)=>compiler.info(validateConfig({...config,compiler:value}).compiler));
  handle('source:open',async()=>{
   requireIdle();await saves;
@@ -185,7 +186,7 @@ async function initialize(){
   const d=validateDraft(value),name=exportName(d,config.studentId);
   const selected=await dialog.showSaveDialog(win,{title:'导出当前源码 · 选择保存位置',defaultPath:name,filters:[{name:'源码文件',extensions:[d.language==='c'?'c':'cpp']}]});
   if(selected.canceled||!selected.filePath)return null;
-  await writeFile(selected.filePath,d.source.replace(/^\uFEFF/,''),'utf8');return selected.filePath;
+  await writeSource(selected.filePath,d.source);return selected.filePath;
  });
  handle('problem:show',async(value:Draft)=>{
   const d=validateDraft(value),file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
@@ -209,7 +210,7 @@ app.whenReady().then(async()=>{
  const icon=nativeImage.createFromPath(iconPath);if(process.platform==='darwin'&&!icon.isEmpty())app.dock?.setIcon(icon);
  win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:720,title:'LabPad',icon,backgroundColor:'#0c111b',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',event=>event.preventDefault());
- try{await initialize();}catch(e){dialog.showErrorBox('无法打开 LabPad 数据目录',storage.root+'\n\n'+String(e));await compiler.dispose();win.destroy();app.quit();return;}
+ try{await initialize();}catch(e){dialog.showErrorBox('无法打开 LabPad 数据目录',storage.root+'\n\n'+String(e));await compiler.dispose();await formatter.dispose();win.destroy();app.quit();return;}
  win.on('close',event=>{
   if(closing)return;event.preventDefault();closing=true;
   void(async()=>{
@@ -218,7 +219,7 @@ app.whenReady().then(async()=>{
      const choice=config.saveMode==='auto'?'save':await confirmUnsaved();
      if(choice==='cancel'){closing=false;return;}if(choice==='save')await persist(currentDocument);
     }
-    await stop();await saves;if(initialized)await storage.flush();await compiler.dispose();win.destroy();app.quit();
+    await stop();await saves;if(initialized)await storage.flush();await compiler.dispose();await formatter.dispose();win.destroy();app.quit();
    }catch(e){closing=false;dialog.showErrorBox('尚未保存',String(e));}
   })();
  });

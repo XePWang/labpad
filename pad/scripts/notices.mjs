@@ -25,6 +25,7 @@ while(queue.length){
  }
  sections.push('=== '+name+' '+data.version+' ('+JSON.stringify(data.license)+') ===\n'+texts.join('\n'));
 }
+sections.push('=== LLVM clang-format (Apache-2.0 WITH LLVM-exception) ===\n'+await readFile('vendor/llvm/LICENSE.TXT','utf8'));
 sections.unshift('LabPad third-party notices\n\n'+await readFile('THIRD_PARTY_NOTICES.md','utf8')+'\n\n=== electron-vite-vue ===\n'+await readFile('TEMPLATE-LICENSE','utf8'));
 await mkdir('../.work/build/licenses',{recursive:true});
 await writeFile('../.work/build/licenses/THIRD_PARTY_LICENSES.txt',sections.join('\n\n')+'\n');

@@ -6,6 +6,8 @@ C 语言实验的离线自测桌面工具。当前只发布 **dev 预发布版�
 
 - 实验项目和题号通过下拉菜单选择；菜单内可新建，导入题目 JSON 也会加入项目列表。未分配时显示 <无>。
 - 默认手动保存，支持 Ctrl+S；设置页可切换自动保存。打开已有源码后，保存直接写回原文件。
+- 原生 CodeMirror 编辑器显示淡色空格点，支持 1 / 2 / 4 空格缩进、选中行缩进与语法树上下文缩进；设置页提供亮色和暗色主题。
+- 内置 WASM clang-format，自动断行与合流；保存时默认格式化，也可点击编辑器上方“格式化代码”。
 - 导出会打开保存位置选择框。有学号时，例如 12345678_Lab 2-1.c；没有题号时使用空项目，没有学号时省略前缀。C++ 使用 .cpp。
 - 班号、姓名和学号仅在设置页填写，可留空。
 - 题目 JSON 保存标准 I/O、时限和比较规则。测试点显示状态和耗时，无部分分。
@@ -37,6 +39,28 @@ labpad/
 导入 .in/.out（或 .ans）时，一起选择完整的同名文件对；也可导入题目 JSON。导入的 I/O 会保存副本，源码仍按保存方式控制。点击“题目文件”定位规则文件，外部修改后点击“重新加载”；打开的外部源码也会从原路径重新读取。
 
 调试页支持连续输入、实时输出、发送 EOF 和手动停止；切换“输出 / 调试”不会中断程序。
+
+## 编辑器
+
+设置页“编辑与保存”可以选择缩进宽度（1、2、4，默认 4）、亮色 / 暗色主题，以及保存时是否自动格式化（默认开）。空格点仅用于显示，源码和导出文件中仍然是英文空格。
+
+Tab / Shift+Tab 使用 CodeMirror 的原生行缩进；选中多行时作为整体缩进。Enter 使用 C/C++ 语言扩展的上下文缩进，处理大括号、嵌套块和函数参数对齐。格式化使用 clang-format 23.1.1 的 LLVM 风格、80 列目标宽度和所选缩进，使用空格代替 Tab；字符串、宏等由 clang-format 按 C/C++ 语法处理。
+
+| 快捷键（Windows / Linux） | 操作 |
+| --- | --- |
+| Ctrl+S | 保存；按设置自动格式化 |
+| Shift+Alt+F | 格式化代码 |
+| Tab / Shift+Tab | 增加 / 减少缩进 |
+| Ctrl+Z | 撤销 |
+| Ctrl+Y / Ctrl+Shift+Z | 重做 |
+| Ctrl+A / C / X / V | 全选 / 复制 / 剪切 / 粘贴 |
+| Ctrl+F / Ctrl+H | 查找 / 查找替换 |
+| Ctrl+/ | 切换行注释 |
+| Alt+↑ / ↓ | 上移 / 下移行 |
+| Shift+Alt+↑ / ↓ | 向上 / 向下复制行 |
+| Esc，然后 Tab | 将键盘焦点移出编辑器 |
+
+每次格式化、整块缩进和查找替换都可整次撤销。切换源码会隔离编辑历史，防止在新文件中撤销出上一文件的内容。格式化与保存完成时会检查编辑版本；期间继续输入的内容会保留。原文件采用原子替换写入，格式化引擎异常时保存原文并提示原因。
 
 ## 编译缓存
 
@@ -84,8 +108,9 @@ cd pad
 npm ci
 npm run native
 npm run tools -- linux-x64
-npm test
 npm run build
+npm test
+xvfb-run -a npm run test:ui
 npm run dev
 ~~~
 
@@ -99,6 +124,6 @@ npm run package -- --mac --arm64
 
 跨平台打包需准备对应 Electron 分发文件，并通过 electron-builder 的 electronDist 配置指定。macOS dev 包使用 ad-hoc 签名；Linux 交叉打包时将 LABPAD_RCODESIGN 指向 rcodesign。当前未做 Apple 公证。
 
-npm test 是 Linux 核心集成测试。npm run test:ui 覆盖项目选择、保存方式、原文件写回、调试、路径校验和数据迁移。设置 LABPAD_TEST_EXECUTABLE 可测试实际发布包。tests/ui/scenario.cjs 也可由装有 Playwright 的 Node.js 直接运行，参数为应用路径和截图目录。修改品牌图标后可运行 scripts/create-icons.py 重新生成 PNG/ICO/ICNS（开发时需要 Pillow 和 ImageMagick）。
+npm test 是 Linux 核心集成测试，包含真实 Zig、Checker、WASM 格式化和原文件写入失败检查，运行前先构建格式化 worker。npm run test:ui 覆盖项目选择、保存方式、原文件写回、调试、路径校验和数据迁移，以及编辑器真实快捷键、缩进、查找替换、原子撤销、两种主题和格式化/保存并发。设置 LABPAD_TEST_EXECUTABLE 可测试实际发布包。tests/ui/scenario.cjs 和 editor-scenario.cjs 也可由装有 Playwright 的 Node.js 直接运行，参数为应用路径和截图目录；Windows 编辑器测试会临时备份并恢复剪贴板，Linux 在独立 Xvfb 显示中测试。修改品牌图标后可运行 scripts/create-icons.py 重新生成 PNG/ICO/ICNS（开发时需要 Pillow 和 ImageMagick）。
 
 判题核心位于 pad/core/，独立于 Electron/Vue；后续批量验收可通过命令行复用。第三方声明见 pad/THIRD_PARTY_NOTICES.md；项目的 MIT 不改变组件与工具链各自的许可证。

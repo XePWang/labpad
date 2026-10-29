@@ -44,6 +44,7 @@ export function validateConfig(value:unknown):Config {
  selection(c.currentLab,c.currentProblem);
  if(!['manual','auto'].includes(c.saveMode)||!(c.sourceFile===null||typeof c.sourceFile==='string'))throw new Error('保存设置无效');
  if(!['c','cpp'].includes(c.language))throw new Error('源码语言无效');
+ if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean')throw new Error('编辑器设置无效');
  const b=c.compiler;
  if(!b||!['builtin','custom'].includes(b.mode)||!['zig','gcc','clang'].includes(b.kind)||
  typeof b.cPath!=='string'||typeof b.cppPath!=='string'||

@@ -9,6 +9,11 @@ CP Editor is an interaction and design reference only. No CP Editor code or artw
 - Electron: MIT, https://github.com/electron/electron
   Chromium and other bundled notices are distributed with Electron.
 - Vue, CodeMirror, xterm.js and node-pty: MIT. Their package licenses are retained.
+- @uiw/codemirror-theme-vscode: MIT, https://github.com/uiwjs/react-codemirror
+- @wasm-fmt/clang-format 23.1.1: MIT JavaScript wrapper, https://github.com/wasm-fmt/clang-format
+  Its LLVM WASM engine uses Apache-2.0 WITH LLVM-exception; see vendor/llvm/.
+  The full LLVM license is included in packaged THIRD_PARTY_LICENSES.txt.
+- write-file-atomic: ISC, https://github.com/npm/write-file-atomic
 - jsdiff: BSD-3-Clause, https://github.com/kpdecker/jsdiff
 - iconv-lite: MIT, https://github.com/ashtuchkin/iconv-lite
 - tree-kill: MIT, https://github.com/pkrumins/node-tree-kill

@@ -1,0 +1,28 @@
+
+.app-shell[data-theme="dark"]{color-scheme:dark;--app:#1e1e1e;--panel:#252526;--raised:#2d2d30;--input:#3c3c3c;--border:#3c3c3c;--text:#d4d4d4;--muted:#969696;--secondary:#b3b3b3;--accent:#007acc;--editor:#1e1e1e;--add-bg:#17412b;--add:#b5e9bd;--remove-bg:#552629;--remove:#ffb5bd}
+.app-shell[data-theme="light"]{color-scheme:light;--app:#ffffff;--panel:#f3f3f3;--raised:#e8e8e8;--input:#ffffff;--border:#cecece;--text:#1f1f1f;--muted:#6b6b6b;--secondary:#424242;--accent:#007acc;--editor:#ffffff;--add-bg:#ddf5da;--add:#17672b;--remove-bg:#ffe2e5;--remove:#a12636}
+.app-shell[data-theme]{background:var(--app);color:var(--text)}
+.app-shell[data-theme] :is(.brandbar,.runbar,.pane-heading,.bottom-heading,.settings-dialog,.create-dialog,footer){background:var(--panel);border-color:var(--border)}
+.app-shell[data-theme] :is(.workspace,.editor-pane,.cases-list,.bottom-panel){background:var(--editor);border-color:var(--border)}
+.app-shell[data-theme] :is(.case-card,.case-heading,.counter,.case-number){background:var(--raised);border-color:var(--border)}
+.app-shell[data-theme] :is(input,textarea,select){background:var(--input);color:var(--text);border-color:var(--border)}
+.app-shell[data-theme] input:focus,.app-shell[data-theme] textarea:focus,.app-shell[data-theme] select:focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.app-shell[data-theme] button{background:var(--raised);color:var(--text);border-color:var(--border)}
+.app-shell[data-theme] button:hover:not(:disabled){background:var(--input);border-color:var(--accent)}
+.app-shell[data-theme] button.primary{background:var(--accent);border-color:var(--accent);color:white}
+.app-shell[data-theme] :is(.small-actions button,.bottom-tabs button,.stop,.settings-button,.close-button,.case-heading .delete){background:transparent}
+.app-shell[data-theme] :is(.actual-output,.diff-view,.output-log,.command-preview){background:var(--editor);color:var(--text)}
+.app-shell[data-theme] :is(p,.muted,.phase,.compiler-label,.brand-subtitle,.version,.save-status,.editor-status,.elapsed,.footer-path,.settings-footer>span,.field-grid label,.project-select label,.io-pair label,.actual-heading,.checker-message){color:var(--muted)}
+.app-shell[data-theme] :is(.settings-title,.settings-footer,.settings-scroll section,.editor-status,.bottom-heading){border-color:var(--border)}
+.app-shell[data-theme] .bottom-tabs button.active{color:var(--text);border-bottom-color:var(--accent)}
+.app-shell[data-theme] .file-icon,.app-shell[data-theme] .eyebrow{color:var(--accent)}
+.app-shell[data-theme] .added{background:var(--add-bg);color:var(--add)}
+.app-shell[data-theme] .removed{background:var(--remove-bg);color:var(--remove)}
+.app-shell[data-theme] .save-status.failed,.app-shell[data-theme] .field-error{color:#f14c4c}
+.app-shell[data-theme="light"] .alert.error,.app-shell[data-theme="light"] .settings-message{background:#fde7e9;color:#a1260d;border-color:#f1abb1}
+.app-shell[data-theme="light"] .alert.success{background:#dff6dd;color:#196127;border-color:#a7dca2}
+.app-shell[data-theme="light"] .verdict.ac{background:#ddf5da;color:#17672b}
+.app-shell[data-theme="light"] :is(.verdict.wa,.verdict.re,.verdict.tle,.verdict.ole){background:#ffe2e5;color:#a12636}
+.editor-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}.editor-actions .format-button{font-size:11px;padding:4px 8px}
+.checkbox-field{display:flex;flex-direction:row;align-items:center;gap:8px;margin:16px 0;font-size:12px}
+.checkbox-field input{width:15px;height:15px;padding:0;margin:0;accent-color:var(--accent)}

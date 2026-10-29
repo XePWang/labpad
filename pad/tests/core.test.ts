@@ -166,8 +166,43 @@ test('data relocation copies saved data and rejects an occupied target',async()=
 test('old dev configs gain manual saving without changing existing identity',async()=>{
  const dir=await mkdtemp(path.join(tmpdir(),'labpad-upgrade-'));
  try{
-  const c:any=defaultConfig();delete c.saveMode;delete c.sourceFile;c.studentId='00123456';c.currentLab='Lab 2';c.currentProblem='Lab 2-1';
+  const c:any=defaultConfig();delete c.saveMode;delete c.sourceFile;delete c.indentSize;delete c.theme;delete c.formatOnSave;c.studentId='00123456';c.currentLab='Lab 2';c.currentProblem='Lab 2-1';
   await writeFile(path.join(dir,'config.json'),JSON.stringify(c));const upgraded=await new Storage(dir).init();
-  assert.equal(upgraded.saveMode,'manual');assert.equal(upgraded.studentId,'00123456');assert.equal(upgraded.currentProblem,'Lab 2-1');
+  assert.equal(upgraded.indentSize,4);assert.equal(upgraded.theme,'dark');assert.equal(upgraded.formatOnSave,true);assert.equal(upgraded.saveMode,'manual');assert.equal(upgraded.studentId,'00123456');assert.equal(upgraded.currentProblem,'Lab 2-1');
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('real WASM clang-format wraps, joins, preserves strings and respects all indent sizes',async()=>{
+ const {Formatter}=await import('../core/formatter');
+ const {createRequire}=await import('node:module');
+ const formatter=new Formatter(path.join(root,'.work/build/electron/formatter-worker.cjs'),createRequire(path.join(root,'pad/package.json')).resolve('@wasm-fmt/clang-format/node'));
+ try{
+  const source='#include <stdio.h>\nint\nsum(\nint a,\nint b\n){return a+b;}\nint main(void){printf("中文\\t%d\\n",sum(10,32));return 0;}\n';
+  for(const indent of [1,2,4]){
+   const formatted=await formatter.format(source,'c',indent);
+   assert.match(formatted,/int sum\(int a, int b\) \{/);
+   assert.ok(formatted.includes('\n'+' '.repeat(indent)+'return a + b;'));
+   assert.ok(!formatted.includes('\t'));
+   const judged=await judge(compiler,draft(formatted,'中文\t42\n'),settings);
+   assert.equal(judged.cases[0]?.verdict,'AC',judged.error||judged.compilation?.stderr);
+   assert.equal(await formatter.format(formatted,'c',indent),formatted);
+  }
+  const long='int main(void){return function_with_long_name(first_long_parameter_name,second_long_parameter_name,third_long_parameter_name,fourth_long_parameter_name);}\n';
+  const wrapped=await formatter.format(long,'c',4);assert.ok(wrapped.split('\n').every(line=>line.length<=80));
+  const cpp=await formatter.format('template<class T>T twice(T x){return x+x;}','cpp',2);assert.match(cpp,/template/);
+  const [one,four]=await Promise.all([formatter.format('int f(){return 1;}','c',1),formatter.format('int f(){return 2;}','c',4)]);
+  assert.ok(one.includes('\n return 1;'));assert.ok(four.includes('\n    return 2;'));
+ }finally{await formatter.dispose();}
+});
+test('atomic original-file writes leave prior contents intact on failure',async()=>{
+ const {writeSource}=await import('../core/storage');
+ const {chmod}=await import('node:fs/promises');
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-atomic-')),file=path.join(dir,'source.c');
+ try{
+  await writeFile(file,'original');await chmod(dir,0o500);
+  await assert.rejects(writeSource(file,'new content'));assert.equal(await readFile(file,'utf8'),'original');
+  await chmod(dir,0o700);await writeSource(file,'// 中文\nint main(void){return 0;}');
+  assert.match(await readFile(file,'utf8'),/中文/);
+  assert.deepEqual(await (await import('node:fs/promises')).readdir(dir),['source.c']);
+ }finally{await chmod(dir,0o700);await rm(dir,{recursive:true,force:true});}
 });

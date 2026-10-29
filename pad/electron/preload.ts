@@ -2,7 +2,7 @@ import {contextBridge,ipcRenderer} from 'electron';
 import type {Bridge} from '../shared/types';
 function listen(channel:string,callback:(value:any)=>void){const handler=(_event:unknown,value:unknown)=>callback(value);ipcRenderer.on(channel,handler);return()=>ipcRenderer.removeListener(channel,handler);}
 const api:Bridge={
- bootstrap:()=>ipcRenderer.invoke('bootstrap'),reloadDocument:()=>ipcRenderer.invoke('draft:reload'),saveDraft:d=>ipcRenderer.invoke('draft:save',d),documentState:(d,s)=>ipcRenderer.send('document:state',d,s),
+ bootstrap:()=>ipcRenderer.invoke('bootstrap'),reloadDocument:()=>ipcRenderer.invoke('draft:reload'),saveDraft:d=>ipcRenderer.invoke('draft:save',d),formatCode:(s,l,i)=>ipcRenderer.invoke('source:format',s,l,i),documentState:(d,s)=>ipcRenderer.send('document:state',d,s),
  loadDraft:(a,b,c)=>ipcRenderer.invoke('draft:load',a,b,c),projects:()=>ipcRenderer.invoke('projects'),
  createLab:n=>ipcRenderer.invoke('project:create',n),createProblem:(a,b,c)=>ipcRenderer.invoke('problem:create',a,b,c),
  saveConfig:(c,p)=>ipcRenderer.invoke('config:save',c,p),compilerInfo:c=>ipcRenderer.invoke('compiler:info',c),openSource:()=>ipcRenderer.invoke('source:open'),

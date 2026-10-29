@@ -43,6 +43,8 @@ async function runScenario(electron,{executable,cwd,evidence}){
   assert.equal(await select('实验项目').inputValue(),'');assert.equal(await select('题号').inputValue(),'');
   assert.equal(await page.locator('.toolbar input').count(),0);assert.equal(await page.getByRole('dialog').count(),0);
   assert.equal((await page.evaluate(()=>window.labpad.bootstrap())).config.saveMode,'manual');
+  assert.equal((await page.evaluate(()=>window.labpad.bootstrap())).config.formatOnSave,true);
+  await settings();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await apply();
   await exportFile('空项目.c');
   await settings();await select('源码语言').selectOption('cpp');await apply();await exportFile('空项目.cpp');
   await settings();await select('源码语言').selectOption('c');await apply();

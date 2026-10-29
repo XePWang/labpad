@@ -2,12 +2,18 @@ import {mkdir,readFile,writeFile,rename,access,readdir,cp,stat} from 'node:fs/pr
 import {constants} from 'node:fs';
 import path from 'node:path';
 import iconv from 'iconv-lite';
+import writeFileAtomic from 'write-file-atomic';
 import {defaultConfig,defaultProblem,defaultSource} from '../shared/defaults';
 import {filePart,selection,validateConfig,validateDraft,validateProblem} from '../shared/validate';
 import type {Config,Draft,Language,Problem,Project} from '../shared/types';
 export function decodeText(bytes:Buffer):{text:string;encoding:string}{
  try{return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes).replace(/^\uFEFF/,''),encoding:'UTF-8'};}
  catch{const text=iconv.decode(bytes,'cp936');if(!iconv.encode(text,'cp936').equals(bytes))throw new Error('无法完整识别文件编码，请先将文件另存为 UTF-8');return {text,encoding:'GBK / CP936'};}
+}
+export async function writeSource(file:string,source:string,encoding='UTF-8'){
+ const text=source.replace(/^\uFEFF/,''),bytes=encoding==='GBK / CP936'?iconv.encode(text,'cp936'):Buffer.from(text,'utf8');
+ if(encoding==='GBK / CP936'&&iconv.decode(bytes,'cp936')!==text)throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
+ await writeFileAtomic(file,bytes);
 }
 export async function readJSON(file:string):Promise<unknown>{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readFile(file)).replace(/^\uFEFF/,''));}
 export async function exists(file:string){try{await access(file);return true;}catch(e:any){if(e.code==='ENOENT')return false;throw e;}}
@@ -26,7 +32,7 @@ export class Storage{
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null});
+   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }

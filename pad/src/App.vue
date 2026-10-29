@@ -12,7 +12,8 @@ const busy=ref<'judge'|'debug'|null>(null),debugRunning=ref(false),bottomTab=ref
 const logs=ref(''),error=ref(''),notice=ref(''),saveStatus=ref('已保存'),dirty=ref(false),ready=ref(false);
 const settingsOpen=ref(false),settingsSaving=ref(false),settingsMessage=ref(''),pathValidity=ref({data:true,c:true,cpp:true});
 const results=ref<Record<string,CaseResult>>({}),diffOpen=ref<Record<string,boolean>>({}),finished=ref(false),phase=ref('准备就绪');
-const terminal=ref<InstanceType<typeof DebugTerminal>>();
+const terminal=ref<InstanceType<typeof DebugTerminal>>(),editor=ref<InstanceType<typeof CodeEditor>>();
+const documentEpoch=ref(0),formatting=ref(false);
 const newKind=ref<'lab'|'problem'|null>(null),newName=ref(''),newMessage=ref(''),newSaving=ref(false);
 let pauseSave=true,revision=0,saveTail:Promise<unknown>=Promise.resolve(),saveTimer:ReturnType<typeof setTimeout>|undefined;
 const disposers:(()=>void)[]=[];
@@ -30,9 +31,13 @@ function invalidate(){results.value={};diffOpen.value={};finished.value=false;ph
 function recordState(){if(draft.value)api.documentState(snapshot(),dirty.value);}
 function enqueueSave(value:Draft,id:number){
  saveStatus.value='保存中…';
- const task=saveTail.catch(()=>{}).then(()=>api.saveDraft(value)).then(async file=>{
-  if(id===revision){dirty.value=false;sourcePath.value=file;saveStatus.value='已保存';recordState();}
-  projects.value=await api.projects();return file;
+ const task=saveTail.catch(()=>{}).then(()=>api.saveDraft(value)) .then(async result=>{
+  if(id===revision||JSON.stringify({...value,source:result.source})===JSON.stringify(snapshot())){
+   if(result.source!==draft.value!.source){pauseSave=true;editor.value?.applyText(result.source);draft.value!.source=result.source;pauseSave=false;revision++;}
+   clearTimeout(saveTimer);dirty.value=false;sourcePath.value=result.path;saveStatus.value='已保存';recordState();
+  }
+  if(result.formatWarning)error.value=result.formatWarning;
+  projects.value=await api.projects();return result.path;
  }).catch(e=>{saveStatus.value='保存失败';error.value=message(e);throw e;});
  saveTail=task;void task.catch(()=>{});return task;
 }
@@ -42,7 +47,7 @@ watch(draft,()=>{
  if(config.value?.saveMode==='auto'){const value=snapshot(),id=revision;saveTimer=setTimeout(()=>void enqueueSave(value,id),250);}
 },{deep:true,flush:'sync'});
 function replaceDraft(value:Draft,file:string|null=null){
- clearTimeout(saveTimer);pauseSave=true;draft.value=value;sourcePath.value=file;dirty.value=false;revision++;
+ clearTimeout(saveTimer);pauseSave=true;documentEpoch.value++;draft.value=value;sourcePath.value=file;dirty.value=false;revision++;
  if(config.value){config.value.currentLab=value.problem.labId;config.value.currentProblem=value.problem.problemId;config.value.language=value.language;config.value.sourceFile=null;}
  results.value={};diffOpen.value={};finished.value=false;saveStatus.value='已保存';phase.value='准备就绪';pauseSave=false;recordState();
 }
@@ -92,6 +97,15 @@ async function importIO(){
  if(wasDirty&&config.value!.saveMode==='auto')await saveNow();
  notice.value='已导入 '+problem.testCases.length+' 个测试点';
 }
+async function formatCode(){
+ if(formatting.value||busy.value)return;
+ formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
+ try{
+  const formatted=await api.formatCode(draft.value!.source,language,size);
+  if(id!==revision||size!==config.value!.indentSize||language!==draft.value!.language){notice.value='代码或缩进设置已改变，请重新格式化';return;}
+  editor.value?.applyText(formatted);editor.value?.focus();
+ }finally{formatting.value=false;}
+}
 async function exportSource(){const file=await api.exportSource(snapshot());if(file)notice.value='已导出：'+file;}
 function showCompilation(c:Compilation){
  logs.value='编译命令\n'+c.command.map(s=>/\s/.test(s)?JSON.stringify(s):s).join(' ')+'\n\n'
@@ -121,6 +135,7 @@ function openSettings(){settings.value=clone(config.value!);settingsRoot.value=d
 async function saveSettings(){
  if(settingsSaving.value)return;settingsSaving.value=true;settingsMessage.value='';
  try{
+  const wasAuto=config.value!.saveMode==='auto';
   const languageChanged=settings.value!.language!==draft.value!.language;
   const reloadNeeded=settingsRoot.value!==dataRoot.value||languageChanged;
   if(reloadNeeded&&!await beforeChange())return;
@@ -128,7 +143,7 @@ async function saveSettings(){
   config.value=result.config;dataRoot.value=result.dataRoot;compilerLabel.value=result.compilerLabel;projects.value=result.projects;
   if(languageChanged){replaceDraft(await api.loadDraft(config.value.currentLab,config.value.currentProblem,config.value.language));}
   else if(reloadNeeded)applyBootstrap(await api.reloadDocument());
-  else if(config.value.saveMode==='auto'&&dirty.value)await saveNow();
+  else if(!wasAuto&&config.value.saveMode==='auto'&&dirty.value)await saveNow();
   settingsOpen.value=false;notice.value='设置已保存';
  }catch(e){settingsMessage.value=message(e);}finally{settingsSaving.value=false;}
 }
@@ -153,8 +168,8 @@ onMounted(async()=>{
 onBeforeUnmount(()=>{clearTimeout(saveTimer);disposers.forEach(d=>d());window.removeEventListener('keydown',saveShortcut);});
 </script>
 <template>
- <div class="app-shell">
-  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span><span class="brand-subtitle">程序设计实验 · 本地自测</span></div><span class="version">v{{version||'0.1.0-dev.2'}}</span></header>
+ <div class="app-shell" :data-theme="config?.theme||'dark'">
+  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span><span class="brand-subtitle">程序设计实验 · 本地自测</span></div><span class="version">v{{version||'0.1.0-dev.3'}}</span></header>
   <div v-if="error" class="alert error" role="alert"><span>{{error}}</span><button @click="error=''">关闭</button></div>
   <div v-if="notice" class="alert success" role="status"><span>{{notice}}</span><button @click="notice=''">关闭</button></div>
   <div v-if="!ready" class="loading"><h2>正在准备工作区</h2><p>加载配置、源码与本地编译器。</p></div>
@@ -165,7 +180,7 @@ onBeforeUnmount(()=>{clearTimeout(saveTimer);disposers.forEach(d=>d());window.re
    </section>
    <section class="runbar"><div><button class="primary" :disabled="!!busy" @click="action(run)">▶ {{draft.problem.testCases.length?'编译并运行测试点':'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div><span class="compiler-label" :title="compilerLabel">{{compilerLabel}}</span></section>
    <main class="workspace">
-    <section class="editor-pane"><div class="pane-heading"><div :title="sourcePath||'保存后写入当前数据目录'"><span class="file-icon">{{draft.language==='c'?'C':'C++'}}</span>{{filename}}{{dirty?' *':''}}</div><span class="save-status" :class="{failed:saveStatus==='保存失败'}">{{saveStatus}}</span></div><CodeEditor v-model="draft.source" :disabled="!!busy"/><div class="editor-status"><span>单文件{{draft.language==='c'?' C':' C++'}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存 · Ctrl+S'}}</span></div></section>
+    <section class="editor-pane"><div class="pane-heading"><div :title="sourcePath||'保存后写入当前数据目录'"><span class="file-icon">{{draft.language==='c'?'C':'C++'}}</span>{{filename}}{{dirty?' *':''}}</div><div class="editor-actions"><button class="format-button" :disabled="!!busy||formatting" title="格式化代码（Shift+Alt+F）" @click="action(formatCode)">{{formatting?'格式化中…':'格式化代码'}}</button><span class="save-status" :class="{failed:saveStatus==='保存失败'}">{{saveStatus}}</span></div></div><CodeEditor ref="editor" v-model="draft.source" :document-id="documentEpoch" :indent-size="config.indentSize" :theme="config.theme" :disabled="!!busy" @format="action(formatCode)"/><div class="editor-status"><span>单文件{{draft.language==='c'?' C':' C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存 · Ctrl+S'}}</span></div></section>
     <section class="cases-pane"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><button :disabled="!!busy" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="!!busy" title="重新读取已保存的源码与题目规则" @click="action(reload)">重新加载</button><button :disabled="!!busy" @click="addCase">＋ 新增</button></div></div>
      <div class="cases-list"><div v-if="!draft.problem.testCases.length" class="empty-state"><h3>直接运行，或添加测试点</h3><p>没有测试点时，编译成功后进入下方调试页。<br>需要比较输出时，导入标准 I/O 或新增测试点。</p><button @click="addCase">＋ 新增测试点</button></div>
       <article v-for="(test,index) in draft.problem.testCases" :key="test.id" class="case-card">
@@ -182,7 +197,7 @@ onBeforeUnmount(()=>{clearTimeout(saveTimer);disposers.forEach(d=>d());window.re
     <div v-show="bottomTab==='debug'" class="small-actions"><button :disabled="!!busy" @click="action(debug)">▶ 编译并启动</button><button :disabled="!debugRunning" @click="terminal?.eof()">发送 EOF</button><button :disabled="!busy" @click="action(stop)">■ 停止程序</button><button @click="terminal?.clear()">清空显示</button></div>
     <div v-show="bottomTab==='output'" class="small-actions"><span class="muted">原始编译与运行信息</span><button @click="logs=''">清空显示</button></div></div>
     <pre v-show="bottomTab==='output'" class="output-log" data-testid="output">{{logs||'点击“编译并运行”。没有测试点时，编译成功后会自动进入调试页。'}}</pre>
-    <div v-show="bottomTab==='debug'" class="terminal-wrapper"><DebugTerminal ref="terminal" :running="debugRunning" :scrollback="config.terminalBufferLines"/></div>
+    <div v-show="bottomTab==='debug'" class="terminal-wrapper"><DebugTerminal ref="terminal" :running="debugRunning" :scrollback="config.terminalBufferLines" :theme="config.theme"/></div>
    </section>
    <footer><span class="local-dot"></span>数据目录<span class="footer-path" :title="dataRoot">{{dataRoot}}</span><span class="footer-right">规则随题目 JSON 保存 · {{saveStatus}}</span></footer>
   </template>
@@ -192,7 +207,7 @@ onBeforeUnmount(()=>{clearTimeout(saveTimer);disposers.forEach(d=>d());window.re
     <div v-if="settingsMessage" class="settings-message" role="alert">{{settingsMessage}}</div>
     <fieldset class="settings-scroll" :disabled="settingsSaving">
      <section><h3>个人信息</h3><p>填写学号后，导出的文件名会自动加上学号。留空也可以导出。</p><div class="field-grid"><label>班号<input v-model="settings.classId" aria-label="班号"></label><label>姓名<input v-model="settings.name" aria-label="姓名"></label><label>学号<input v-model="settings.studentId" aria-label="学号" placeholder="例如 12345678"></label></div></section>
-     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label></div><p>打开已有源码后，保存会直接写回原文件。新代码保存在当前数据目录中。</p></section>
+     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><p>打开已有源码后，保存会直接写回原文件。新代码保存在当前数据目录中。</p></section>
      <section><h3>数据位置</h3><PathField v-model="settingsRoot" label="数据保存位置" kind="directory" @valid="pathValidity.data=$event"/><p>请选择已存在的文件夹。更换位置时复制现有资料，原目录保留。</p></section>
      <section><h3>编译器</h3><p>内置 Zig 自动使用可用核心；编译缓存会保留，以加快后续运行。</p><div class="field-grid"><label>使用方式<select v-model="settings.compiler.mode" aria-label="编译器使用方式"><option value="builtin">内置 Zig</option><option value="custom">自定义编译器</option></select></label><label v-if="settings.compiler.mode==='custom'">工具链类型<select v-model="settings.compiler.kind" aria-label="工具链类型"><option value="zig">Zig</option><option value="gcc">GCC</option><option value="clang">Clang</option></select></label></div><div v-if="settings.compiler.mode==='custom'" class="compiler-paths"><PathField v-model="settings.compiler.cPath" label="C 驱动路径" kind="executable" @valid="pathValidity.c=$event"/><PathField v-model="settings.compiler.cppPath" label="C++ 驱动路径" kind="executable" :allow-empty="settings.compiler.kind==='zig'||settings.language==='c'" @valid="pathValidity.cpp=$event"/></div></section>
      <section><h3>高级编译参数</h3><p>每行一个参数。源码和输出路径由程序追加。</p><div class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></section>

@@ -4,8 +4,9 @@ module.exports = {
  extraMetadata:{main:'electron/main.cjs',type:'commonjs'},
  files:[{from:'../.work/build',to:'.',filter:['electron/**','renderer/**','licenses/**']},
  'package.json','node_modules/node-pty/**','node_modules/node-addon-api/**'],
- asarUnpack:['node_modules/node-pty/**'],
+ asarUnpack:['node_modules/node-pty/**','node_modules/@wasm-fmt/**'],
  extraResources:[
+ {from:'../.work/build/electron/formatter-worker.cjs',to:'formatter-worker.cjs'},
  {from:'../.work/toolchains/\u0024{os}-\u0024{arch}',to:'toolchain'},
  {from:'../.work/checkers/\u0024{os}-\u0024{arch}',to:'checkers'},
  {from:'THIRD_PARTY_NOTICES.md',to:'THIRD_PARTY_NOTICES.md'},
