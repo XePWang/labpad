@@ -13,7 +13,7 @@ import {createRequire} from 'node:module';
 import {Compiler} from '../core/compiler';
 import writeFileAtomic from 'write-file-atomic';
 import {parseLabPackage,parseTestCases} from '../shared/project-format';
-import {prepareSource,prepareProject,submissionZip,fingerprint,checkRecord,type Submission} from '../core/submission';
+import {prepareSource,prepareProject,submissionZip,fingerprint,checkRecord,coverage,storedCheck,exportChoices,type Submission} from '../core/submission';
 import {judge} from '../core/judge';
 import {Storage,readJSON,importPairs,exists,writeSource} from '../core/storage';
 import {filePart,selection,validateConfig,validateDraft,validateLayout,validateProblem} from '../shared/validate';
@@ -104,12 +104,6 @@ async function bootstrap(){
  return {...await settingsResult(),draft:structuredClone(currentDocument),documents,sourcePath:current.sourceFile??null,version:app.getVersion()};
 }
 function submissionServices(){const options=structuredClone(config.compiler);return {identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
-async function confirmExport(prepared:Submission){
- if(!prepared.warnings.length)return true;
- const result=await dialog.showMessageBox(win,{type:'warning',title:'导出前请确认',message:'以下内容需要确认，仍要导出吗？',
-  detail:prepared.warnings.join('\n\n')+'\n\n将导出当前代码；未保存的编辑也会包含在内。',buttons:['取消导出','仍然导出'],defaultId:0,cancelId:0,noLink:true});
- return result.response===1;
-}
 async function confirmUnsaved(){
  const result=await dialog.showMessageBox(win,{type:'question',title:'保存修改',message:'当前源码或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
  return (['save','discard','cancel'] as const)[result.response];
@@ -166,6 +160,36 @@ async function initialize(){
  handle('bootstrap',bootstrap);handle('draft:save',persist);handle('draft:load',selectDraft);
  handle('draft:reload',async()=>{requireIdle();await saves;currentDocument=undefined;documentDirty=false;return bootstrap();});
  handle('projects',()=>storage.projects());
+  handle('source:recent',(lab:string,problem:string,closed:string[])=>{selection(lab,problem);return storage.recentDocument(lab,problem,closed);});
+  handle('check:state',async(value:Draft)=>{const d=validateDraft(value);return coverage(storage,d,config,await compiler.identity(config.compiler,d.language));});
+  handle('check:problems',async(value:Draft,buffers:Draft[])=>{
+   const current=validateDraft(value),project=(await storage.projects()).find(p=>p.labId===current.problem.labId),states:Record<string,string>={};
+   const identities=new Map<Language,string>();
+   for(const id of project?.problems??[]){
+    const d=id===current.problem.problemId?current:buffers.find(b=>b.problem.problemId===id&&b.problem.labId===current.problem.labId)??await storage.load(current.problem.labId,id,'c',true);
+    if(!identities.has(d.language))identities.set(d.language,await compiler.identity(config.compiler,d.language));
+    states[id]=(await coverage(storage,d,config,identities.get(d.language)!)).state;
+   }
+   return states;
+  });
+  handle('export:choices',async(buffers:Draft[])=>{requireIdle();await saves;if(!currentDocument)throw new Error('请先选择实验项目');return exportChoices(storage,currentDocument,buffers.map(validateDraft));});
+  handle('export:preview',async(kind:string,values:Draft[])=>{
+   requireIdle();await saves;if(!values.length)throw new Error('请至少选择一份源码');
+   const drafts=values.map(validateDraft);
+   return kind==='project'?prepareProject(storage,drafts[0],structuredClone(config),submissionServices(),drafts):prepareSource(storage,drafts[0],structuredClone(config),submissionServices());
+  });
+  handle('export:write',async(value:Submission)=>{
+   requireIdle();
+   if(!value||!['source','project'].includes(value.kind)||!Array.isArray(value.files)||!value.files.length)throw new Error('导出内容无效');
+   filePart(value.name,'导出文件名');for(const f of value.files){filePart(f.name,'源码文件名');if(typeof f.source!=='string'||!/\.(c|cpp)$/i.test(f.name))throw new Error('导出内容不是源码');}
+   const ext=value.kind==='project'?'zip':value.files[0].name.endsWith('.cpp')?'cpp':'c';
+   const selected=await dialog.showSaveDialog(win,{title:value.kind==='project'?'导出实验项目 · 选择保存位置':'导出源码 · 选择保存位置',defaultPath:value.name,filters:[{name:value.kind==='project'?'ZIP 压缩包':'源码文件',extensions:[ext]}]});
+   if(selected.canceled||!selected.filePath)return null;
+   const file=path.extname(selected.filePath)?selected.filePath:selected.filePath+'.'+ext;
+   if(path.extname(file).toLowerCase()!=='.'+ext)throw new Error('请选择 .'+ext+' 文件');
+   if(value.kind==='project')await writeFileAtomic(file,Buffer.from(submissionZip(value)));else await writeSource(file,value.files[0].source);
+   return file;
+  });
  handle('project:create',async(name:string)=>{requireIdle();await saves;const carry=currentDocument&&structuredClone(currentDocument);await storage.createLab(name);const next=await selectDraft(name,'',config.language);if(carry){const copy=await storage.newVersion({...next,source:carry.source,language:carry.language});currentDocument=copy;return copy;}return next;});
  handle('problem:create',async(lab:string,name:string,language:Language)=>{requireIdle();await saves;const carry=currentDocument&&!currentDocument.problem.problemId?structuredClone(currentDocument):undefined;const next=await storage.createProblem(lab,name,language);if(carry)await storage.save({...next,source:carry.source,language:carry.language});return selectDraft(lab,name,carry?.language??language);});
  ipcMain.on('document:state',(event,value:Draft,dirty:boolean)=>{if(event.sender===win.webContents){currentDocument=structuredClone(validateDraft(value));documentDirty=!!dirty;}});
@@ -173,7 +197,8 @@ async function initialize(){
  handle('documents:open',(lab:string,problem:string,language:Language)=>storage.openDocuments(lab,problem,language));
  handle('document:activate',async(id:string)=>{if(!currentDocument)throw new Error('尚未打开文件');await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:null};await storage.saveConfig(config);}});
  handle('source:version',(value:Draft,fromTemplate:boolean)=>{requireIdle();return storage.newVersion(value,fromTemplate===true);});
- handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
+ handle('clipboard:write',(text:string)=>{if(typeof text!=='string')throw new Error('复制内容无效');clipboard.writeText(text);});
+  handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
  handle('cache:clear',async()=>{requireIdle();await stopWarmup();return compiler.cache.clear();});
  handle('shortcuts:open',async()=>{
   if(shortcutWindow&&!shortcutWindow.isDestroyed()){shortcutWindow.focus();return;}
@@ -243,35 +268,18 @@ async function initialize(){
   const imported=await storage.importProject(lab,name);await selectDraft(imported.labId,imported.problemId,imported.language);
   return bootstrap();
  });
- handle('source:export',async(value:Draft)=>{
-  requireIdle();await saves;
-  const d=structuredClone(validateDraft(value)),prepared=await prepareSource(storage,d,structuredClone(config),submissionServices());
-  if(!await confirmExport(prepared))return null;
-  const selected=await dialog.showSaveDialog(win,{title:'导出源码 · 选择保存位置',defaultPath:prepared.name,filters:[{name:'源码文件',extensions:[d.language==='c'?'c':'cpp']}]});
-  if(selected.canceled||!selected.filePath)return null;
-  await writeSource(selected.filePath,prepared.files[0].source);return selected.filePath;
- });
- handle('project:export',async(value:Draft)=>{
-  requireIdle();await saves;
-  const prepared=await prepareProject(storage,value,structuredClone(config),submissionServices());
-  if(!await confirmExport(prepared))return null;
-  const selected=await dialog.showSaveDialog(win,{title:'导出实验项目 · 选择保存位置',defaultPath:prepared.name,filters:[{name:'ZIP 压缩包',extensions:['zip']}]});
-  if(selected.canceled||!selected.filePath)return null;
-  const file=path.extname(selected.filePath)?selected.filePath:selected.filePath+'.zip';
-  if(path.extname(file).toLowerCase()!=='.zip')throw new Error('实验项目请保存为 .zip 格式');
-  await writeFileAtomic(file,Buffer.from(submissionZip(prepared)));return file;
- });
  handle('problem:show',async(value:Draft)=>{
   const d=validateDraft(value),file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
   if(!await exists(file))throw new Error('请先保存当前题目，再打开题目文件');shell.showItemInFolder(file);
  });
- handle('judge',async(value:Draft)=>{
+ handle('judge',async(value:Draft,ids?:string[])=>{
   requireIdle();await stopWarmup();requireIdle();const d=structuredClone(validateDraft(value)),options=structuredClone(config.compiler),abort=new AbortController();controller=abort;
   const task=(async()=>{
    const hash=fingerprint(d,options,await compiler.identity(options,d.language));
-   await storage.recordCheck(d,checkRecord(d,hash));
-   const result=await judge(compiler,d,options,abort.signal,judgeEvent);
-   await storage.recordCheck(d,checkRecord(d,hash,result));return result;
+   const previous=await storedCheck(storage,d);
+   await storage.recordCheck(d,checkRecord(d,hash,undefined,previous));
+   const result=await judge(compiler,d,options,abort.signal,judgeEvent,ids);
+   await storage.recordCheck(d,checkRecord(d,hash,result,previous));return result;
   })();active=task;
   try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
  });

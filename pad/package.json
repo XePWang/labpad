@@ -1,6 +1,6 @@
 {
   "name": "labpad",
-  "version": "0.1.0-dev.6",
+  "version": "0.1.0-dev.7",
   "description": "C 语言实验自测与源码导出工具",
   "author": "LabPad contributors",
   "license": "MIT",
@@ -14,7 +14,10 @@
     "test:ui": "playwright test",
     "tools": "node scripts/prepare-tools.mjs",
     "package": "npm run build && electron-builder --config electron-builder.cjs",
-    "native": "node scripts/setup-native.mjs"
+    "native": "node scripts/setup-native.mjs",
+    "build:cli": "node scripts/build-cli.mjs",
+    "cli": "node ../.work/build/cli/labpad.cjs",
+    "package:cli": "npm run build:cli && node scripts/package-cli.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
@@ -46,14 +49,19 @@
     "@types/node": "^24.0.0",
     "@types/proper-lockfile": "4.1.4",
     "@types/write-file-atomic": "4.0.3",
+    "@types/yauzl": "2.10.3",
     "@vitejs/plugin-vue": "^6.0.7",
+    "csv-parse": "7.0.3",
+    "csv-stringify": "6.6.0",
     "electron": "45.1.0",
     "electron-builder": "^26.8.1",
-    "esbuild": "^0.27.0",
+    "esbuild": "0.28.2",
     "node-gyp": "12.4.0",
     "tsx": "^4.20.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
-    "vue-tsc": "^3.3.3"
+    "vue-tsc": "^3.3.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "3.4.0"
   }
 }

@@ -5,56 +5,242 @@
   "problems": [
     {
       "problemId": "warmup 2-1",
-      "title": "整数求和示例",
-      "language": "c",
+      "title": "日期显示",
       "source": [
         "#include <stdio.h>",
         "",
         "int main(void) {",
-        "    // 读取两个整数并输出它们的和",
+        "    // 输入 mm/dd/yyyy，将日期显示为 yyyy.mm.dd。",
+        "    // 提示语后保留一个空格或换行；输入回显不是程序输出。",
+        "    printf(\"Enter a date (mm/dd/yy): \");",
         "    return 0;",
         "}"
       ],
-      "timeLimitMs": 1000,
-      "outputLimitBytes": 65536,
-      "comparison": {
-        "type": "wcmp"
-      },
       "testCases": [
         {
-          "id": "1",
-          "input": "1 2\n",
-          "expectedOutput": "3\n"
+          "id": "date",
+          "input": "12/03/2015\n",
+          "expectedOutput": "Enter a date (mm/dd/yy): \nYou entered the date: 2015.12.03\n"
+        }
+      ]
+    },
+    {
+      "problemId": "warmup 2-2",
+      "title": "产品信息格式化",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 依次读入商品编号、单价与购买日期。",
+        "    // 每条输入提示后保留空格或换行；金额保留两位小数。",
+        "    // 提示语：Enter item number: / Enter unit price: / Enter purchase date (mm/dd/yy):",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "product",
+          "input": "385\n12.5\n12/03/2015\n",
+          "expectedOutput": "Enter item number: \nEnter unit price: \nEnter purchase date (mm/dd/yy): \nYour Information: \nItem Unit Purchase date\n385 $12.50 12032015\n"
+        }
+      ]
+    },
+    {
+      "problemId": "warmup 2-3",
+      "title": "计算时间差",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 时间输入使用英文逗号，例如 4,55；结果取非负间隔。",
+        "    // 提示语末尾保留空格或换行。",
+        "    // Input time one(hour, minute): / Input time two(hour, minute):",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "later-first",
+          "input": "4,55\n1,25\n",
+          "expectedOutput": "Input time one(hour, minute): \nInput time two(hour, minute): \n3 hour 30 minute\n"
         },
         {
-          "id": "2",
-          "input": "-7 7\n",
-          "expectedOutput": "0\n"
+          "id": "earlier-first",
+          "input": "1,56\n3,25\n",
+          "expectedOutput": "Input time one(hour, minute): \nInput time two(hour, minute): \n1 hour 29 minute\n"
+        }
+      ]
+    },
+    {
+      "problemId": "warmup 2-4",
+      "title": "大小写转换",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 输入一个字符；区分大写、小写和非字母。",
+        "    // 输入回显不是程序输出。",
+        "    printf(\"Input a letter: \");",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "uppercase",
+          "input": "A\n",
+          "expectedOutput": "Input a letter: \nThe lowercase of input is a.\n"
+        },
+        {
+          "id": "lowercase",
+          "input": "a\n",
+          "expectedOutput": "Input a letter: \nThe uppercase of input is A.\n"
+        },
+        {
+          "id": "not-letter",
+          "input": "1\n",
+          "expectedOutput": "Input a letter: \nNot a letter!\n"
         }
       ]
     },
     {
       "problemId": "Lab 2-1",
-      "title": "浮点求和示例",
-      "language": "cpp",
+      "title": "按时间问候",
       "source": [
-        "#include <iostream>",
+        "#include <stdio.h>",
         "",
-        "int main() {",
-        "    // 读取两个数并输出它们的和",
+        "int main(void) {",
+        "    // 读取 0 至 23 的整数小时，按指导书的区间输出问候。",
+        "    // 非法小时输出 the input is invalid.",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "hour-8",
+          "input": "8\n",
+          "expectedOutput": "good morning.\n"
+        },
+        {
+          "id": "hour-12",
+          "input": "12\n",
+          "expectedOutput": "good noon.\n"
+        },
+        {
+          "id": "hour-17",
+          "input": "17\n",
+          "expectedOutput": "good afternoon.\n"
+        },
+        {
+          "id": "hour-19",
+          "input": "19\n",
+          "expectedOutput": "good evening.\n"
+        },
+        {
+          "id": "hour-22",
+          "input": "22\n",
+          "expectedOutput": "good night.\n"
+        },
+        {
+          "id": "invalid",
+          "input": "-1\n",
+          "expectedOutput": "the input is invalid.\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 2-2",
+      "title": "字母金字塔",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 读取一个英文字母，转成大写后输出对称金字塔。",
+        "    // 每行开头使用普通英文空格，不输出下划线。",
+        "    // 非字母输出 Invalid character!；指导书第三行笔误按 ABCBA 处理。",
         "    return 0;",
         "}"
       ],
       "comparison": {
-        "type": "floatTokens",
-        "absoluteTolerance": 1e-06,
-        "relativeTolerance": 1e-06
+        "type": "strictText",
+        "ignoreTrailingSpaces": true,
+        "ignoreFinalNewlines": true
       },
       "testCases": [
         {
-          "id": "1",
-          "input": "0.1 0.2\n",
-          "expectedOutput": "0.3\n"
+          "id": "lowercase-c",
+          "input": "c\n",
+          "expectedOutput": "  A\n ABA\nABCBA\n"
+        },
+        {
+          "id": "uppercase-f",
+          "input": "F\n",
+          "expectedOutput": "     A\n    ABA\n   ABCBA\n  ABCDCBA\n ABCDEDCBA\nABCDEFEDCBA\n"
+        },
+        {
+          "id": "invalid",
+          "input": "-\n",
+          "expectedOutput": "Invalid character!\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 2-3",
+      "title": "回文素数（选做）",
+      "timeLimitMs": 5000,
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 读取 a、b，按从小到大的顺序逐行输出闭区间内的回文素数。",
+        "    // 本题运行时限为 5 秒。",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "sample",
+          "input": "5 500\n",
+          "expectedOutput": "5\n7\n11\n101\n131\n151\n181\n191\n313\n353\n373\n383\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 2-4",
+      "title": "优先编码器（选做）",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 读取四个连续的 0/1 字符，依次对应 A3、A2、A1、A0。",
+        "    // 输出最高优先级有效输入的编码，或无输入信号提示。",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "a3",
+          "input": "1010\n",
+          "expectedOutput": "A3的编码是11\n"
+        },
+        {
+          "id": "a2",
+          "input": "0111\n",
+          "expectedOutput": "A2的编码是10\n"
+        },
+        {
+          "id": "a1",
+          "input": "0011\n",
+          "expectedOutput": "A1的编码是01\n"
+        },
+        {
+          "id": "a0",
+          "input": "0001\n",
+          "expectedOutput": "A0的编码是00\n"
+        },
+        {
+          "id": "none",
+          "input": "0000\n",
+          "expectedOutput": "没有输入信号，编码器处于非编码状态\n"
         }
       ]
     }

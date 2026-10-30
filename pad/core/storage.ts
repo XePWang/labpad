@@ -4,6 +4,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import iconv from 'iconv-lite';
 import writeFileAtomic from 'write-file-atomic';
+import {migrateShortcuts} from '../shared/shortcuts';
 import {defaultConfig,defaultProblem,defaultSource} from '../shared/defaults';
 import {filePart,selection,validateConfig,validateDraft,validateProblem} from '../shared/validate';
 import {parseLabPackage,labDraft} from '../shared/project-format';
@@ -43,7 +44,7 @@ export class Storage{
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:value.shortcuts??defaultConfig().shortcuts});
+   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:migrateShortcuts(value.shortcuts)});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }
@@ -219,6 +220,26 @@ export class Storage{
    if(!version)throw new Error('找不到该源码版本');state.activeDocumentId=id;state.language=version.language;
    meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);
   });
+ }
+ async allDocuments(labId:string,problemId:string,language:Language):Promise<(LoadedDraft&{modifiedAt:number})[]>{
+  await this.openDocuments(labId,problemId,language);
+  const loaded=await this.load(labId,problemId,language,true),state=await this.projectState(labId,problemId,language);
+  const drafts=await Promise.all((state.documents??[]).map(async version=>{
+   const file=this.documentPath(labId,problemId,version),info=await stat(file).catch(()=>null);
+   if(!info)throw new Error(problemId+'：源码文件不存在：'+version.file);
+   return {...await this.readDocument(labId,problemId,version,loaded.problem),modifiedAt:info.mtimeMs};
+  }));
+  return drafts.sort((a,b)=>b.modifiedAt-a.modifiedAt||a.documentId!.localeCompare(b.documentId!));
+ }
+ async recentDocument(labId:string,problemId:string,closed:string[]):Promise<LoadedDraft|null>{
+  const state=await this.projectState(labId,problemId,'c'),versions=await Promise.all((state.documents??[]).map(async v=>({v,time:await stat(this.documentPath(labId,problemId,v)).then(s=>s.mtimeMs,()=>-1)})));
+  versions.sort((a,b)=>{
+   const ai=closed.indexOf(a.v.id),bi=closed.indexOf(b.v.id);
+   return (ai<0?Infinity:ai)-(bi<0?Infinity:bi)||b.time-a.time||a.v.id.localeCompare(b.v.id);
+  });
+  const found=versions.find(v=>v.time>=0);if(!found)return null;
+  const problem=(await this.load(labId,problemId,found.v.language)).problem;
+  return this.readDocument(labId,problemId,found.v,problem);
  }
  async projects():Promise<Project[]>{
   await this.flush();const base=path.join(this.root,'projects');if(!await exists(base))return [];

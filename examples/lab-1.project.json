@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.project",
+  "labId": "实验1",
+  "problems": [
+    {
+      "problemId": "Lab 1-1",
+      "title": "Hello World",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 在这里输出 Hello World!，熟悉编辑、保存和编译运行。",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "hello",
+          "input": "",
+          "expectedOutput": "Hello World!\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 1-2",
+      "title": "进制与逻辑（演示参数 x=12，y=8）",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 本测试使用固定虚构参数 x=12、y=8，标准输入为空。",
+        "    // 按指导书换成自己的参数后，请同步修改预期输出。",
+        "    // 补充指导书中的逻辑、位运算输出，并手动验算。",
+        "    short x = 12, y = 8;",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "demo-x12-y8",
+          "input": "",
+          "expectedOutput": "    0    1    1\n65523   12    8\n  -13   12    8\n\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 1-3",
+      "title": "温度转换",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 输入方向和温度：0 表示华氏转摄氏，1 表示摄氏转华氏。",
+        "    // 输出保留两位小数，包含指导书中的完整提示语。",
+        "    return 0;",
+        "}"
+      ],
+      "testCases": [
+        {
+          "id": "fahrenheit-100",
+          "input": "0 100\n",
+          "expectedOutput": "The Centigrade is 37.78\n"
+        },
+        {
+          "id": "centigrade-negative",
+          "input": "1 -6.67\n",
+          "expectedOutput": "The Fahrenheit is 19.99\n"
+        },
+        {
+          "id": "fahrenheit-zero",
+          "input": "0 0\n",
+          "expectedOutput": "The Centigrade is -17.78\n"
+        }
+      ]
+    }
+  ]
+}

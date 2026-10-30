@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "project": "project.json",
+  "roster": "../refs/roster.xls",
+  "weights": {
+    "warmup 2-1": 0,
+    "warmup 2-2": 0,
+    "warmup 2-3": 0,
+    "warmup 2-4": 0,
+    "Lab 2-1": 2,
+    "Lab 2-2": 3,
+    "Lab 2-3": 0,
+    "Lab 2-4": 0
+  },
+  "hiddenTests": {
+    "Lab 2-1": "hidden-lab-2-1.io.json"
+  },
+  "compiler": {
+    "kind": "gcc",
+    "cPath": "gcc",
+    "cppPath": "g++"
+  },
+  "isolation": "bubblewrap"
+}

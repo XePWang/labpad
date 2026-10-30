@@ -175,7 +175,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   await open(raw);await queueFormatter();await button('格式化代码').click();await editor().focus();await key('Control+Home');await page.keyboard.insertText('// newer edit');await key('Enter');
   await until(()=>button('格式化代码').isEnabled(),'stale format completes',60000);
   await equal('// newer edit\n'+raw,'format never overwrites newer typing');
-  assert.match(await page.getByRole('status').textContent(),/已改变/);await page.evaluate(()=>window.__formatQueue);
+  await until(()=>page.getByRole('status').textContent().then(text=>text.includes('已改变')),'format concurrency notice');await page.evaluate(()=>window.__formatQueue);
   await queueFormatter();await key('Control+s');await editor().focus();await key('Control+Home');await page.keyboard.insertText('// during save');await key('Enter');
   await until(async()=>(await fs.readFile(currentFile,'utf8')).startsWith('// newer edit'),'save snapshot reaches disk',60000);
   await equal('// during save\n// newer edit\n'+raw,'in-flight save never overwrites newer typing');

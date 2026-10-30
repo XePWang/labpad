@@ -66,7 +66,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   await until(()=>page.evaluate(()=>window.__debug.join('').includes('ready')),'live debug terminal');
   const sizeBefore=await app.evaluate(()=>globalThis.__sizes.at(-1));await drag(horizontal(),0,80);
   await until(async()=>{const size=await app.evaluate(()=>globalThis.__sizes.at(-1));return size&&sizeBefore&&size.rows!==sizeBefore.rows;},'terminal refits after splitter drag');
-  await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('5');await page.keyboard.press('Enter');await until(()=>page.evaluate(()=>window.__debug.join('').includes('value=5')),'terminal remains interactive after resizing');
+  await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.type('5');await page.keyboard.press('Enter');await until(()=>page.evaluate(()=>window.__debug.join('').includes('value=5')),'terminal remains interactive after resizing');
   const scrolling=await page.evaluate(()=>({page:document.scrollingElement.scrollTop,shell:document.querySelector('.app-shell').scrollTop}));assert.deepEqual(scrolling,{page:0,shell:0});
   await page.screenshot({path:path.join(evidence,'layout-debug-resized.png'),fullPage:true});await page.getByRole('button',{name:/停止程序/}).click();await until(()=>page.locator('.phase').textContent().then(t=>t.includes('已停止')),'stop debug');
   pass('running PTY receives new terminal dimensions and accepts input after resizing');

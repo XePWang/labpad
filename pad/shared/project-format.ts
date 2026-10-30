@@ -1,9 +1,9 @@
 import {defaultProblem,defaultSource} from './defaults';
 import {filePart,validateProblem} from './validate';
-import type {Draft,Language,Problem} from './types';
+import type {Draft,Language,Problem,CaseResult} from './types';
 export interface LabPackage{schemaVersion:1;kind:'labpad.project';labId:string;problems:LabProblem[]}
 export interface LabProblem{problemId:string;title:string;language:Language;source:string;timeLimitMs:number;outputLimitBytes:number;comparison:Problem['comparison'];testCases:Problem['testCases']}
-export interface CheckRecord{fingerprint:string;passed:number;total:number;status:'passed'|'failed'|'cancelled'|'error'|'running';checkedAt:string}
+export interface CheckRecord{fingerprint:string;passed:number;total:number;status:'passed'|'failed'|'cancelled'|'error'|'running';checkedAt:string;compilationStatus?:'success'|'CE'|'cancelled';cases?:CaseResult[]}
 export interface SourceDocument{id:string;file:string;language:Language;encoding:string;externalPath?:string;starter?:string;check?:CheckRecord}
 export interface ProblemState{documents?:SourceDocument[];activeDocumentId?:string;language:Language;starters:Partial<Record<Language,string>>;checks:Partial<Record<Language,CheckRecord>>;sources:Partial<Record<Language,{path:string;encoding:string}>>}
 export interface LabState{schemaVersion:1;labId:string;order?:string[];problems:Record<string,ProblemState>}
@@ -33,7 +33,7 @@ export function labDraft(lab:LabPackage,item:LabProblem,labId=lab.labId):Draft{
 }
 export function parseTestCases(value:unknown,current:Problem):Problem{
  const p=value as any;
- if(p?.kind==='labpad.project')throw new Error('这是实验项目文件，请从“导入”中选择“导入实验项目”');
+ if(p?.kind==='labpad.project')throw new Error('这是实验项目文件，请选择「导入 → 导入实验项目」。');
  if(!p||p.schemaVersion!==1||(p.kind!==undefined&&p.kind!=='labpad.testCases'))throw new Error('请选择标准 I/O JSON（kind: labpad.testCases，schemaVersion: 1）');
  return structuredClone(validateProblem({...current,
   ...(p.comparison!==undefined?{comparison:p.comparison}:{}),...(p.timeLimitMs!==undefined?{timeLimitMs:p.timeLimitMs}:{}),

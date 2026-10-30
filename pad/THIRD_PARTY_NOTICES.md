@@ -26,3 +26,5 @@ CP Editor is an interaction and design reference only. No CP Editor code or artw
 
 Distribution includes the relevant dependency notices. Runtime dependencies are
 bundled with the application; students do not need the development tools.
+
+CLI additionally uses SheetJS CE (Apache-2.0), csv-parse / csv-stringify (MIT), and yauzl (MIT). Their license texts are included in the generated licenses directory.

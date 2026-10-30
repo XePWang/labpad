@@ -7,16 +7,23 @@ import DebugTerminal from './components/DebugTerminal.vue';
 import OutputDiff from './components/OutputDiff.vue';
 import PathField from './components/PathField.vue';
 import SourceTabs from './components/SourceTabs.vue';
+import ProblemSelect from './components/ProblemSelect.vue';
+import ResultHelp from './components/ResultHelp.vue';
+import ExportDialog from './components/ExportDialog.vue';
+import {operationError} from '../shared/errors';
 import {createKeybindingsHandler,parseKeybinding,matchKeybindingPress} from 'tinykeys';
 import ActionMenu from './components/ActionMenu.vue';
-import type {Config,Draft,CaseResult,Compilation,DebugState,Project,DetectedCompiler,EditorCursor,LayoutConfig,LoadedDraft} from '../shared/types';
+import type {Config,Draft,CaseResult,Compilation,DebugState,Project,DetectedCompiler,EditorCursor,LayoutConfig,LoadedDraft,TestState} from '../shared/types';
 const api=window.labpad,clone=<T,>(v:T):T=>JSON.parse(JSON.stringify(v));
 const draft=ref<Draft>(),config=ref<Config>(),settings=ref<Config>(),projects=ref<Project[]>([]);
 const dataRoot=ref(''),settingsRoot=ref(''),version=ref(''),sourcePath=ref<string|null>(null),compilerLabel=ref('正在读取编译器…');
-const fileBusy=ref(false),blocked=computed(()=>!!busy.value||fileBusy.value);
+const fileBusy=ref(false),blocked=computed(()=>!!busy.value||fileBusy.value||!!exportKind.value);
 const busy=ref<'judge'|'debug'|null>(null),debugRunning=ref(false),bottomTab=ref<'output'|'debug'>('output');
 const logs=ref(''),error=ref(''),notice=ref(''),saveStatus=ref('已保存'),dirty=ref(false),ready=ref(false);
 const settingsOpen=ref(false),settingsSaving=ref(false),settingsMessage=ref(''),pathValidity=ref({data:true,c:true,cpp:true});
+const runningCases=ref<string[]>([]),selectedCases=ref<string[]>([]),problemStates=ref<Record<string,TestState>>({}),closedIds=ref<string[]>([]),browsingTabs=ref(false),compilationFailed=ref(false);
+const exportKind=ref<'source'|'project'|null>(null),exportCurrent=ref<Draft>(),exportBuffers=ref<Draft[]>([]),exportDialog=ref<InstanceType<typeof ExportDialog>>();
+let checkTimer:ReturnType<typeof setTimeout>|undefined;
 const results=ref<Record<string,CaseResult>>({}),diffOpen=ref<Record<string,boolean>>({}),finished=ref(false),phase=ref('准备就绪');
 const terminal=ref<InstanceType<typeof DebugTerminal>>(),editor=ref<InstanceType<typeof CodeEditor>>();
 const cursor=ref<EditorCursor>({line:1,column:1,selectionChars:0,selectionLines:0,lines:1,focused:false}),hintIndex=ref(0);
@@ -68,13 +75,28 @@ const validSettingsPaths=computed(()=>pathValidity.value.data&&(settings.value?.
 const cArgs=computed({get:()=>settings.value?.compiler.cArgs.join('\n')??'',set:v=>{if(settings.value)settings.value.compiler.cArgs=v.split(/\r?\n/).filter(Boolean);}});
 const cppArgs=computed({get:()=>settings.value?.compiler.cppArgs.join('\n')??'',set:v=>{if(settings.value)settings.value.compiler.cppArgs=v.split(/\r?\n/).filter(Boolean);}});
 const linkArgs=computed({get:()=>settings.value?.compiler.linkArgs.join('\n')??'',set:v=>{if(settings.value)settings.value.compiler.linkArgs=v.split(/\r?\n/).filter(Boolean);}});
-function message(e:unknown){return e instanceof Error?e.message:String(e);}
+function message(e:unknown){return operationError(e);}
 async function action(fn:()=>Promise<unknown>){error.value='';notice.value='';try{await fn();}catch(e){error.value=message(e);}}
 async function fileAction(fn:()=>Promise<unknown>){
  if(blocked.value)return;fileBusy.value=true;clearTimeout(saveTimer);
  try{await saveTail.catch(()=>{});await fn();}finally{fileBusy.value=false;if(dirty.value&&config.value?.saveMode==='auto'){saveTimer=setTimeout(()=>void action(saveAll),350);}}
 }
-function invalidate(){results.value={};diffOpen.value={};finished.value=false;phase.value='内容已修改，请重新运行';}
+const failedIds=computed(()=>draft.value?.problem.testCases.filter(t=>results.value[t.id]?.verdict&&results.value[t.id].verdict!=='AC').map(t=>t.id)??[]);
+function reportCursor(value:EditorCursor){cursor.value=value;}
+function invalidate(){results.value={};diffOpen.value={};finished.value=false;phase.value='内容已修改，请重新运行';queueChecks();}
+function queueChecks(){clearTimeout(checkTimer);checkTimer=setTimeout(()=>void refreshChecks().catch(e=>{error.value=message(e);}),300);}
+async function refreshChecks(){
+ if(!draft.value||!activeId.value||busy.value)return;
+ const d=snapshot(),epoch=revision;
+ const state=await api.checkState(d),states=await api.problemStates(d,tabs.value.map(t=>({...clone(t.document),problem:clone(d.problem)})));
+ if(revision!==epoch||draft.value.documentId!==d.documentId)return;
+ results.value=Object.fromEntries(state.cases.map(c=>[c.id,c]));finished.value=state.cases.length>0;problemStates.value=states;
+}
+function locateFailed(){const index=draft.value!.problem.testCases.findIndex(t=>failedIds.value.includes(t.id));if(index>=0)document.getElementById('test-case-'+index)?.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
+async function recentSource(){
+ const document=await api.recentSource(draft.value!.problem.labId,draft.value!.problem.problemId,clone(closedIds.value));
+ if(document){closedIds.value=closedIds.value.filter(id=>id!==document.documentId);addDocument(document);}else notice.value='还没有可恢复的源码，可以先新建一份。';
+}
 function recordState(){
  if(!draft.value)return;
  api.documentState(snapshot(),dirty.value);
@@ -115,14 +137,15 @@ function replaceDraft(value:LoadedDraft,file:string|null=null,documents:LoadedDr
  activeId.value=value.documentId??tabs.value[0]?.id??'';documentEpoch.value=activeId.value;
  draft.value={...clone(value),documentId:activeId.value};sourcePath.value=file??value.sourceFile??null;dirty.value=false;rulesDirty.value=false;savedRules=JSON.stringify(value.problem);revision++;
  if(config.value){config.value.currentLab=value.problem.labId;config.value.currentProblem=value.problem.problemId;config.value.language=value.language;}
- if(value.warning)error.value=value.warning;results.value={};diffOpen.value={};finished.value=false;saveStatus.value='已保存';phase.value='准备就绪';pauseSave=false;recordState();
+ selectedCases.value=value.problem.testCases.map(t=>t.id);closedIds.value=[];browsingTabs.value=true;
+ if(value.warning)error.value=value.warning;results.value={};diffOpen.value={};finished.value=false;saveStatus.value='已保存';phase.value='准备就绪';pauseSave=false;recordState();queueChecks();
 }
 async function loadWorkspace(value:LoadedDraft){replaceDraft(value,null,await api.openDocuments(value.problem.labId,value.problem.problemId,value.language));}
-function activateTab(id:string){
+function activateTab(id:string,focus=true){
  if(blocked.value||id===activeId.value)return;const tab=tabs.value.find(t=>t.id===id);if(!tab)return;
  clearTimeout(saveTimer);pauseSave=true;const problem=clone(draft.value!.problem);activeId.value=id;draft.value={...clone(tab.document),problem};sourcePath.value=tab.document.sourceFile??null;documentEpoch.value=id;
  dirty.value=tab.dirty||rulesDirty.value;saveStatus.value=dirty.value?'未保存':tab.status;revision++;config.value!.language=tab.document.language;pauseSave=false;invalidate();recordState();
- void action(()=>api.activateDocument(id));nextTick(()=>editor.value?.focus());
+ void action(()=>api.activateDocument(id));if(focus)nextTick(()=>editor.value?.focus());
  if(config.value?.saveMode==='auto'&&(tabs.value.some(t=>t.dirty)||rulesDirty.value))saveTimer=setTimeout(()=>void action(saveAll),350);
 }
 async function saveNow(){clearTimeout(saveTimer);await saveTail.catch(()=>{});if(activeTab.value)await enqueueSave(snapshot(),activeTab.value.revision);else if(rulesDirty.value){await api.saveProblem(clone(draft.value!.problem));savedRules=JSON.stringify(draft.value!.problem);rulesDirty.value=false;dirty.value=false;recordState();}}
@@ -145,6 +168,7 @@ async function tabAction(value:string,id=activeId.value){
   if(choice==='save')for(const t of targets.filter(t=>t.dirty||rulesDirty.value))await enqueueSave({...clone(t.document),problem:clone(draft.value!.problem)},t.revision);
   else if(closesAll&&rulesDirty.value){const original=await api.loadDraft(draft.value!.problem.labId,draft.value!.problem.problemId,draft.value!.language);pauseSave=true;draft.value!.problem=original.problem;savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
  }
+ closedIds.value=[...targets.map(t=>t.id).reverse(),...closedIds.value].slice(0,100);
  const ids=new Set(targets.map(t=>t.id));tabs.value=tabs.value.filter(t=>!ids.has(t.id));
  if(ids.has(activeId.value)){
   const next=tabs.value[Math.min(index,tabs.value.length-1)];activeId.value='';if(next)activateTab(next.id);else{documentEpoch.value='';dirty.value=rulesDirty.value;recordState();}
@@ -191,6 +215,7 @@ async function importSourceFile(){
 async function importIO(){
  clearTimeout(saveTimer);await saveTail;
  const problem=await api.importIO(draft.value!.problem.labId,draft.value!.problem.problemId);if(!problem)return;
+ selectedCases.value=problem.testCases.map(t=>t.id);
  const wasDirty=dirty.value;pauseSave=true;draft.value!.problem=problem;revision++;savedRules=JSON.stringify(problem);rulesDirty.value=false;pauseSave=false;
  config.value!.currentLab=problem.labId;config.value!.currentProblem=problem.problemId;
  dirty.value=wasDirty;saveStatus.value=wasDirty?'未保存':'已保存';recordState();invalidate();projects.value=await api.projects();
@@ -199,7 +224,7 @@ async function importIO(){
 }
 async function formatCode(){
  if(formatting.value||blocked.value)return;
- formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
+ browsingTabs.value=false;formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
  try{
   const formatted=await api.formatCode(draft.value!.source,language,size);
   if(id!==revision||size!==config.value!.indentSize||language!==draft.value!.language){notice.value='代码或缩进设置已改变，请重新格式化';return;}
@@ -208,8 +233,14 @@ async function formatCode(){
 }
 async function importProject(){if(!await beforeChange())return;const result=await api.importProject();if(result){applyBootstrap(result);notice.value='已导入项目：'+result.draft.problem.labId;}}
 async function chooseImport(value:string){await fileAction(value==='source'?importSourceFile:value==='project'?importProject:importIO);}
-async function chooseExport(value:string){await fileAction(async()=>{const file=await(value==='project'?api.exportProject(snapshot()):api.exportSource(snapshot()));if(file)notice.value='已导出：'+file;});}
+async function chooseExport(value:string){
+ if(blocked.value)return;if(value==='source'&&!activeTab.value)throw new Error('请先新建或导入源码');
+ if(value==='project'&&!draft.value!.problem.labId)throw new Error('请先选择实验项目');
+ await saveTail.catch(()=>{});exportCurrent.value=snapshot();exportBuffers.value=tabs.value.map(t=>({...clone(t.document),problem:clone(draft.value!.problem)}));exportKind.value=value==='project'?'project':'source';
+}
+function exportDone(file:string){exportKind.value=null;notice.value='已导出：'+file;}
 function showCompilation(c:Compilation){
+ compilationFailed.value=c.status==='CE';
  logs.value='编译命令\n'+c.command.map(s=>/\s/.test(s)?JSON.stringify(s):s).join(' ')+'\n\n'
  +(c.stdout?'stdout\n'+c.stdout+'\n':'')+(c.stderr?'stderr\n'+c.stderr+'\n':'')+'\n编译状态：'+c.status+' · '+c.elapsedMs+' ms\n';
 }
@@ -217,22 +248,23 @@ async function debug(){
  busy.value='debug';debugRunning.value=false;bottomTab.value='output';phase.value='编译中…';logs.value='';
  try{if(config.value!.saveMode==='auto'&&dirty.value)await saveNow();await api.debugStart(snapshot());}catch(e){busy.value=null;throw e;}
 }
-async function run(){
+async function run(ids?:string[]){
  if(!draft.value!.problem.testCases.length){await debug();return;}
- busy.value='judge';results.value={};finished.value=false;phase.value='编译中…';logs.value='';bottomTab.value='output';
+ const chosen=ids??selectedCases.value.filter(id=>draft.value!.problem.testCases.some(t=>t.id===id));if(!chosen.length){notice.value='请至少选择一个测试点';return;}
+ runningCases.value=chosen;busy.value='judge';problemStates.value[draft.value!.problem.problemId]='运行中';for(const id of chosen)delete results.value[id];finished.value=false;phase.value='编译中…';logs.value='';bottomTab.value='output';
  try{
   if(config.value!.saveMode==='auto'&&dirty.value)await saveNow();
-  const result=await api.judge(snapshot());if(result.compilation)showCompilation(result.compilation);
+  const result=await api.judge(snapshot(),chosen);if(result.compilation)showCompilation(result.compilation);
   if(result.status==='error'){error.value=result.error||'评测任务失败';phase.value='任务错误';}
   else if(result.status==='cancelled')phase.value='已停止';
   else if(result.compilation?.status==='CE')phase.value='编译失败 · CE';else phase.value='测试完成';
   for(const c of result.cases)results.value[c.id]=c;
   logs.value+='\n'+result.cases.map(c=>'测试点 '+c.id+' · '+(c.verdict||c.status)+' · '+c.elapsedMs+' ms'
    +(c.exitCode!==null?' · 退出码 '+c.exitCode:'')+(c.signal?' · '+c.signal:'')+(c.message?'\n'+c.message:'')+(c.stderr?'\nstderr\n'+c.stderr:'')).join('\n\n');
- }finally{busy.value=null;finished.value=true;}
+ }finally{busy.value=null;runningCases.value=[];finished.value=true;await refreshChecks();}
 }
 async function stop(){phase.value='正在停止…';await api.cancel();}
-function addCase(){const tests=draft.value!.problem.testCases;let id=1;while(tests.some(t=>t.id===String(id)))id++;tests.push({id:String(id),input:'',expectedOutput:''});}
+function addCase(){const tests=draft.value!.problem.testCases;let id=1;while(tests.some(t=>t.id===String(id)))id++;tests.push({id:String(id),input:'',expectedOutput:''});selectedCases.value.push(String(id));}
 function openSettings(){settings.value=clone(config.value!);settingsRoot.value=dataRoot.value;settingsMessage.value='';settingsOpen.value=true;}
 async function saveSettings(){
  if(settingsSaving.value)return;settingsSaving.value=true;settingsMessage.value='';
@@ -246,7 +278,7 @@ async function saveSettings(){
   if(languageChanged){await loadWorkspace(await api.loadDraft(config.value.currentLab,config.value.currentProblem,config.value.language,false));}
   else if(reloadNeeded)applyBootstrap(await api.reloadDocument());
   else if(!wasAuto&&config.value.saveMode==='auto'&&dirty.value)await saveNow();
-  settingsOpen.value=false;notice.value=oldRoot!==dataRoot.value?'数据目录：'+dataRoot.value:oldCompiler!==compilerLabel.value?compilerLabel.value:'设置已保存';
+  const resumingExport=!!exportKind.value;settingsOpen.value=false;if(resumingExport){await nextTick();await exportDialog.value?.resumeSettings();}queueChecks();if(!resumingExport)notice.value=oldRoot!==dataRoot.value?'数据目录：'+dataRoot.value:oldCompiler!==compilerLabel.value?compilerLabel.value:'设置已保存';
  }catch(e){settingsMessage.value=message(e);}finally{settingsSaving.value=false;}
 }
 async function detectInstalledCompilers(){
@@ -279,26 +311,26 @@ function installShortcuts(){
  const bindings:Record<string,(event:KeyboardEvent)=>void>={};
  prefixes=Object.values(config.value?.shortcuts??{}).flat().filter(key=>key.includes(' ')).map(key=>parseKeybinding(key)[0]);
  for(const [id,keys] of Object.entries(config.value?.shortcuts??{}))for(const key of keys)bindings[key]=event=>{
-  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value)return;
+  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value)return;
   const inTerminal=(event.target as Element)?.closest?.('.debug-terminal');
   if(id==='interrupt'){
    if(!inTerminal)return;event.preventDefault();event.stopPropagation();
-   if(terminal.value?.selection())void navigator.clipboard.writeText(terminal.value.selection());else if(debugRunning.value)void action(stop);return;
+   const text=terminal.value?.selection();if(text)void action(()=>api.copyText(text));else if(debugRunning.value)void action(stop);return;
   }
   if(['run','format','close','closeSaved','closeAll','next','previous'].includes(id)&&blocked.value)return;
-  if(!tabs.value.length&&id!=='saveAll')return;event.preventDefault();event.stopPropagation();
+  if(!tabs.value.length&&!['saveAll','newSource','importSource','settings','reopen'].includes(id))return;event.preventDefault();event.stopPropagation();
   const operations:Record<string,()=>Promise<unknown>|void>={
    run,save:saveNow,saveAll,format:formatCode,close:()=>tabAction('close'),closeSaved:()=>tabAction('saved'),closeAll:()=>tabAction('all'),
    next:()=>activateTab(tabs.value[(tabs.value.findIndex(t=>t.id===activeId.value)+1)%tabs.value.length].id),
    previous:()=>activateTab(tabs.value[(tabs.value.findIndex(t=>t.id===activeId.value)-1+tabs.value.length)%tabs.value.length].id),
-   copyPath:()=>tabAction('copyPath'),copyRelativePath:()=>tabAction('copyRelativePath')
+   copyPath:()=>tabAction('copyPath'),copyRelativePath:()=>tabAction('copyRelativePath'),reopen:recentSource,importSource:()=>fileAction(importSourceFile),settings:openSettings,newSource:()=>{[...document.querySelectorAll<HTMLButtonElement>('.toolbar-actions button')].find(b=>b.textContent?.includes('新建源码'))?.click();}
   };
   installShortcuts();
   const fn=operations[id];if(fn)void action(async()=>{await fn();});
  };
  keyHandler=createKeybindingsHandler(bindings,{ignore:event=>event.repeat||event.isComposing});
 }
-function handleShortcut(event:KeyboardEvent){if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
+function handleShortcut(event:KeyboardEvent){if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value||exportKind.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
 const cacheMessage=ref(''),clearingCache=ref(false);
 async function clearCache(){
  clearingCache.value=true;cacheMessage.value='';
@@ -314,31 +346,32 @@ onMounted(async()=>{
   applyBootstrap(await api.bootstrap());installShortcuts();
  });
 });
+watch(()=>draft.value?.problem.testCases.map(t=>t.id).join('\u0001'),()=>{const ids=draft.value?.problem.testCases.map(t=>t.id)??[];selectedCases.value=selectedCases.value.filter(id=>ids.includes(id));});
+watch(settingsOpen,(open,old)=>{if(old&&!open&&exportKind.value&&!settingsSaving.value)exportDialog.value?.cancelSettings();if(open&&exportKind.value)nextTick(()=>document.querySelector<HTMLInputElement>('[aria-label="班号"]')?.focus());});
 watch(notice,value=>{clearTimeout(noticeTimer);if(value)noticeTimer=setTimeout(()=>{notice.value='';},4000);});
-onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTimeout(pulseTimer);clearTimeout(saveTimer);disposers.forEach(d=>d());window.removeEventListener('keydown',handleShortcut,true);});
+onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTimeout(pulseTimer);clearTimeout(saveTimer);clearTimeout(checkTimer);disposers.forEach(d=>d());window.removeEventListener('keydown',handleShortcut,true);});
 </script>
 <template>
  <div class="app-shell" :data-theme="config?.theme||'dark'">
-  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span></div><span class="version">v{{version||'0.1.0-dev.6'}}</span></header>
+  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span></div><span class="version">v{{version||'0.1.0-dev.7'}}</span></header>
   <div v-if="error" class="alert error" role="alert"><span>{{error}}</span><button @click="error=''">关闭</button></div>
   <div v-if="!ready" class="loading"><h2>正在准备工作区</h2><p>加载配置、源码与本地编译器。</p></div>
   <template v-if="ready&&draft&&config">
    <section class="toolbar">
-    <div class="project-select"><label>实验项目<select aria-label="实验项目" :value="draft.problem.labId" :disabled="blocked" @change="selectionAction($event,true)"><option value="">&lt;无&gt;</option><option v-for="p in projects" :key="p.labId" :value="p.labId">{{p.labId}}</option><option value="@new:lab">＋ 新建项目…</option></select></label><span class="path-divider">/</span><label>题号<select aria-label="题号" :value="draft.problem.problemId" :disabled="blocked" @change="selectionAction($event,false)"><option value="">&lt;无&gt;</option><option v-for="p in problems" :key="p" :value="p">{{p}}</option><option value="@new:problem" :disabled="!draft.problem.labId">＋ 新建题号…</option></select></label><div class="run-actions"><button class="primary" :disabled="blocked||!activeTab" title="编译并运行（F9 / Ctrl+Enter）" @click="action(run)">▶ {{draft.problem.testCases.length?'编译并运行测试点':'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
+    <div class="project-select"><label>实验项目<select aria-label="实验项目" :value="draft.problem.labId" :disabled="blocked" @change="selectionAction($event,true)"><option value="">&lt;无&gt;</option><option v-for="p in projects" :key="p.labId" :value="p.labId">{{p.labId}}</option><option value="@new:lab">＋ 新建项目…</option></select></label><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label><div class="run-actions"><button class="primary" :disabled="blocked||!activeTab||(!!draft.problem.testCases.length&&!selectedCases.length)" title="编译并运行（F9 / Ctrl+Enter）" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
     <div class="toolbar-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
    </section>
    <Splitpanes class="work-layout" horizontal :maximize-panes="false" @resized="resized('outputPercent',$event)"><Pane :size="100-config.layout.outputPercent" :min-size="35" :max-size="88"><Splitpanes class="workspace" :maximize-panes="false" @resized="resized('editorPercent',$event)">
     <Pane class="editor-pane" :size="config.layout.editorPercent" :min-size="20" :max-size="80">
-    <SourceTabs :tabs="tabs.map(t=>({id:t.id,name:t.document.name||t.document.sourceFile?.split(/[\\/]/).pop()||'空项目.c',path:t.document.sourceFile||'',dirty:t.dirty}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab" @action="(value,id)=>action(()=>tabAction(value,id))"/>
-    <div v-if="activeTab" class="pane-heading editor-heading"><div :title="sourcePath||'保存后写入当前数据目录'"><span class="file-icon">{{draft.language==='c'?'C':'C++'}}</span>{{filename}}</div><div class="editor-actions"><button class="format-button" :disabled="blocked||formatting" @click="action(formatCode)">{{formatting?'格式化中…':'格式化代码'}}</button><span class="save-status" :class="{failed:saveStatus==='保存失败'}">{{saveStatus}}</span></div></div>
-    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="blocked" @cursor="cursor=$event"/>
-    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/></div></div>
+    <SourceTabs v-if="tabs.length" :format-visible="cursor.focused&&!browsingTabs" :formatting="formatting" @browse="browsingTabs=true" @format="action(formatCode)" :tabs="tabs.map(t=>({id:t.id,name:t.document.name||t.document.sourceFile?.split(/[\\/]/).pop()||'空项目.c',path:t.document.sourceFile||'',dirty:t.dirty,status:t.id===activeId?saveStatus:t.status}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab($event)" @action="(value,id)=>action(()=>tabAction(value,id))"/>
+    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="blocked" @cursor="reportCursor" @pointerdown="browsingTabs=false" @keydown.capture="browsingTabs=false"/>
+    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><button :disabled="blocked" @click="action(recentSource)">最近源码</button></div></div>
     <div class="editor-status"><span>{{draft.language==='c'?'C':'C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存'}}</span></div>
    </Pane>
-    <Pane class="cases-pane" :size="100-config.layout.editorPercent" :min-size="20" :max-size="80"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><button :disabled="blocked" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="blocked" title="重新读取已保存的源码与题目规则" @click="action(()=>fileAction(reload))">重新加载</button><button :disabled="blocked" @click="addCase">＋ 新增</button></div></div>
-     <div class="cases-list"><div v-if="!draft.problem.testCases.length" class="empty-state"><h3>直接运行，或添加测试点</h3><p>没有测试点时，编译成功后进入下方调试页。<br>需要比较输出时，导入标准 I/O 或新增测试点。</p><button :disabled="blocked" @click="addCase">＋ 新增测试点</button></div>
-      <article v-for="(test,index) in draft.problem.testCases" :key="test.id" class="case-card">
-       <div class="case-heading"><strong><span class="case-number">{{index+1}}</span>测试点 {{test.id}}</strong><div><span class="verdict" :class="results[test.id]?.verdict?.toLowerCase()">{{results[test.id]?.verdict||(results[test.id]?.status==='cancelled'?'已停止':finished?'未运行':busy==='judge'?'等待中':'未运行')}}</span><span v-if="results[test.id]" class="elapsed">{{results[test.id].elapsedMs}} ms</span><button class="delete" :disabled="blocked" aria-label="删除测试点" @click="draft.problem.testCases.splice(index,1)">×</button></div></div>
+    <Pane class="cases-pane" :size="100-config.layout.editorPercent" :min-size="20" :max-size="80"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><ResultHelp :theme="config.theme"/><button v-if="failedIds.length" :disabled="blocked" @click="locateFailed">定位未通过</button><button v-if="failedIds.length" :disabled="blocked" @click="action(()=>run(failedIds))">重测未通过</button><button :disabled="blocked" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="blocked" title="重新读取已保存的源码与题目规则" @click="action(()=>fileAction(reload))">重新加载</button><button :disabled="blocked" @click="addCase">＋ 新增</button></div></div>
+     <div v-if="draft.problem.testCases.length" class="case-selection"><label><input type="checkbox" aria-label="选择全部测试点" :checked="selectedCases.length===draft.problem.testCases.length" :indeterminate.prop="!!selectedCases.length&&selectedCases.length<draft.problem.testCases.length" :disabled="blocked" @change="selectedCases=($event.target as HTMLInputElement).checked?draft.problem.testCases.map(t=>t.id):[]">已选 {{selectedCases.length}} / {{draft.problem.testCases.length}}</label></div><div class="cases-list"><div v-if="!draft.problem.testCases.length" class="empty-state"><h3>直接运行，或添加测试点</h3><p>没有测试点时，编译成功后进入下方调试页。<br>需要比较输出时，导入标准 I/O 或新增测试点。</p><button :disabled="blocked" @click="addCase">＋ 新增测试点</button></div>
+      <article v-for="(test,index) in draft.problem.testCases" :key="test.id" class="case-card" :id="'test-case-'+index" :data-status="results[test.id]?.verdict?.toLowerCase()||(busy==='judge'&&runningCases.includes(test.id)?'running':'neutral')">
+       <div class="case-heading"><strong><input v-model="selectedCases" type="checkbox" :value="test.id" :aria-label="'选择测试点 '+test.id" :disabled="blocked"><span class="case-number">{{index+1}}</span>测试点 {{test.id}}</strong><div><button :disabled="blocked||!activeTab" :aria-label="'运行测试点 '+test.id" @click="action(()=>run([test.id]))">▶</button><span class="verdict" :class="results[test.id]?.verdict?.toLowerCase()">{{results[test.id]?.verdict||(results[test.id]?.status==='cancelled'?'已停止':finished?'未运行':busy==='judge'?'等待中':'未运行')}}</span><ResultHelp v-if="results[test.id]?.verdict" :theme="config.theme"/><span v-if="results[test.id]" class="elapsed">{{results[test.id].elapsedMs}} ms</span><button class="delete" :disabled="blocked" aria-label="删除测试点" @click="draft.problem.testCases.splice(index,1)">×</button></div></div>
        <div class="io-pair"><label>标准输入 <span>stdin</span><textarea v-model="test.input" :disabled="blocked" :aria-label="'标准输入 '+test.id" placeholder="允许空输入" spellcheck="false"></textarea></label><label>预期输出 <span>expected</span><textarea v-model="test.expectedOutput" :disabled="blocked" :aria-label="'预期输出 '+test.id" placeholder="填写完整标准输出" spellcheck="false"></textarea></label></div>
        <div class="actual-heading"><span>实际输出</span><button v-if="results[test.id]" @click="diffOpen[test.id]=!diffOpen[test.id]">{{diffOpen[test.id]?'查看原文':'查看 Diff'}}</button></div>
        <OutputDiff v-if="diffOpen[test.id]&&results[test.id]" :expected="test.expectedOutput" :actual="results[test.id].stdout"/>
@@ -349,7 +382,7 @@ onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTim
    </Splitpanes></Pane><Pane :size="config.layout.outputPercent" :min-size="12" :max-size="65">
    <section class="bottom-panel"><div class="bottom-heading"><div class="bottom-tabs"><button :class="{active:bottomTab==='output'}" @click="bottomTab='output'">输出</button><button :class="{active:bottomTab==='debug'}" @click="bottomTab='debug'">调试 <i v-if="debugRunning" class="live-dot"></i></button></div>
     <div v-show="bottomTab==='debug'" class="small-actions"><button :disabled="blocked||!activeTab" @click="action(debug)">▶ 编译并启动</button><button :disabled="!debugRunning" @click="terminal?.eof()">发送 EOF</button><button :disabled="!busy" @click="action(stop)">■ 停止程序</button><button @click="terminal?.clear()">清空显示</button></div>
-    <div v-show="bottomTab==='output'" class="small-actions"><button @click="logs=''">清空显示</button></div></div>
+    <div v-show="bottomTab==='output'" class="small-actions"><ResultHelp v-if="compilationFailed" :theme="config.theme"/><button @click="logs=''">清空显示</button></div></div>
     <pre v-show="bottomTab==='output'" class="output-log" data-testid="output">{{logs||'点击“编译并运行”。没有测试点时，编译成功后会自动进入调试页。'}}</pre>
     <div v-show="bottomTab==='debug'" class="terminal-wrapper"><DebugTerminal ref="terminal" :running="debugRunning" :scrollback="config.terminalBufferLines" :theme="config.theme"/></div>
    </section></Pane></Splitpanes>
@@ -372,5 +405,6 @@ onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTim
   </div>
   <div v-if="compilerChoiceOpen" class="modal-backdrop compiler-picker-backdrop"><section ref="compilerDialog" tabindex="-1" class="compiler-picker" role="dialog" aria-modal="true" aria-labelledby="compiler-picker-title" @keydown.esc.stop.prevent="compilerChoiceOpen=false"><h2 id="compiler-picker-title">自动检测编译器</h2><template v-if="detectedCompilers.length"><p>选择编译器后，自动填写类型、路径和默认参数；保存设置后生效。</p><div class="compiler-options"><label v-for="candidate in detectedCompilers" :key="candidate.id" class="compiler-option"><input v-model="selectedCompiler" type="radio" name="detected-compiler" :value="candidate.id" :aria-label="candidate.name+' '+candidate.compiler.cPath"><span><strong>{{candidate.name}}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong><span>{{candidate.version}}</span><code>{{candidate.compiler.cPath}}</code><small v-if="candidate.target">{{candidate.target}}</small></span></label></div></template><p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p><div class="compiler-picker-actions"><button @click="compilerChoiceOpen=false">{{detectedCompilers.length?'取消':'关闭'}}</button><button v-if="detectedCompilers.length" class="primary" :disabled="!selectedCompiler" @click="useDetectedCompiler">使用此编译器</button></div></section></div>
   <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
+  <ExportDialog v-if="exportKind&&exportCurrent&&config" ref="exportDialog" :kind="exportKind" :current="exportCurrent" :buffers="exportBuffers" :theme="config.theme" :student-id="config.studentId" :suspended="settingsOpen" @close="exportKind=null" @settings="openSettings" @done="exportDone"/>
  </div>
 </template>

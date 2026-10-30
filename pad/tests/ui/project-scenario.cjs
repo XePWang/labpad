@@ -1,149 +1,88 @@
-const assert=require('node:assert/strict');
-const fs=require('node:fs/promises');
-const os=require('node:os');
-const path=require('node:path');
-async function until(fn,label,timeout=30000){
- const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,60));}throw new Error('Timeout: '+label);
-}
+const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const {topic}=require('./selectors.cjs');
+const {clipboardGuard}=require('./editor-scenario.cjs');
+const until=async(fn,label,timeout=120000)=>{const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,60));}throw Error('Timeout: '+label);};
 async function runProjectScenario(electron,{executable,cwd,evidence}){
- await fs.mkdir(evidence,{recursive:true});const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'LabPad-project-中文-')),data=path.join(temporary,'labpad'),errors=[],checks=[];
- const launch=()=>electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data}});
- let app=await launch(),page;
- const button=name=>page.getByRole('button',{name,exact:true}),input=name=>page.getByRole('textbox',{name,exact:true}),select=name=>page.getByRole('combobox',{name,exact:true});
- const state=()=>page.evaluate(()=>window.labpad.bootstrap());
- const editor=()=>page.locator('.cm-content');
+ await fs.mkdir(evidence,{recursive:true});const dir=await fs.mkdtemp(path.join(os.tmpdir(),'LabPad-dev7-流程-')),data=path.join(dir,'labpad'),errors=[],groups=[];
+ const restore=await clipboardGuard('LabPad-dev7-clipboard');
+ let app=await electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data,LABPAD_SKIP_WARMUP:'1'}}),page;
+ const echo='#include <stdio.h>\nint main(void){char s[80];if(scanf("%79s",s)==1)puts(s);return 0;}\n';
+ const fixture={schemaVersion:1,kind:'labpad.project',labId:'实验2',problems:[
+  {problemId:'Lab 2-1',source:echo,testCases:[{id:'one',input:'1\n',expectedOutput:'1\n'},{id:'two',input:'2\n',expectedOutput:'2\n'},{id:'float',input:'0.3\n',expectedOutput:'0.30',comparison:{type:'floatTokens',absoluteTolerance:0}}]},
+  {problemId:'Lab 2-2',language:'cpp',testCases:[{id:'1',input:'',expectedOutput:'ok'}]},{problemId:'warmup 2-1',testCases:[]}
+ ]};
+ const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.getByRole('tab'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
+ const pass=label=>{groups.push(label);console.log('PASS '+label);};
+ async function menu(label,item){await button(label).click();await page.getByRole('menuitem',{name:item,exact:true}).click();}
+ async function idle(){await until(()=>page.getByRole('button',{name:/编译并运行/}).isEnabled(),'idle');}
+ async function files(value){await app.evaluate((_,v)=>globalThis.__files=v,value);}
+ async function save(){await editor().focus();await page.keyboard.press('Control+s');await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'saved');}
+ async function edit(text){await editor().fill(text);await until(()=>(state()).then(s=>s.draft.source===text),'source changed');}
+ async function changeTopic(value){await topic(page).selectOption(value);await until(()=>topic(page).inputValue().then(v=>v===value),'topic '+value);}
  async function prepare(){
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
-  await app.evaluate(({dialog})=>{
-   globalThis.__files=[];globalThis.__warnings=[];globalThis.__saveNames=[];globalThis.__saveTarget='';globalThis.__exportAnswer=0;globalThis.__copyAnswer=0;
-   dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});
-   dialog.showMessageBox=async(...args)=>{
-    const options=args.at(-1);globalThis.__warnings.push(options);
-    if(options.title==='导出前请确认'){
-     const response=globalThis.__holdWarning?await new Promise(resolve=>globalThis.__resolveWarning=resolve):globalThis.__exportAnswer;
-     return {response,checkboxChecked:false};
-    }
-    return {response:options.title==='导入项目副本'?globalThis.__copyAnswer:1,checkboxChecked:false};
-   };
-   dialog.showSaveDialog=async(...args)=>{globalThis.__saveNames.push(args.at(-1).defaultPath);return {canceled:!globalThis.__saveTarget,filePath:globalThis.__saveTarget};};
-  });
+  await app.evaluate(({dialog})=>{globalThis.__files=[];globalThis.__target='';globalThis.__nativeSaves=[];globalThis.__answer=1;dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});dialog.showSaveDialog=async(...args)=>{globalThis.__nativeSaves.push(args.at(-1));return {canceled:!globalThis.__target,filePath:globalThis.__target};};dialog.showMessageBox=async()=>({response:globalThis.__answer,checkboxChecked:false});});
+  await page.evaluate(()=>{window.__events=[];window.__debug=[];window.labpad.onJudge(e=>window.__events.push(e));window.labpad.onDebugData((s,ack)=>{window.__debug.push(s);ack();});});
  }
- async function files(values){await app.evaluate((_,v)=>globalThis.__files=v,values);}
- async function chooseMenu(label,item){await button(label).click();await page.getByRole('menuitem',{name:item,exact:true}).click();}
- async function idle(){await until(()=>button('导出').isEnabled(),'file operation completes');}
- async function warning(){return app.evaluate(()=>globalThis.__warnings.at(-1));}
- async function setAnswer(response){await app.evaluate((_,v)=>globalThis.__exportAnswer=v,response);}
- async function target(name){const file=path.join(temporary,name);await app.evaluate((_,v)=>globalThis.__saveTarget=v,file);return file;}
- async function settings(){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('dialog').waitFor();}
- async function apply(){await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});}
- async function changeTopic(name){await select('题号').selectOption(name);await until(()=>select('题号').inputValue().then(v=>v===name),'topic selected');}
- async function projectJSON(value,name='project.json'){const file=path.join(temporary,name);await fs.writeFile(file,JSON.stringify(value,null,2));await files([file]);return file;}
- async function archive(file){
-  const zlib=require('node:zlib'),bytes=await fs.readFile(file),result={};let at=0;
-  while(bytes.readUInt32LE(at)===0x04034b50){
-   const method=bytes.readUInt16LE(at+8),size=bytes.readUInt32LE(at+18),nameLength=bytes.readUInt16LE(at+26),extra=bytes.readUInt16LE(at+28),name=bytes.subarray(at+30,at+30+nameLength).toString('utf8');
-   const dataAt=at+30+nameLength+extra,body=bytes.subarray(dataAt,dataAt+size);result[name]=(method===8?zlib.inflateRawSync(body):body).toString('utf8');at=dataAt+size;
-  }
-  return result;
- }
- const printing=n=>'#include <stdio.h>\nint main(void) { puts("'+n+'"); return 0; }\n';
- const value={schemaVersion:1,kind:'labpad.project',labId:'实验2',problems:[
-  {problemId:'warmup 2-1',source:printing('starter').trimEnd().split('\n'),testCases:[{id:'1',input:'',expectedOutput:'starter\n'}]},
-  {problemId:'Lab 2-1',language:'cpp',source:'#include <iostream>\nint main() { std::cout << 9; }\n',testCases:[{id:'1',input:'',expectedOutput:'9'}]},
-  {problemId:'Lab 2-2',source:printing(2),testCases:[]}
- ]};
- async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
- function pass(label){checks.push(label);console.log('PASS '+label);}
+ async function closeExport(){await page.getByRole('dialog').getByRole('button',{name:'取消导出',exact:true}).click();await until(()=>page.getByRole('dialog').count().then(n=>n===0),'export closed');}
+ async function zip(file){const zlib=require('node:zlib'),b=await fs.readFile(file),entries={};let i=0;while(b.readUInt32LE(i)===0x04034b50){const method=b.readUInt16LE(i+8),size=b.readUInt32LE(i+18),n=b.readUInt16LE(i+26),extra=b.readUInt16LE(i+28),name=b.subarray(i+30,i+30+n).toString('utf8'),start=i+30+n+extra,body=b.subarray(start,start+size);entries[name]=(method===8?zlib.inflateRawSync(body):body).toString('utf8');i=start+size;}return entries;}
  try{
-  await prepare();
-  if(process.platform!=='darwin'){
-   assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMenuBarVisible()),false);
-   await page.keyboard.press('Alt');assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isMenuBarVisible()),false);
-  }
-  await settings();assert.equal(await input('班号').getAttribute('placeholder'),'例如 9527');assert.equal(await input('姓名').getAttribute('placeholder'),'例如 马冬梅');assert.equal(await input('学号').getAttribute('placeholder'),'例如 7355608');
-  for(const name of ['班号','姓名','学号'])assert.equal(await input(name).inputValue(),'');
-  assert.equal(await page.getByText('本地保存 · 无需账号',{exact:true}).count(),0);
-  await page.getByRole('checkbox',{name:'保存时自动格式化',exact:true}).uncheck();await apply();
-  assert.equal(await page.locator('footer').locator(':scope > *').count(),2);assert.equal(await page.locator('footer .compiler-label,footer .status-folder,footer .status-save').count(),0);
-  pass('Windows/Linux menu bar stays hidden; identity examples are placeholders; settings and footer have no redundant labels');
-  await button('导入').focus();await page.keyboard.press('ArrowDown');await page.getByRole('menuitem',{name:'导入标准 I/O',exact:true}).waitFor();await page.keyboard.press('Escape');
-  await until(()=>page.getByRole('menuitem').count().then(n=>n===0),'Escape dismisses menu');assert.equal(await button('导入').evaluate(e=>e===document.activeElement),true);
-  await button('导出').click();const outside=await page.locator('.brandbar').boundingBox();await page.mouse.click(outside.x+20,outside.y+20);await until(()=>page.getByRole('menuitem').count().then(n=>n===0),'outside click dismisses menu');
-  for(const name of ['导入','导出']){
-   const trigger=button(name),arrow=trigger.locator('svg'),box=await trigger.boundingBox(),icon=await arrow.boundingBox();
-   assert.ok(icon.width>=14&&icon.height>=14);assert.ok(Math.abs((icon.y+icon.height/2)-(box.y+box.height/2))<=1);
-   const size=await trigger.evaluate(e=>getComputedStyle(e).fontSize);assert.equal(size,await button('保存').evaluate(e=>getComputedStyle(e).fontSize));
-  }
-  await page.locator('.toolbar-actions').screenshot({path:path.join(evidence,'menu-arrows.png')});
-  pass('native dropdown keyboard opening, Escape, focus return, outside dismissal and centered 14px arrows with matching text size');
-  await projectJSON(value);await button('导入').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await page.keyboard.press('Enter');
-  await until(()=>select('实验项目').inputValue().then(v=>v==='实验2'),'keyboard project import');await idle();
-  assert.equal((await state()).draft.problem.problemId,'warmup 2-1');assert.equal((await state()).draft.source,printing('starter'));
-  assert.deepEqual((await state()).projects,[{labId:'实验2',problems:['warmup 2-1','Lab 2-1','Lab 2-2']}]);
-  await changeTopic('Lab 2-1');assert.equal((await state()).draft.language,'cpp');assert.match((await state()).draft.source,/iostream/);
-  await changeTopic('warmup 2-1');assert.equal((await state()).draft.language,'c');
-  pass('project JSON imports presets, tests and ordered problem names; topic selection restores C/C++ independently');
-  const saveCount=await app.evaluate(()=>globalThis.__saveNames.length);await chooseMenu('导出','导出实验项目');await idle();
-  const options=await warning();assert.equal(options.title,'导出前请确认');assert.deepEqual(options.buttons,['取消导出','仍然导出']);assert.equal(options.defaultId,0);assert.equal(options.cancelId,0);
-  assert.match(options.detail,/未编辑源码：warmup 2-1、Lab 2-1、Lab 2-2/);assert.match(options.detail,/尚未测试/);assert.match(options.detail,/未设置测试点/);assert.match(options.detail,/班号、姓名、学号/);
-  assert.equal(await app.evaluate(()=>globalThis.__saveNames.length),saveCount);
-  await setAnswer(1);const missing=await target('without-identity.zip');await chooseMenu('导出','导出实验项目');await until(()=>fs.stat(missing).then(()=>true,()=>false),'forced project export');await idle();
-  assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),'未填班号_未填姓名_未填学号_实验2.zip');
-  assert.deepEqual(Object.keys(await archive(missing)),['未填班号_未填姓名_未填学号_实验2/warmup 2-1.c','未填班号_未填姓名_未填学号_实验2/Lab 2-1.cpp','未填班号_未填姓名_未填学号_实验2/Lab 2-2.c']);
-  pass('export preflight points to unedited/unverified topics and missing identity; cancellation stops before save dialog; force exports source-only ZIP');
-  await settings();await input('班号').fill('240101');await input('姓名').fill('张三');await input('学号').fill('12345678');await apply();
-  const changed='// student edit, not yet saved\n'+printing('starter');await editor().fill(changed);
-  await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});await until(()=>page.getByRole('button',{name:/编译并运行/}).isEnabled(),'judge persistence completes');
-  await fs.access(path.join(data,'projects','实验2','.labpad'));
-  const beforeWarnings=await app.evaluate(()=>globalThis.__warnings.length),source=await target('source.c');
-  await chooseMenu('导出','导出源码');await until(()=>fs.stat(source).then(()=>true,()=>false),'accepted source export');await idle();
-  assert.equal(await fs.readFile(source,'utf8'),changed);assert.equal(await app.evaluate(()=>globalThis.__warnings.length),beforeWarnings);
-  assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),'12345678_warmup 2-1.c');
-  assert.equal(await fs.readFile(path.join(data,'projects','实验2','warmup 2-1.c'),'utf8'),printing('starter'));
-  await editor().fill(changed+'// changed again\n');await setAnswer(0);await chooseMenu('导出','导出源码');await idle();assert.match((await warning()).detail,/需重新测试/);
-  pass('export uses unsaved editor contents without saving; current accepted result suppresses warning, later edits invalidate it');
-  const before=await state();const io={schemaVersion:1,labId:'foreign',problemId:'foreign',title:'foreign',testCases:[{id:'x',input:'',expectedOutput:'starter'}]};
-  await projectJSON(io,'io.json');await chooseMenu('导入','导入标准 I/O');await idle();
-  const after=await state();assert.equal(after.draft.problem.labId,'实验2');assert.equal(after.draft.problem.problemId,'warmup 2-1');assert.equal(after.draft.source,before.draft.source);assert.equal(after.draft.problem.testCases[0].id,'x');
-  assert.equal(await page.locator('.save-status').textContent(),'未保存');
-  await projectJSON(value,'wrong-io.json');await chooseMenu('导入','导入标准 I/O');await idle();await page.getByRole('alert').waitFor();assert.match(await page.getByRole('alert').textContent(),/导入实验项目/);await button('关闭').click();
-  assert.equal((await state()).draft.problem.testCases[0].id,'x');
-  pass('standard I/O import stays in current topic, preserves unsaved source and rejects a project JSON without mutation');
-  await projectJSON(value);await chooseMenu('导入','导入实验项目');await idle();assert.equal((await state()).projects.length,1);
-  await app.evaluate(()=>globalThis.__copyAnswer=1);await chooseMenu('导入','导入实验项目');await idle();assert.equal((await state()).draft.problem.labId,'实验2 (2)');assert.equal((await state()).projects.length,2);
-  assert.equal(JSON.parse(await fs.readFile(path.join(data,'projects','实验2','warmup 2-1.json'),'utf8')).testCases[0].id,'x');
-  const invalid={...value,labId:'bad',problems:[{problemId:'valid'},{problemId:'../invalid'}]};await projectJSON(invalid,'invalid.json');await chooseMenu('导入','导入实验项目');await idle();await page.getByRole('alert').waitFor();assert.equal((await state()).projects.length,2);
-  assert.ok(!(await fs.readdir(data)).some(n=>n.startsWith('.import-')));await button('关闭').click();
-  pass('same-name import cancels or creates a separate copy; invalid projects never appear partially');
-  await select('实验项目').selectOption('实验2');await until(()=>select('实验项目').inputValue().then(v=>v==='实验2'),'return to original');await idle();
-  await changeTopic('Lab 2-1');
-  const external=path.join(temporary,'external.cpp');await fs.writeFile(external,'// external before dialog\nint main(){return 0;}\n');await files([external]);await importSource();await idle();
-  const packagePath=await target('submission.zip');await setAnswer(1);await app.evaluate(()=>globalThis.__holdWarning=true);
-  await chooseMenu('导出','导出实验项目');await until(()=>app.evaluate(()=>typeof globalThis.__resolveWarning==='function'),'preflight is waiting');
-  assert.equal(await button('导入').isDisabled(),true);assert.equal(await select('题号').isDisabled(),true);assert.equal(await editor().getAttribute('contenteditable'),'false');
-  await fs.writeFile(external,'// external changed during review\nint main(){return 1;}\n');
-  await app.evaluate(()=>{globalThis.__holdWarning=false;globalThis.__resolveWarning(1);});await until(()=>fs.stat(packagePath).then(()=>true,()=>false),'atomic snapshot ZIP');await idle();
-  const contents=await archive(packagePath),prefix='240101_张三_12345678_实验2/';
-  assert.deepEqual(Object.keys(contents),[prefix+'12345678_warmup 2-1.c',prefix+'12345678_Lab 2-1.cpp',prefix+'12345678_Lab 2-2.c']);
-  assert.match(contents[prefix+'12345678_Lab 2-1.cpp'],/external before dialog/);assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),'240101_张三_12345678_实验2.zip');
-  await changeTopic('warmup 2-1');await changeTopic('Lab 2-1');assert.match((await state()).draft.source,/external before dialog/);
-  pass('project archive matches specified root and names; preflight freezes export contents and blocks overlapping edits; per-topic imported copies reopen correctly');
-  await app.evaluate(()=>globalThis.__saveTarget='');await chooseMenu('导出','导出实验项目');await idle();assert.deepEqual(await archive(packagePath),contents);
-  if(process.platform==='linux'||process.platform==='win32'){
-   if(process.platform==='linux')await fs.chmod(temporary,0o500);else await fs.chmod(packagePath,0o444);await app.evaluate((_,v)=>globalThis.__saveTarget=v,packagePath);await chooseMenu('导出','导出实验项目');await idle();
-   await page.getByRole('alert').waitFor();assert.deepEqual(await archive(packagePath),contents);await fs.chmod(temporary,0o700);await fs.chmod(packagePath,0o600);await button('关闭').click();
-  }
-  await page.screenshot({path:path.join(evidence,'project-export.png'),fullPage:true});
-  assert.deepEqual(errors,[]);await app.close();app=await launch();await prepare();
-  assert.equal((await state()).draft.language,'cpp');assert.match((await state()).draft.source,/external before dialog/);
-  assert.equal((await state()).projects.length,2);assert.equal((await state()).config.studentId,'12345678');
-  pass('save-dialog cancellation and failed archive replacement preserve prior ZIP; project metadata and imported copies survive restart');
-  console.log('ALL PROJECT CHECKS PASSED ('+checks.length+' groups)');
- }catch(error){
-  if(page&&!page.isClosed()){console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'project-failure.png'),fullPage:true}).catch(()=>{});}throw error;
- }finally{
-  await fs.chmod(temporary,0o700).catch(()=>{});await app.close().catch(()=>{});await fs.rm(temporary,{recursive:true,force:true});
- }
+  await prepare();await page.getByRole('button',{name:'⚙ 设置',exact:true}).click();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
+  const project=path.join(dir,'project.json');await fs.writeFile(project,JSON.stringify(fixture));await files([project]);
+  await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入标准 I/O','导入实验项目']);await page.getByRole('menuitem',{name:'导入实验项目',exact:true}).click();await until(()=>topic(page).inputValue().then(v=>v==='Lab 2-1'),'import');await idle();
+  assert.equal(await page.locator('.editor-heading').count(),0);assert.equal(await tabs().count(),1);assert.equal((await state()).draft.source,echo);
+  await page.screenshot({path:path.join(evidence,'workspace-dark.png')});pass('project import, exact menu order, C/C++ templates, single tab bar and no duplicate title');
+  await editor().click();await page.keyboard.press('End');await until(()=>button('格式化代码').evaluate(e=>Number(getComputedStyle(e.parentElement).opacity)>0.95),'format shown');
+  await tabs().first().hover();await until(()=>button('格式化代码').evaluate(e=>Number(getComputedStyle(e.parentElement).opacity)<0.05),'format hidden while browsing tabs');
+  await button('格式化代码').focus();await until(()=>button('格式化代码').evaluate(e=>Number(getComputedStyle(e.parentElement).opacity)>0.95),'format shown by keyboard');pass('format action fades with editor/tab focus, reserves layout space and remains reachable by keyboard');
+  await page.getByRole('checkbox',{name:'选择全部测试点',exact:true}).uncheck();await page.getByRole('checkbox',{name:'选择测试点 two',exact:true}).check();await page.getByRole('button',{name:/编译并运行/}).click();await idle();
+  assert.equal(await page.locator('.verdict.ac').count(),1);await page.getByRole('combobox',{name:'题号',exact:true}).click();assert.match(await page.getByRole('option').filter({has:page.getByText('Lab 2-1',{exact:true})}).textContent(),/部分已测/);await page.keyboard.press('Escape');
+  await button('运行测试点 one').click();await idle();await button('运行测试点 float').click();await idle();assert.equal(await page.locator('.verdict.ac').count(),3);
+  await page.getByRole('combobox',{name:'题号',exact:true}).click();assert.match(await page.getByRole('option').filter({has:page.getByText('Lab 2-1',{exact:true})}).textContent(),/通过/);await page.keyboard.press('Escape');pass('selected and single-case runs merge only same-source coverage, preserve unrun cases and update topic status');
+  const bad=echo.replace('puts(s)','puts(s[0]==\'2\'?"wrong":s)');await edit(bad);await page.getByRole('checkbox',{name:'选择全部测试点',exact:true}).check();await page.keyboard.press('F9');await idle();assert.equal(await page.locator('.verdict.wa').count(),1);
+  const goodBg=await page.locator('.case-card[data-status="ac"]').first().evaluate(e=>getComputedStyle(e).backgroundColor),badBg=await page.locator('.case-card[data-status="wa"]').evaluate(e=>getComputedStyle(e).backgroundColor);assert.notEqual(goodBg,badBg);
+  await page.locator('.case-card[data-status="wa"]').getByRole('button',{name:'结果说明',exact:true}).click();await page.getByText('WA · 答案不符',{exact:true}).waitFor();await page.keyboard.press('Escape');
+  await page.evaluate(()=>window.__events=[]);await button('重测未通过').click();await idle();const events=await page.evaluate(()=>window.__events);assert.equal(events.filter(e=>e.type==='compilation').length,1);assert.deepEqual(events.filter(e=>e.type==='case').map(e=>e.result.id),['two']);
+  await button('定位未通过').click();await page.locator('.case-card[data-status="wa"]').screenshot({path:path.join(evidence,'case-results-dark.png')});pass('whole-card result colors, verdict explanation, failed-case location and one-compile failed-only retest');
+  await edit(echo+'// changed\n');assert.equal(await page.locator('.verdict.ac').count(),0);await button('运行测试点 one').click();await idle();assert.equal(await page.locator('.verdict.ac').count(),1);await page.keyboard.press('Control+Enter');await idle();assert.equal(await page.locator('.verdict.ac').count(),3);await save();
+  await menu('新建源码','C++ 源码（.cpp）');await until(()=>tabs().count().then(n=>n===2),'second version');await edit('#include <cstdio>\nint main(){puts("other");return 0;}\n');await save();
+  await page.locator('.editor-pane').screenshot({path:path.join(evidence,'source-versions.png')});
+  const secondId=(await state()).draft.documentId;await tabs().first().click();await until(()=>(state()).then(s=>s.draft.documentId!==secondId),'first version active');
+  pass('source changes invalidate previous AC, F9/Control+Enter work, C/C++ versions keep separate text and checks');
+  await menu('导出','导出实验项目');await page.getByRole('dialog').waitFor();await until(()=>page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).count().then(n=>n===1),'choices loaded');
+  assert.equal(await page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).isChecked(),true);
+  await button('取消全选').click();assert.equal(await button('下一步').isDisabled(),true);
+  await page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).check();const versions=page.getByRole('checkbox',{name:/导出版本 Lab 2-1 /});assert.equal(await versions.count(),2);
+  await versions.first().uncheck();assert.equal(await page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).evaluate(e=>e.indeterminate),true);assert.equal(await versions.nth(1).isChecked(),true);
+  await page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).uncheck();assert.equal(await versions.nth(1).isChecked(),false);await page.getByRole('checkbox',{name:'导出题号 Lab 2-1',exact:true}).check();
+  await page.getByRole('dialog').screenshot({path:path.join(evidence,'export-selection.png')});await button('下一步').click();await button('前往设置').waitFor();assert.ok(!(await page.getByRole('dialog').innerText()).includes('Lab 2-2'));
+  await button('前往设置').click();await page.getByRole('textbox',{name:'班号',exact:true}).fill('9527');await page.getByRole('textbox',{name:'姓名',exact:true}).fill('马冬梅');await page.getByRole('textbox',{name:'学号',exact:true}).fill('7355608');const movedData=path.join(dir,'moved-data');await fs.mkdir(movedData);await page.getByRole('textbox',{name:'数据保存位置',exact:true}).fill(movedData);await button('保存设置').click();await until(()=>page.getByRole('dialog').innerText().then(text=>text.includes('9527_马冬梅_7355608_实验2.zip')),'identity export preview refreshed');await until(()=>button('仍然导出').isEnabled(),'export preview ready');
+  assert.match(await page.getByRole('dialog').innerText(),/9527_马冬梅_7355608_实验2.zip/);await button('返回选择').click();assert.equal(await versions.first().isChecked(),true);assert.equal(await page.getByRole('checkbox',{name:'导出题号 Lab 2-2',exact:true}).isChecked(),false);
+  await button('下一步').click();const target=path.join(dir,'submission.zip');await app.evaluate((_,v)=>globalThis.__target=v,target);await button('仍然导出').click();await until(()=>fs.stat(target).then(()=>true,()=>false),'ZIP created');await until(()=>page.getByRole('dialog').count().then(n=>n===0),'export completed');
+  await fs.copyFile(target,path.join(evidence,'submission.zip'));
+  const archive=await zip(target),names=Object.keys(archive);assert.equal(names.length,2);assert.ok(names.some(n=>n.endsWith('_v2.c'))||names.some(n=>n.endsWith('_v2.cpp')));assert.ok(names.every(n=>n.startsWith('9527_马冬梅_7355608_实验2/7355608_Lab 2-1')));
+  pass('two-level export selection, parent/child/half checks, only-selected warnings, identity-settings continuation and unique mixed-language ZIP files');
+  await page.getByRole('button',{name:'⚙ 设置',exact:true}).click();for(const field of ['班号','姓名','学号'])await page.getByRole('textbox',{name:field,exact:true}).fill('');await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
+  const single=path.join(dir,'single.c');await app.evaluate((_,v)=>globalThis.__target=v,single);await menu('导出','导出源码');await button('前往设置').waitFor();await button('前往设置').click();await page.getByRole('textbox',{name:'班号',exact:true}).fill('9527');await button('取消').click();await button('前往设置').waitFor();
+  await button('前往设置').click();await page.getByRole('textbox',{name:'班号',exact:true}).fill('9527');await page.getByRole('textbox',{name:'姓名',exact:true}).fill('马冬梅');await page.getByRole('textbox',{name:'学号',exact:true}).fill('7355608');const frozen=(await state()).draft.source;await button('保存设置').click();await until(()=>fs.stat(single).then(()=>true,()=>false),'source resumes directly after identity');assert.equal(await fs.readFile(single,'utf8'),frozen);await until(()=>page.getByRole('dialog').count().then(n=>n===0),'source export done');
+  pass('export selection survives data relocation; identity settings cancel returns, and identity-only source warning resumes directly with frozen code');
+  const before=await state(),wrong=path.join(dir,'wrong.json');await fs.writeFile(wrong,JSON.stringify(fixture));await files([wrong]);await menu('导入','导入标准 I/O');await page.getByRole('alert').waitFor();const error=await page.getByRole('alert').textContent();assert.match(error,/导入 → 导入实验项目/);assert.ok(!error.includes('Error invoking remote method'));assert.equal((await state()).draft.source,before.draft.source);await page.waitForTimeout(450);assert.equal(await page.getByRole('alert').textContent(),error);await page.getByRole('alert').getByRole('button',{name:'关闭',exact:true}).click();
+  await edit('int main( {');await page.keyboard.press('F9');await idle();assert.match(await page.getByTestId('output').textContent(),/error:/);assert.match(await page.locator('.phase').textContent(),/CE/);await page.locator('.bottom-heading').getByRole('button',{name:'结果说明',exact:true}).click();await page.getByText('CE · 编译失败',{exact:true}).waitFor();await page.keyboard.press('Escape');pass('operation failures show the reason without Electron wrapper, preserve input, while compiler errors and CE explanation remain intact');
+  await changeTopic('warmup 2-1');await edit('#include <stdio.h>\nint main(void){char s[80];printf("等待输入:");fflush(stdout);if(fgets(s,sizeof s,stdin))printf("收到:%s",s);return 0;}\n');
+  await page.keyboard.press('F9');await until(()=>page.getByRole('textbox',{name:'调试输入',exact:true}).isEnabled(),'debug prompt');assert.equal(await page.locator('.debug-prompt>span').textContent(),'>');await page.locator('.bottom-panel').screenshot({path:path.join(evidence,'debug-input.png')});
+  await page.getByRole('textbox',{name:'调试输入',exact:true}).fill('中文输入');await page.keyboard.press('Enter');await until(()=>page.evaluate(()=>window.__debug.join('').includes('收到:中文输入')),'UTF8 echo');await idle();
+  assert.ok(!(await page.evaluate(()=>window.__debug.join(''))).includes('>收到'));
+  await edit('#include <stdio.h>\nint main(void){puts("运行中");fflush(stdout);for(;;){}return 0;}\n');await page.keyboard.press('F9');await until(()=>page.getByRole('textbox',{name:'调试输入',exact:true}).isEnabled(),'second debug');const prompt=page.getByRole('textbox',{name:'调试输入',exact:true});await prompt.fill('LabPad-dev7-clipboard 复制这段文本');await prompt.selectText();await page.keyboard.press('Control+c');await until(()=>app.evaluate(({clipboard})=>clipboard.readText()).then(text=>text==='LabPad-dev7-clipboard 复制这段文本'),'terminal selection copied');assert.equal(await prompt.isEnabled(),true);await page.keyboard.press('ArrowRight');await page.keyboard.press('Control+c');await idle();assert.equal(await page.getByRole('textbox',{name:'调试输入',exact:true}).isDisabled(),true);
+  pass('no-case debug opens a separate > input row, accepts Chinese without prefix injection, handles no-newline prompts and Ctrl+C interruption');
+  await save();const saved=(await state()).draft.source;await edit(saved+'// discard me\n');await tabs().last().click({button:'right'});await page.getByRole('menuitem',{name:'全部关闭',exact:true}).click();await until(()=>tabs().count().then(n=>n===0),'all tabs closed');
+  await button('最近源码').click();await until(()=>tabs().count().then(n=>n===1),'recent source');assert.equal((await state()).draft.source,saved);
+  await page.keyboard.press('Control+F4');await until(()=>tabs().count().then(n=>n===0),'closed saved');await page.keyboard.press('Control+Shift+t');await until(()=>tabs().count().then(n=>n===1),'reopen shortcut');pass('empty editor offers new/recent source; reopening uses saved content, discards stay discarded and Control+Shift+T restores');
+  await page.getByRole('button',{name:'⚙ 设置',exact:true}).click();await page.getByRole('combobox',{name:'主题',exact:true}).selectOption('light');await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
+  await changeTopic('Lab 2-1');await edit(echo);await page.getByRole('checkbox',{name:'选择全部测试点',exact:true}).check();await page.keyboard.press('F9');await idle();await page.screenshot({path:path.join(evidence,'workspace-light.png')});
+  const bg=await page.locator('.case-card[data-status="ac"]').first().evaluate(e=>getComputedStyle(e).backgroundColor);assert.notEqual(bg,goodBg);pass('light and dark themes have distinct harmonious semantic card colors and retain verdict text');
+  assert.deepEqual(errors,[]);console.log('ALL DEV7 PROJECT CHECKS PASSED ('+groups.length+' groups)');
+ }catch(e){if(page&&!page.isClosed()){await page.screenshot({path:path.join(evidence,'dev7-failure.png')}).catch(()=>{});console.error(await page.locator('body').innerText());}throw e;}
+ finally{await app.close().catch(()=>{});await restore();await fs.rm(dir,{recursive:true,force:true});}
 }
 module.exports={runProjectScenario};
 if(require.main===module){const {_electron}=require('playwright');runProjectScenario(_electron,{executable:path.resolve(process.argv[2]),cwd:process.cwd(),evidence:path.resolve(process.argv[3])}).catch(e=>{console.error(e);process.exitCode=1;});}

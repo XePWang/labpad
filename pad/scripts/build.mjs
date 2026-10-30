@@ -9,3 +9,5 @@ await build({entryPoints:['electron/main.ts','electron/preload.ts','electron/for
  format:'cjs',external:['electron','node-pty'],sourcemap:true});
 await viteBuild();
 await import('./notices.mjs');
+
+await import('./build-cli.mjs');

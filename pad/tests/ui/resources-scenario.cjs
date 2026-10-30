@@ -42,7 +42,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   // Repeated PTY sessions and closing histories should leave no running programs or session output.
   for(let cycle=0;cycle<8;cycle++){
    await editor().fill(source+'// cycle '+cycle);await page.keyboard.press('F7');await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'debug started');
-   await page.locator('.xterm-helper-textarea').focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'debug stopped');
+   await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'debug stopped');
    await menu('另存为新版本');await until(()=>tabs().count().then(n=>n===2),'new version');await app.evaluate(()=>globalThis.__answer=1);await menu('关闭',1);await until(()=>tabs().count().then(n=>n===1),'version closes');
    const directories=(await fs.readdir(os.tmpdir())).filter(n=>n.startsWith('labpad-runtime-'+runtime.pid+'-'));assert.equal(directories.length,1);
    assert.deepEqual((await fs.readdir(path.join(os.tmpdir(),directories[0]))).filter(n=>n.startsWith('run-')),[]);

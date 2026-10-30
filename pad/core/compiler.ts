@@ -5,13 +5,13 @@ import path from 'node:path';
 import {runProcess} from './process';
 import {compilerEnvironment} from './toolchains';
 import type {CompilerConfig,Language,Compilation} from '../shared/types';
-export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string}
+export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string;workDirectory?:string;isolation?:'bubblewrap'|'none'}
 export interface Prepared {compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
  readonly session:Promise<string>;
  readonly cache:CompilerCache;
  constructor(readonly paths:RuntimePaths){
-  this.session=mkdtemp(path.join(tmpdir(),'labpad-runtime-'+process.pid+'-'));
+  this.session=(async()=>{const base=paths.workDirectory??tmpdir();await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'labpad-runtime-'+process.pid+'-'));})();
   this.cache=new CompilerCache(this.paths.cacheDirectory??path.join(tmpdir(),'labpad-compiler-cache-'+(process.getuid?.()??'user')));
  }
  async environment(config?:CompilerConfig):Promise<NodeJS.ProcessEnv>{

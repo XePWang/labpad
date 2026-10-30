@@ -54,7 +54,7 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
   await tabs().first().click();assert.match((await state()).draft.source,/unsaved-current/);assert.equal(await page.locator('.save-status').textContent(),'未保存');await app.evaluate(()=>globalThis.__answer=1);await closeAll();
   pass('toolbar New Source uses the course template and preserves the previous unsaved tab');
   for(const language of ['c','cpp']){const doc=await create(language,true,language==='c'?presetC:undefined);assert.equal(path.dirname(doc.sourcePath),path.join(data,'projects','实验2'));assert.equal(doc.draft.problem.problemId,'Lab 2-1');await closeAll();}
-  await page.getByRole('combobox',{name:'题号',exact:true}).selectOption('Lab 2-2');await until(()=>editor().count().then(n=>n===1),'C++ problem selected');await closeAll();const reopened=await create('cpp',true,presetCpp);
+  await require('./selectors.cjs').topic(page).selectOption('Lab 2-2');await until(()=>editor().count().then(n=>n===1),'C++ problem selected');await closeAll();const reopened=await create('cpp',true,presetCpp);
   pass('new sources use per-topic C/C++ presets, default the other language and stay in the matching project directory');
   await save();await page.screenshot({path:path.join(evidence,'new-source.png'),fullPage:true});await app.close();app=await launch();await prepare();
   assert.ok((await state()).documents.some(d=>d.documentId===reopened.draft.documentId));assert.equal((await state()).config.sourceFile,null);assert.deepEqual(errors,[]);

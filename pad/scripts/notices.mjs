@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 const root=process.cwd(),require=createRequire(path.join(root,'package.json'));
 const packageData=JSON.parse(await readFile(path.join(root,'package.json'),'utf8'));
-const queue=Object.keys(packageData.dependencies),seen=new Set(),sections=[];
+const queue=[...Object.keys(packageData.dependencies),'xlsx','yauzl','csv-parse','csv-stringify'],seen=new Set(),sections=[];
 while(queue.length){
  const name=queue.shift();if(seen.has(name))continue;seen.add(name);
  let file;

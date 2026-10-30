@@ -2,7 +2,11 @@ param([string]$Marker)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$original=[Windows.Forms.Clipboard]::GetDataObject()
+$original=$null
+for($attempt=0;$attempt -lt 10;$attempt++){
+ try{$original=[Windows.Forms.Clipboard]::GetDataObject();break}
+ catch{if($attempt -eq 9){throw};Start-Sleep -Milliseconds 100}
+}
 $backup=New-Object Windows.Forms.DataObject
 if($null -ne $original){
  foreach($format in $original.GetFormats($false)){

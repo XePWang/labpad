@@ -24,7 +24,7 @@ async function temporary(fn:(s:Storage,dir:string)=>Promise<void>){
 function passed(d:Draft):JudgeResult{return {status:'completed',compiler:'test',comparison:d.problem.comparison,compilation:{status:'success',stdout:'',stderr:'',command:[],elapsedMs:1},cases:d.problem.testCases.map(t=>({id:t.id,status:'completed',verdict:'AC',elapsedMs:1,stdout:t.expectedOutput,stderr:'',exitCode:0,signal:null,message:''}))};}
 const fullIdentity=()=>({...defaultConfig(),classId:'240101',name:'张三',studentId:'12345678'});
 test('project JSON accepts C/C++ presets, source lines and defaults while rejecting invalid names and duplicate IDs',async()=>{
- const example=parseLabPackage(JSON.parse(await readFile(path.join(root,'examples/lab-2.project.json'),'utf8')));assert.equal(example.labId,'实验2');assert.equal(example.problems[1].language,'cpp');
+ const example=parseLabPackage(JSON.parse(await readFile(path.join(root,'examples/lab-2.project.json'),'utf8')));assert.equal(example.labId,'实验2');assert.equal(example.problems.length,8);assert.equal(example.problems[0].problemId,'warmup 2-1');
  const io=parseTestCases(JSON.parse(await readFile(path.join(root,'examples/sum.io.json'),'utf8')),defaultProblem('实验2','warmup 2-1'));assert.equal(io.testCases[0].input,'1 2\n');
  const p=parseLabPackage(packageValue());assert.equal(p.labId,'实验2');assert.equal(p.problems[0].language,'c');assert.match(p.problems[0].source,/\n/);assert.equal(p.problems[1].language,'cpp');assert.equal(p.problems[0].comparison.type,'wcmp');
  assert.equal(parseLabPackage({schemaVersion:1,kind:'labpad.project',labId:'空题',problems:[{problemId:'1'}]}).problems[0].source,defaultSource('c'));

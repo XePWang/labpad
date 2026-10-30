@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.testCases",
+  "testCases": [
+    {
+      "id": "midnight",
+      "input": "0\n",
+      "expectedOutput": "good morning.\n"
+    },
+    {
+      "id": "late-evening",
+      "input": "20\n",
+      "expectedOutput": "good evening.\n"
+    },
+    {
+      "id": "hour-24",
+      "input": "24\n",
+      "expectedOutput": "the input is invalid.\n"
+    }
+  ]
+}

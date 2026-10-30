@@ -32,7 +32,7 @@ function reportCursor(state:EditorState){
  emit('cursor',{line:line.number,column:countColumn(line.text.slice(0,head-line.from),state.tabSize)+1,selectionChars:ranges.reduce((n,r)=>n+r.to-r.from,0),selectionLines,lines:state.doc.lines,focused:!!view?.hasFocus});
 }
 function extensions(id=props.documentId){
- return [basicSetup,cpp(),highlightWhitespace(),keymap.of([indentWithTab,{key:'Mod-Shift-z',run:redo,preventDefault:true},{key:'Mod-h',run:openSearchPanel,scope:'editor search-panel'}]),
+ return [basicSetup,cpp(),highlightWhitespace(),keymap.of([indentWithTab,{key:'Mod-Shift-z',run:redo,preventDefault:true},{key:navigator.platform.toLowerCase().includes('mac')?'Mod-Alt-f':'Mod-h',run:openSearchPanel,scope:'editor search-panel'}]),
   indentation.of(indentConfig()),colorTheme.of(colors()),readOnly.of([EditorState.readOnly.of(!!props.disabled),EditorView.editable.of(!props.disabled)]),
   EditorView.contentAttributes.of({'aria-label':'源码编辑器'}),
   EditorView.theme({'&':{height:'100%'},'.cm-scroller':{overflow:'auto',fontFamily:'"Cascadia Code","JetBrains Mono",Consolas,monospace',fontSize:'14px',lineHeight:'1.7'},

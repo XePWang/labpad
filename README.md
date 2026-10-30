@@ -1,118 +1,46 @@
 # LabPad
 
-C 语言实验的离线自测桌面工具。当前只发布 **dev 预发布版本**。
+LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项目、编写代码、比较测试输出，再导出源码或实验 ZIP。助教可用同一判题内核在命令行批量测试提交文件。
 
-左侧编辑单文件源码，右侧查看测试点，底部切换“输出 / 调试”。没有测试点时，点击“编译并运行”：编译成功后进入可交互输入的调试页，编译失败时显示原始输出。
+当前版本：**0.1.0-dev.7（预发布）**。[下载](https://github.com/XePWang/labpad/releases/tag/v0.1.0-dev.7) · [全部版本](https://github.com/XePWang/labpad/releases)
 
-- 实验项目和题号通过下拉菜单选择，菜单内可新建，也可导入整个实验项目。未分配时显示 <无>。
-- 默认手动保存，可选自动保存；保存菜单提供“保存当前 / 保存全部”。导入源码后编辑数据目录中的副本。
-- 原生 CodeMirror 编辑器显示淡色空格点，支持 1 / 2 / 4 空格缩进、选中行缩进与语法树上下文缩进；设置页提供亮色和暗色主题。
-- 内置 WASM clang-format，自动断行与合流；保存时默认格式化，也可点击编辑器上方“格式化代码”。
-- “导出”菜单提供当前源码和整个实验项目 ZIP；导出前会提示未通过测试或身份信息不全，并允许继续导出。
-- 每题支持多个源码版本与标签页，保留各自的撤销历史；切题默认打开最近编辑的五份源码。
-- F9 / Ctrl+Enter 编译运行，调试终端 Ctrl+C 中断；设置页可在独立窗口调整快捷键和界面缩放。
-- 班号、姓名和学号仅在设置页填写，可留空。
-- 题目 JSON 保存标准 I/O、时限和比较规则。测试点显示状态和耗时，无部分分。
-- 原样显示编译诊断及 CE、TLE、OLE、RE、WA、AC；不推断错误原因。
-- 默认内置 Zig 0.17.0，也可指定 GCC、Clang 或 Zig。路径支持浏览、定位和直接输入，不存在的路径会显示红字并拒绝保存。
-- 原创代码采用 MIT，交互设计参考 CP Editor。
+支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig 和离线格式化器，完整解压后启动即可。macOS 的签名及实机核验范围见[版本验证记录](doc/0.1.0-dev.7/verification.md)。
 
-## 使用和保存
+## 文档与快速开始
 
-从 [dev Releases](https://github.com/XePWang/labpad/releases) 下载对应平台包，完整解压后启动 LabPad，保留随包工具链与资源文件。更新时先退出程序，保留原有 labpad/ 数据目录。支持 Windows x64、Linux x64、macOS arm64。
-
-默认数据目录是程序旁的 labpad/：
-
-~~~text
-labpad/
-├─ config.json
-├─ 空项目.c                  # 保存未分配题号的 C 源码时生成
-├─ 空项目.json               # 对应的测试点和规则
-└─ projects/
-   └─ 实验2/
-      ├─ .labpad               # 源码版本、模板和最近测试记录
-      ├─ warmup 2-1.c
-      ├─ warmup 2-1.v2.c         # 同题的另一份源码
-      ├─ warmup 2-1.json
-      ├─ Lab 2-1.cpp
-      └─ Lab 2-1.json
-~~~
-
-“新建源码”可在当前题目下创建 C / C++ 文件，优先使用项目预设的对应语言模板，否则使用默认源码；已有标签的编辑内容会保留。
-
-保存设置后立即生效。源码和手工编辑的测试点按所选保存方式写入；运行与导出使用当前编辑内容。“导入 → 导入源码”将外部文件复制到当前题目目录；未分配题号时保存到数据目录。再次选择当前题目已有的源码时激活原标签，其他文件则导入为新版本。切题、关闭有修改的标签或退出前会提示处理未保存内容；新建项目和首个题号会带入当前代码。
-
-设置页可修改数据位置：选择已存在、可写的目录，或输入完整路径。迁移时复制现有资料，保留原目录；为避免覆盖，目标目录已有 LabPad 数据时会拒绝迁移。程序原默认目录中的 location.json 记录新位置，以便重启恢复。
-
-“导入标准 I/O”作用于当前项目、当前题目：一起选择同名的 .in/.out（或 .ans）文件对，或选择标准 I/O JSON。只替换测试点及文件中明确提供的规则、时限，保留当前题号和源码。旧版完整题目 JSON 也可使用其中的测试数据。点击“题目文件”定位规则文件，外部修改后点击“重新加载”；各版本也会从保存位置重新读取。
-
-自定义编译器可点击“自动检测”，扫描 PATH 及 CodeBlocks、MSYS2、MinGW、LLVM、Zig、Scoop、Homebrew 等常用位置。选择候选项会填写编译器类别、C / C++ 路径及默认参数，点击“保存设置”后生效。扫描不遍历整个磁盘；其他位置可用“浏览…”手动指定。
-
-调试页支持连续输入、实时输出、发送 EOF 和手动停止；Ctrl+C 中断程序，有选中文字时优先复制。Windows 交互进程使用 UTF-8 输入和输出代码页，与测试点统一。切换“输出 / 调试”不会中断程序。源码支持 UTF-8、带 BOM 的 UTF-8 / UTF-16、GBK；导入副本统一保存为 UTF-8。
-
-## 编辑器
-
-设置页“编辑与保存”可以选择缩进宽度（1、2、4，默认 4）、亮色 / 暗色主题，保存时是否自动格式化（默认开）和界面缩放（75%–200%）。点击“设置快捷键…”可录制、编辑或恢复默认快捷键。空格点仅用于显示，源码和导出文件中仍然是英文空格。
-
-Tab / Shift+Tab 使用 CodeMirror 的原生行缩进；选中多行时作为整体缩进。Enter 使用 C/C++ 语言扩展的上下文缩进，处理大括号、嵌套块和函数参数对齐。格式化使用 clang-format 23.1.1 的 LLVM 风格、80 列目标宽度和所选缩进，使用空格代替 Tab；字符串、宏等由 clang-format 按 C/C++ 语法处理。
-
-| 快捷键（Windows / Linux） | 操作 |
+| 使用者 | 文档 |
 | --- | --- |
-| F9 / Ctrl+Enter | 编译并运行 |
-| Ctrl+S / Ctrl+Shift+S | 保存当前 / 保存全部 |
-| Ctrl+F4 | 关闭当前标签 |
-| Ctrl+Tab / Ctrl+Shift+Tab | 切换标签 |
-| Ctrl+K，U / Ctrl+K，W | 关闭已保存 / 关闭全部标签 |
-| Ctrl+C（调试终端） | 复制选区；无选区时中断程序 |
-| Shift+Alt+F | 格式化代码 |
-| Tab / Shift+Tab | 增加 / 减少缩进 |
-| Ctrl+Z | 撤销 |
-| Ctrl+Y / Ctrl+Shift+Z | 重做 |
-| Ctrl+A / C / X / V | 全选 / 复制 / 剪切 / 粘贴 |
-| Ctrl+F / Ctrl+H | 查找 / 查找替换 |
-| Ctrl+/ | 切换行注释 |
-| Alt+↑ / ↓ | 上移 / 下移行 |
-| Shift+Alt+↑ / ↓ | 向上 / 向下复制行 |
-| Esc，然后 Tab | 将键盘焦点移出编辑器 |
+| 同学 | [学生指南](doc/0.1.0-dev.7/student-guide.md)：下载安装、编写自测、源码版本、导出上传与 FAQ |
+| 助教 | [助教指南](doc/0.1.0-dev.7/ta-guide.md)：项目 JSON、比较规则、批测、CSV 与补交 |
+| 维护者 | [技术说明](doc/0.1.0-dev.7/maintainer-guide.md)：模块、存储、进程、构建与验证 |
 
-每次格式化、整块缩进和查找替换都可整次撤销。同一题目的标签各自保留光标、滚动位置和撤销历史。右键标签可关闭当前、其他、右侧、已保存或全部标签，复制路径，或另存为新版本。关闭标签只关闭视图，源码仍在数据目录中；较早版本可用“导入源码”重新打开。格式化与保存完成时会检查编辑版本；期间继续输入的内容会保留。源码采用原子替换写入，格式化引擎异常时保存原文并提示原因。
+1. 下载对应桌面包，完整解压并启动 LabPad。
+2. 在“设置”中填写班号、姓名、学号。
+3. “导入 → 导入实验项目”，选择课程 JSON。
+4. 选择题号，编写代码，按 F9 或 Ctrl+Enter 自测。
+5. “导出 → 导出实验项目”，勾选题号及版本，检查提醒，生成 ZIP 后上传课程平台。
 
-## 布局与状态栏
+![LabPad 编辑与测试界面](doc/0.1.0-dev.7/images/workspace-dark.png)
 
-编译、停止和运行状态位于题号后面。拖动编辑器与测试点之间的竖线，或上下工作区之间的横线，可调整显示比例；分隔线获得焦点后也可用方向键调整。布局保存在配置中，窗口大小变化时自动适配，调试终端会更新行列尺寸。
+## 编辑、调试与保存
 
-底部左右各保留一项：左侧跟随操作显示消息，空闲时轮换小提示；右侧显示光标行列与选区。编译器在运行时显示，保存路径和数据位置在相关操作后短暂显示。Windows / Linux 窗口隐藏系统菜单栏，常用快捷键保留；macOS 使用屏幕顶部的系统菜单。
+- CodeMirror 6 提供 C/C++ 语法、上下文缩进、查找替换和独立撤销历史。空格显示为淡色小点，Tab 可设为 1 / 2 / 4 空格。
+- 一条标签栏管理同题多版本，格式化按钮按编辑状态显示；关闭全部标签后保留“新建源码 / 最近源码”。
+- 手动保存默认开启；保存时默认使用离线 WASM clang-format，可在设置中调整。
+- 源码统一导入为数据目录中的副本，保存当前 / 全部更新副本。切题打开最近五份，旧版本仍保留。
+- 测试点可全部、部分、单点运行，也可定位及重测未通过项；颜色和简明说明帮助识别 AC、WA、CE、TLE、RE、OLE。
+- “输出”保留原始编译与运行信息；“调试”提供独立的 > 输入行、中文输入、EOF 和停止操作。
+- 编辑区与测试点、输出区之间可拖动调整；亮暗主题、界面缩放、快捷键和自定义编译器均可设置。
 
-## 编译缓存
+数据默认保存在程序旁的 labpad 文件夹。设置中可选择已存在的空文件夹来迁移数据，并浏览编译器路径。Zig 启动时静默预热，缓存超过 2 GiB 自动回收，也可手动清理。
 
-LabPad 启动后静默预热内置 Zig 的 C / C++ 运行库，实际编译优先；清理缓存、切换编译器和退出时会停止预热。
-
-Zig 使用自身默认的并行调度。单文件编译不使用构建系统的 -j 参数。dev.2 起，公共运行库缓存保留在系统临时目录的 labpad-compiler-cache-* 中，供后续运行和重启复用。缓存超过 2 GB 时在后续编译前回收（大小检查最多每五分钟一次）；设置中可手动“清理编译缓存”，同时有其他 LabPad 编译时会提示稍后清理。清理后可重新生成。每次任务的程序和工作目录在停止或退出后清理；再次启动时回收已退出进程留下的运行目录与界面缓存。
-
-Linux 实测：HelloWorld 冷缓存编译约 4.36 秒，新建会话并复用缓存后约 91 毫秒。首次构建运行库仍需时间，实际耗时取决于机器、工具链和参数。
+Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Option+F 替换；运行仍为 F9 / Control+Enter。Command+H、Command+Q 保留系统行为，详细默认键位及实测状态见指南。
 
 ## 导入格式
 
-### 标准 I/O
-
-选择“导入 → 导入标准 I/O”，用于当前题目。示例见 [sum.io.json](examples/sum.io.json)。
-
-~~~json
-{
-  "schemaVersion": 1,
-  "kind": "labpad.testCases",
-  "comparison": { "type": "wcmp" },
-  "testCases": [
-    { "id": "1", "input": "1 2\n", "expectedOutput": "3\n" }
-  ]
-}
-~~~
-
-testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes 可省略，省略时保留当前设置。
-
 ### 实验项目
 
-选择“导入 → 导入实验项目”，一次导入项目名、各题号、源码模板及测试点。示例见 [lab-2.project.json](examples/lab-2.project.json)。
+[实验1](examples/lab-1.project.json)包含 Lab 1-1、Lab 1-2、Lab 1-3；[实验2](examples/lab-2.project.json)包含 warmup 2-1 至 2-4、Lab 2-1 至 2-4。
 
 ~~~json
 {
@@ -121,95 +49,110 @@ testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes �
   "labId": "实验2",
   "problems": [
     {
-      "problemId": "warmup 2-1",
-      "title": "热身示例",
-      "language": "c",
-      "source": [
-        "#include <stdio.h>",
-        "int main(void) {",
-        "    return 0;",
-        "}"
-      ],
-      "timeLimitMs": 1000,
-      "outputLimitBytes": 65536,
-      "comparison": { "type": "wcmp" },
-      "testCases": [
-        { "id": "1", "input": "1 2\n", "expectedOutput": "3\n" }
-      ]
-    },
-    {
       "problemId": "Lab 2-1",
-      "language": "cpp",
-      "testCases": []
+      "language": "c",
+      "source": ["#include <stdio.h>", "int main(void) {", "    return 0;", "}"],
+      "comparison": {"type": "wcmp"},
+      "testCases": [
+        {"id": "morning", "input": "8\n", "expectedOutput": "good morning.\n"}
+      ]
     }
   ]
 }
 ~~~
 
-labId 是项目名，例如“实验2”；problemId 是题号，例如“warmup 2-1”或“Lab 2-1”。下拉菜单按 problems 中的顺序显示；各题可分别使用 c 或 cpp。title 默认等于题号；language 默认 c；source 可写成完整字符串或逐行字符串数组，省略时使用默认源码模板。时限默认 1000 毫秒，输出限制默认 65536 字节，比较方式默认 wcmp，测试点默认空数组。
+题号按 problems 顺序显示，每题可选择 c/cpp。source 支持完整字符串或逐行数组，省略时使用默认模板；title 默认等于题号。时限默认 1000 ms，输出上限默认 65536 字节，测试点默认空数组。同名项目可取消或建立副本。
 
-项目 JSON 使用 UTF-8 编码，便于直接生成或编辑。所有题目通过校验后才整批导入；已有同名项目时，可取消或导入为“实验2 (2)”这样的副本，原项目保留。
+课程示例提供编写起点与公开样例。Lab 1-2 使用固定虚构参数 x=12、y=8，修改个人参数后应同步修改预期输出；金字塔使用严格文本；回文素数配置 5000 ms。输入回显不属于程序输出。详细格式见助教指南。
 
-### 题目规则文件
+### 标准 I/O
 
-数据目录内，每题的 .json 保存 schemaVersion、labId、problemId、title、timeLimitMs、outputLimitBytes、comparison、testCases。它不包含源码；源码版本保存在相邻的 .c / .cpp 中；未分配题号的源码保存在数据目录中。导入项目所带的 source 作为该题的初始模板；“新建源码”选择相同语言时复用此模板，其他语言使用默认源码。该模板也用于判断导出前是否编辑过。
-
-wcmp 按空白分隔的 token 比较，保留数值字面量和提示语；3.0 与 3.00 不同。未分配项目/题号的编辑区使用空字符串作为标识。
-
-需要浮点容差时，修改题目文件中的 comparison：
-
-~~~json
-{
-  "type": "floatTokens",
-  "absoluteTolerance": 0.000001,
-  "relativeTolerance": 0.000001
-}
-~~~
-
-对标准 e、实际 a，满足 |a-e| ≤ A **或** |a-e| ≤ R×|e| 就通过该数值。可只设置一项；非数值 token 逐项精确匹配，不剥离提示语或提取其中的数字。
-整题的 comparison 是默认规则；每个测试点也可填写自己的 comparison，完整覆盖默认规则。不填写时继承整题设置。标准 I/O 和实验项目导入均支持相同格式。例如，仅第二个测试点允许浮点容差：
+“导入 → 导入标准 I/O”只更新当前题目。[求和示例](examples/sum.io.json)、[单点浮点覆盖示例](examples/mixed.io.json)：
 
 ~~~json
 {
   "schemaVersion": 1,
   "kind": "labpad.testCases",
-  "comparison": { "type": "wcmp" },
+  "comparison": {"type": "wcmp"},
   "testCases": [
-    { "id": "1", "input": "1\n", "expectedOutput": "3.00\n" },
-    {
-      "id": "2",
-      "input": "2\n",
-      "expectedOutput": "3.00\n",
-      "comparison": { "type": "floatTokens", "absoluteTolerance": 0.000001 }
-    }
+    {"id": "1", "input": "1 2\n", "expectedOutput": "3\n"}
   ]
 }
 ~~~
 
-全部测试点允许浮点容差时，把整题 comparison 改为 floatTokens 即可；其中个别测试点仍需精确 token 比较时，为它填写 { "type": "wcmp" }。测试点的浮点规则也可设置不同容差。示例见 [mixed.io.json](examples/mixed.io.json)。
+testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes 可省略，省略时保留当前设置。题目 JSON 不包含学生源码，源码与版本元数据分别持久化。
 
+### 比较规则
+
+- wcmp：按空白分隔 token 比较，保留提示语、标点及数值字面量，3.0 与 3.00 不同。
+- floatTokens：数值满足绝对误差或相对误差任一条件即通过，其他 token 精确匹配。
+- strictText：比较文本、缩进和换行，统一 CRLF/LF；默认保留行尾空白及末尾换行。
+
+整题 comparison 提供默认值，每个测试点可以完整覆盖。例如：
+
+~~~json
+{
+  "id": "pyramid",
+  "input": "C\n",
+  "expectedOutput": "  A\n ABA\nABCBA\n",
+  "comparison": {
+    "type": "strictText",
+    "ignoreTrailingSpaces": true,
+    "ignoreFinalNewlines": true
+  }
+}
+~~~
+
+两项默认 false，开启后分别忽略行末普通空格/Tab 和文件尾 LF；行首缩进、行内空格及正文空行仍比较。
+
+~~~json
+{"type":"floatTokens","absoluteTolerance":0.000001,"relativeTolerance":0.000001}
+~~~
+
+对标准值 e、实际值 a，满足 |a-e| ≤ A **或** |a-e| ≤ R×|e| 即通过。可只配置一项。
 
 ## 导出
 
-“导出 → 导出源码”打开保存位置选择框。题号为 Lab 2-1、学号为 12345678 时，默认文件名是 12345678_Lab 2-1.c；C++ 使用 .cpp。没有题号时使用空项目，没有学号时省略前缀，例如空项目.c。
+“导出源码”生成当前 .c/.cpp。“导出实验项目”先展示题号与版本两层复选框，默认全选；取消题号取消本题全部版本，取消一个版本只减少该文件，部分选择显示半选。只有勾选版本参与预检和 ZIP。
 
-“导出 → 导出实验项目”将所选项目的每道题源码打包为 ZIP。项目名直接用于命名，例如：
+未编辑、未全部通过及身份缺项会提醒；身份缺项可点击“前往设置”，保存后保留选择继续导出。同题多版本使用原名、_v2、_v3 后缀，列表预览最终文件名：
 
 ~~~text
-240101_张三_12345678_实验2.zip
-└─ 240101_张三_12345678_实验2/
-   ├─ 12345678_warmup 2-1.c
-   ├─ 12345678_Lab 2-1.c
-   └─ 12345678_Lab 2-2.cpp
+9527_马冬梅_7355608_实验2.zip
+└─ 9527_马冬梅_7355608_实验2/
+   ├─ 7355608_Lab 2-1.c
+   ├─ 7355608_Lab 2-1_v2.cpp
+   └─ 7355608_Lab 2-2.c
 ~~~
 
-ZIP 内只放源码。当前题目使用正在编辑的版本，其他题目使用各自选中的已保存版本；无需先保存当前编辑。标准 I/O 和课程源码模板通过项目 JSON 分发。
+空项目导出为“学号_空项目.c/.cpp”；未填写学号则为“空项目.c/.cpp”。上传由使用者在课程平台完成。
 
-源码导出会提示未全部通过测试、身份信息不全。项目导出还会列出未编辑源码的题目；空白代码、与初始模板相同或只调整过格式均视为未编辑。未设置测试点、尚未运行、测试中断、内容或编译器改变后尚未重新测试，都会提示需要确认。可选择“取消导出”或“仍然导出”。
+## 命令行批测
 
-继续导出时，身份信息缺项使用“未填班号 / 未填姓名 / 未填学号”作为 ZIP 名称中的对应部分；单个源码仍按是否填写学号决定前缀。导出完成前的取消或写入失败不会替换已有文件。
+CLI Linux x64 包需要 Node.js 22+、GCC/G++ 或 Zig；直接复用桌面 Judge。实验目录采用 submit / src / build / output，[评分配置示例](examples/grade.json)指定项目、名单、隐藏测试与权重。
+
+~~~sh
+labpad judge --source solution.c --tests problem.io.json --compiler gcc
+labpad grade lab2
+labpad grade lab2 --student 7355608
+~~~
+
+按“学号 × 实验 × 题号”完整测试所有版本，择最高分，同分按稳定来源顺序选择。summary.csv 按名单顺序输出有效文件、逐题通过数与百分制得分；cases.csv 输出采用版本的逐点结果。单人重测保留其他行与已有评语；评语由使用者在外部整理。
+
+Linux 批测默认使用 Bubblewrap；安装与环境预检、CSV 字段和可信夹具的直接运行方式见助教指南。
 
 ## 版本更新
+
+### 0.1.0-dev.7
+
+- 合并编辑区重复标题；格式化操作移至标签栏，增加最近源码及恢复快捷键。
+- 导出项目支持题号与源码版本两层复选、半选和多版本命名；补填身份后继续本次导出。
+- 新增 strictText，可按题目或单点检查缩进、空格和换行。
+- 增加选择/单点/失败项重测、整卡语义色、结果说明及题号测试状态；部分结果按源码及规则指纹合并。
+- 调试增加独立 > 输入行；操作错误移除 Electron 包装文字，保留原始编译诊断。
+- 按 macOS 常用约定完善默认快捷键及旧配置迁移。
+- 新增 TypeScript CLI，支持目录/嵌套 ZIP、XLS/XLSX/CSV 名单、完整版本择优、隐藏测试、百分制与单人续测。
+- 补充实验1、实验2完整项目示例和三份版本化指南。平台验证范围与完整流程证据见[验证记录](doc/0.1.0-dev.7/verification.md)。
 
 ### 0.1.0-dev.6
 
@@ -263,8 +206,6 @@ ZIP 内只放源码。当前题目使用正在编辑的版本，其他题目使�
 
 ## 开发与验证
 
-源码位于 pad/，构建、打包及开发临时输出位于 .work/。开发需要 Node.js 24、npm 和 C/C++ 原生构建工具，学生使用发布包无需安装这些开发依赖。
-
 ~~~sh
 cd pad
 npm ci
@@ -273,19 +214,9 @@ npm run tools -- linux-x64
 npm run build
 npm test
 xvfb-run -a npm run test:ui
-npm run dev
+npm run cli -- --help
 ~~~
 
-工具链目标为 linux-x64、win-x64、mac-arm64，npm run tools 可接受多个目标。打包可使用：
+源码在 pad，构建与工具链在 .work。开发使用 Node.js 24；build 生成桌面、worker 与 CLI。工具链目标可选 linux-x64、win-x64、mac-arm64；设置 LABPAD_TEST_EXECUTABLE 可以测试实际发布包。构建、打包、运行时目录及文档维护约定见维护者说明。
 
-~~~sh
-npm run package -- --linux --x64
-npm run package -- --win --x64
-npm run package -- --mac --arm64
-~~~
-
-跨平台打包需准备对应 Electron 分发文件，并通过 electron-builder 的 electronDist 配置指定。macOS dev 包使用 ad-hoc 签名；Linux 交叉打包时将 LABPAD_RCODESIGN 指向 rcodesign。当前未做 Apple 公证。
-
-npm test 是 Linux 核心集成测试，包含真实 Zig、Checker、WASM 格式化、项目导入、导出检查与 ZIP 内容验证，运行前先构建格式化 worker。npm run test:ui 包含七个桌面场景，覆盖项目选择、保存方式、导入副本保存、调试、路径校验和数据迁移，完整项目导入、菜单键盘操作、导出警告与取消、同名副本及归档快照，以及编辑器真实快捷键、缩进、查找替换、原子撤销、两种主题和格式化/保存并发，编译器自动检测与参数适配，分栏拖动 / 方向键调整、光标与选区状态、终端重排及布局恢复。设置 LABPAD_TEST_EXECUTABLE 可测试实际发布包。tests/ui/ 中的 scenario.cjs、editor-scenario.cjs、compiler-scenario.cjs 、layout-scenario.cjs 、project-scenario.cjs 、resources-scenario.cjs 和 source-scenario.cjs 也可由装有 Playwright 的 Node.js 直接运行，参数为应用路径和截图目录；Windows 编辑器测试会临时备份并恢复剪贴板，Linux 在独立 Xvfb 显示中测试。修改品牌图标后可运行 scripts/create-icons.py 重新生成 PNG/ICO/ICNS（开发时需要 Pillow 和 ImageMagick）。
-
-判题核心位于 pad/core/，独立于 Electron/Vue；后续批量验收可通过命令行复用。第三方声明见 pad/THIRD_PARTY_NOTICES.md；项目的 MIT 不改变组件与工具链各自的许可证。
+项目采用 MIT；各依赖按其许可证分发。[第三方声明](pad/THIRD_PARTY_NOTICES.md)
