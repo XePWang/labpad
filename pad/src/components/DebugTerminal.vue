@@ -19,7 +19,7 @@ watch(()=>props.running,value=>{if(terminal){terminal.options.disableStdin=!valu
 watch(()=>props.theme,()=>{if(terminal)terminal.options.theme=colors();});
 watch(()=>props.scrollback,value=>{if(terminal)terminal.options.scrollback=value;});
 onBeforeUnmount(()=>{observer?.disconnect();terminal?.dispose();});
-defineExpose({write:(data:string)=>terminal?.write(data),clear:()=>terminal?.clear(),
+defineExpose({write:(data:string,done?:()=>void)=>{if(terminal)terminal.write(data,done);else done?.();},selection:()=>terminal?.getSelection()??'',clear:()=>terminal?.write('\x1b[2J\x1b[3J\x1b[H'),
  eof:()=>window.labpad.debugInput(navigator.platform.toLowerCase().includes('win')?'\x1a\r':'\x04')});
 </script>
 <template><div ref="host" class="debug-terminal" data-testid="terminal"></div></template>

@@ -2,166 +2,108 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
 const path=require('node:path');
-async function until(fn,label,timeout=150000){
- const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,100));}throw new Error('Timeout: '+label);
-}
+const {clipboardGuard}=require('./editor-scenario.cjs');
+async function until(fn,label,timeout=45000){const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,80));}throw new Error('Timeout: '+label);}
 async function runScenario(electron,{executable,cwd,evidence}){
  await fs.mkdir(evidence,{recursive:true});
- const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'LabPad-中文-'));
- const data=path.join(temporary,'portable','labpad'),errors=[],times=[];
+ const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'LabPad-workspace-中文-')),data=path.join(temporary,'labpad'),errors=[],checks=[];
+ const restore=await clipboardGuard('LabPad-workspace-clipboard');
  const launch=()=>electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data}});
  let app=await launch(),page;
- async function prepare(){
-  page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));
-  await page.locator('.toolbar').waitFor();
+ const button=name=>page.getByRole('button',{name,exact:true}),input=name=>page.getByRole('textbox',{name,exact:true}),select=name=>page.getByRole('combobox',{name,exact:true});
+ const state=()=>page.evaluate(()=>window.labpad.bootstrap()),editor=()=>page.locator('.cm-content');
+ const edit=source=>editor().fill(source);
+ const equal=(source,label)=>until(async()=>(await state()).draft.source===source,label);
+ const code=n=>'#include <stdio.h>\nint main(void){puts("'+n+'");return 0;}\n';
+ const names=()=>page.getByRole('tab').allTextContents();
+ const tabs=()=>page.getByRole('tab');
+ async function ready(){
+  page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
   await app.evaluate(({dialog})=>{
-   globalThis.__files=[];globalThis.__nextAnswer=2;globalThis.__saveFile='';globalThis.__saveNames=[];
-   dialog.showMessageBox=async(...args)=>({response:args.at(-1).title==='导出前请确认'?1:globalThis.__nextAnswer,checkboxChecked:false});
+   globalThis.__files=[];globalThis.__answer=2;globalThis.__warnings=[];
    dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});
-   dialog.showSaveDialog=async(...args)=>{globalThis.__saveNames.push(args.at(-1).defaultPath);return{canceled:false,filePath:globalThis.__saveFile};};
+   dialog.showMessageBox=async(...args)=>{globalThis.__warnings.push(args.at(-1));return {response:globalThis.__answer,checkboxChecked:false};};
   });
-  await page.evaluate(()=>{window.__debug=[];window.__compiles=[];window.labpad.onDebugData(d=>window.__debug.push(d));window.labpad.onJudge(e=>{if(e.type==='compilation')window.__compiles.push(e.compilation);});});
+  await page.evaluate(()=>{window.__output='';window.__compiles=[];window.labpad.onDebugData(data=>window.__output+=data);window.labpad.onJudge(e=>{if(e.type==='compilation')window.__compiles.push(e.compilation);});});
  }
- const button=name=>page.getByRole('button',{name,exact:true});
- const input=name=>page.getByRole('textbox',{name,exact:true});
- const select=name=>page.getByRole('combobox',{name,exact:true});
- const edit=source=>page.locator('.cm-content').fill(source);
- const run=()=>page.getByRole('button',{name:/编译并运行/}).click();
- async function saved(){await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'document saved');}
- async function save(){await button('保存').click();await saved();}
- async function settings(){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('dialog').waitFor();}
- async function apply(){await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});}
- async function files(paths){await app.evaluate((_,p)=>{globalThis.__files=p;},paths);}
- async function exportFile(expected){
-  const target=path.join(temporary,expected);await app.evaluate((_,file)=>{globalThis.__saveFile=file;},target);
-  await button('导出').click();await page.getByRole('menuitem',{name:'导出源码',exact:true}).click();await until(()=>fs.stat(target).then(()=>true,()=>false),'export file');
-  assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),expected);return target;
+ async function files(paths){await app.evaluate((_,v)=>globalThis.__files=v,paths);}
+ async function answer(value){await app.evaluate((_,v)=>globalThis.__answer=v,value);}
+ async function settings(){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('dialog',{name:'设置',exact:true}).waitFor();}
+ async function apply(){await button('保存设置').click();await page.getByRole('dialog',{name:'设置',exact:true}).waitFor({state:'hidden'});}
+ async function save(all=false){await button('保存').click();await page.getByRole('menuitem',{name:all?'保存全部':'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(v=>v==='已保存'),'saved');}
+ async function context(item,index){await tabs().nth(index??(await tabs().count()-1)).click({button:'right'});await page.getByRole('menuitem',{name:item,exact:true}).click();}
+ async function idle(){await until(()=>page.getByRole('button',{name:/编译并运行/}).isEnabled(),'run finished',150000);}
+ async function output(text){await until(()=>page.evaluate(t=>window.__output.includes(t),text),'terminal '+text,150000);}
+ function pass(label){checks.push(label);console.log('PASS '+label);}
+ async function create(lab,problem){
+  if(lab){await select('实验项目').selectOption('@new:lab');await input('项目名称').fill(lab);await button('新建').click();await until(()=>select('实验项目').inputValue().then(v=>v===lab),'created lab');}
+  if(problem){await select('题号').selectOption('@new:problem');await input('新题号').fill(problem);await button('新建').click();await until(()=>select('题号').inputValue().then(v=>v===problem),'created topic');}
  }
- const printing=n=>'#include <stdio.h>\nint main(void){puts("'+n+'");return 0;}\n';
  try{
-  await prepare();assert.equal(await page.title(),'LabPad');assert.equal(await app.evaluate(({app})=>app.getName()),'LabPad');
-  assert.equal(await select('实验项目').inputValue(),'');assert.equal(await select('题号').inputValue(),'');
-  assert.equal(await page.locator('.toolbar input').count(),0);assert.equal(await page.getByRole('dialog').count(),0);
-  assert.equal((await page.evaluate(()=>window.labpad.bootstrap())).config.saveMode,'manual');
-  assert.equal((await page.evaluate(()=>window.labpad.bootstrap())).config.formatOnSave,true);
-  await settings();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await apply();
-  await exportFile('空项目.c');
-  await settings();await select('源码语言').selectOption('cpp');await apply();await exportFile('空项目.cpp');
-  await settings();await select('源码语言').selectOption('c');await apply();
-  console.log('PASS empty project selectors, optional identity and C/C++ export names');
-
-  await edit('invalid C syntax\n');await run();
-  await until(()=>page.locator('.phase').textContent().then(t=>t.includes('失败')),'compile failure');
-  assert.match(await button('输出').getAttribute('class'),/active/);
-  const debugSource='#include <stdio.h>\nint main(void){int n;printf("number: ");fflush(stdout);scanf("%d",&n);printf("answer: %d\\n",n*2);fflush(stdout);scanf("%d",&n);return 0;}\n';
-  await edit(debugSource);await run();
-  await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'automatic debug');
-  assert.match(await button('调试').getAttribute('class'),/active/);
-  await until(()=>page.evaluate(()=>window.__debug.join('').includes('number:')),'debug prompt');
-  await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('7');await page.keyboard.press('Enter');
-  await until(()=>page.evaluate(()=>window.__debug.join('').includes('answer: 14')),'interactive input');
-  await button('输出').click();await page.waitForTimeout(1200);
-  assert.match(await page.locator('.phase').textContent(),/调试运行中/);await button('调试').click();
-  await page.screenshot({path:path.join(evidence,'desktop-debug.png'),fullPage:true});
-  await page.getByRole('button',{name:/停止程序/}).click();await until(()=>page.locator('.phase').textContent().then(t=>t.includes('已停止')),'stop');
-  await assert.rejects(fs.stat(path.join(data,'空项目.c')));
-  await save();assert.equal(await fs.readFile(path.join(data,'空项目.c'),'utf8'),debugSource);
-  console.log('PASS no-case compilation enters debug, CE stays in Output, manual mode does not save on run');
-
-  await select('实验项目').selectOption('@new:lab');await input('项目名称').fill('Lab 2');await button('新建').click();
-  await until(()=>select('实验项目').inputValue().then(v=>v==='Lab 2'),'new project');assert.equal(await select('题号').inputValue(),'');
-  await select('题号').selectOption('@new:problem');await input('新题号').fill('Lab 2-1');await button('新建').click();
-  await until(()=>select('题号').inputValue().then(v=>v==='Lab 2-1'),'new problem');
-  const managed=path.join(data,'projects','Lab 2','Lab 2-1.c'),initial=await fs.readFile(managed,'utf8');
-  await edit(printing(42));await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('42');
-  await run();await page.locator('.verdict.ac').waitFor({timeout:150000});assert.equal(await fs.readFile(managed,'utf8'),initial);
-  await select('实验项目').selectOption('');await page.waitForTimeout(200);assert.equal(await select('实验项目').inputValue(),'Lab 2');
-  await save();assert.equal(await fs.readFile(managed,'utf8'),printing(42));
-  await input('预期输出 1').fill('43');await run();await page.locator('.verdict.wa').waitFor();await button('查看 Diff').click();
-  assert.match((await page.locator('.diff-view .added').allTextContents()).join(''),/42/);
-  await save();await page.screenshot({path:path.join(evidence,'desktop-self-test.png'),fullPage:true});
-  console.log('PASS project/problem creation, unsaved-change cancel, manual saving, AC/WA and Diff');
-
-  await settings();await input('学号').fill('12345678');await input('姓名').fill('测试同学');
-  await select('保存方式').selectOption('auto');
-  const missing=path.join(temporary,'missing'),dataField=page.locator('.path-field').filter({has:input('数据保存位置')});
-  await input('数据保存位置').fill(missing);await until(()=>dataField.textContent().then(v=>v.includes('路径不存在')),'invalid directory error');
-  assert.equal(await button('保存设置').isDisabled(),true);
-  await input('数据保存位置').fill(data);
-  await select('编译器使用方式').selectOption('custom');await select('编译器类型').selectOption('zig');
-  await input('C 编译器路径').fill(missing);
-  const cField=page.locator('.path-field').filter({has:input('C 编译器路径')});
-  await until(()=>cField.textContent().then(v=>v.includes('路径不存在')),'invalid compiler error');assert.equal(await button('保存设置').isDisabled(),true);
-  await page.screenshot({path:path.join(evidence,'settings-path-validation.png'),fullPage:true});
-  const runtime=await app.evaluate(({app})=>({packaged:app.isPackaged,resources:process.resourcesPath,platform:process.platform,arch:process.arch}));
-  const target=(runtime.platform==='win32'?'win':runtime.platform==='darwin'?'mac':'linux')+'-'+runtime.arch;
-  const zig=path.join(runtime.packaged?path.join(runtime.resources,'toolchain'):path.resolve(cwd,'../.work/toolchains',target),runtime.platform==='win32'?'zig.exe':'zig');
-  await files([zig]);await button('选择C 编译器路径').click();await until(()=>input('C 编译器路径').inputValue().then(v=>v===zig),'compiler picker');
-  await input('C++ 编译器路径').fill(missing);
-  await until(()=>page.locator('.path-field').filter({has:input('C++ 编译器路径')}).textContent().then(v=>v.includes('路径不存在')),'invalid C++ path');
-  await button('选择C++ 编译器路径').click();await apply();
-  const autoSource='// auto saved\n'+printing(42);await edit(autoSource);
-  await until(()=>fs.readFile(managed,'utf8').then(v=>v===autoSource),'automatic save');await saved();
-  await exportFile('12345678_Lab 2-1.c');
-  console.log('PASS directory/compiler inline validation, native path pickers, custom Zig and automatic saving');
-
-  const external=path.join(temporary,'用户源码.c');await fs.writeFile(external,printing(9));await files([external]);await button('打开源码').click();
-  await until(()=>page.locator('.pane-heading').first().textContent().then(v=>v.includes('用户源码.c')),'external source');
-  await edit(printing(10));await until(()=>fs.readFile(external,'utf8').then(v=>v===printing(10)),'automatic original-file save');await saved();
-  assert.equal(await fs.readFile(managed,'utf8'),autoSource);
-  await settings();await select('保存方式').selectOption('manual');await apply();
-  await edit(printing(11));await page.waitForTimeout(500);assert.equal(await fs.readFile(external,'utf8'),printing(10));
-  await run();await page.locator('.verdict.wa').waitFor();assert.equal(await fs.readFile(external,'utf8'),printing(10));
-  await save();assert.equal(await fs.readFile(external,'utf8'),printing(11));
-  console.log('PASS opened source saves to its original path in both saving modes');
-
-  const relocated=path.join(temporary,'迁移资料');await fs.mkdir(relocated);
-  await settings();await files([relocated]);await button('选择数据保存位置').click();
-  await until(()=>input('数据保存位置').inputValue().then(v=>v===relocated),'directory picker');await apply();
-  assert.equal((await page.evaluate(()=>window.labpad.bootstrap())).dataRoot,await fs.realpath(relocated));
-  assert.match(await page.locator('.cm-content').textContent(),/11/);
-  assert.equal(JSON.parse(await fs.readFile(path.join(relocated,'config.json'),'utf8')).sourceFile,external);
-  assert.equal(await fs.readFile(managed,'utf8'),autoSource);
-  await edit(printing(12));await until(()=>page.locator('.save-status').textContent().then(t=>t==='未保存'),'unsaved edit is applied');
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
-  await page.waitForTimeout(250);assert.equal(page.isClosed(),false);assert.equal(await fs.readFile(external,'utf8'),printing(11));
-  await save();times.push(...await page.evaluate(()=>window.__compiles.filter(c=>c.status==='success').map(c=>c.elapsedMs)));
-  await app.close();app=await launch();await prepare();
-  const restored=await page.evaluate(()=>window.labpad.bootstrap());
-  assert.equal(restored.dataRoot,await fs.realpath(relocated));assert.equal(restored.config.studentId,'12345678');assert.equal(restored.config.saveMode,'manual');assert.equal(restored.config.sourceFile,external);
-  assert.match(await page.locator('.cm-content').textContent(),/12/);assert.equal(await select('题号').inputValue(),'Lab 2-1');
-  await run();await page.locator('.verdict.wa').waitFor({timeout:150000});
-  const afterRestart=await page.evaluate(()=>window.__compiles.find(c=>c.status==='success').elapsedMs);
-  console.log('PASS data relocation, external-file binding, close cancellation and restart persistence');
-  console.log('COMPILATION_TIMES',JSON.stringify({firstSuccessfulMs:times[0],afterRestartMs:afterRestart}));
-
-  const ioIn=path.join(temporary,'例子.IN'),ioOut=path.join(temporary,'例子.OUT');
-  await fs.writeFile(ioIn,'9\n');await fs.writeFile(ioOut,'12\n');await files([ioIn,ioOut]);await button('导入').click();await page.getByRole('menuitem',{name:'导入标准 I/O',exact:true}).click();
-  await until(()=>page.getByRole('status').textContent().then(t=>t.includes('已导入')),'I/O import');
-  assert.equal(await fs.readFile(external,'utf8'),printing(12));
-  const problemFile=path.join(relocated,'projects','Lab 2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(problemFile,'utf8'));
-  assert.equal(problem.testCases[0].input,'9\n');problem.comparison={type:'floatTokens',absoluteTolerance:.001};await fs.writeFile(problemFile,JSON.stringify(problem,null,2));
-  await button('重新加载').click();
-  await until(async()=>JSON.stringify((await page.evaluate(()=>window.labpad.bootstrap())).draft.problem.comparison)===JSON.stringify(problem.comparison),'JSON rule reload');
-  assert.match(await page.locator('.cm-content').textContent(),/12/);assert.deepEqual(errors,[]);
-  console.log('PASS imported I/O copies and JSON reload preserve the original source');
-  await fs.rename(external,external+'.bak');await fs.mkdir(external);
-  await edit(printing(13));await button('保存').click();
-  await until(()=>page.locator('.save-status').textContent().then(t=>t==='保存失败'),'failed save is reported');
-  await app.evaluate(()=>{globalThis.__nextAnswer=1;});await app.close();
-  console.log('PASS a failed save remains unsaved and can be explicitly discarded on close');
-  console.log('ALL DESKTOP CHECKS PASSED');
- }catch(error){
-  if(page&&!page.isClosed()){console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'failure.png'),fullPage:true}).catch(()=>{});}
-  throw error;
- }finally{
-  await app.evaluate(()=>{globalThis.__nextAnswer=1;}).catch(()=>{});
-  await app.close().catch(()=>{});
-  await fs.rm(temporary,{recursive:true,force:true});
- }
+  await ready();await settings();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await apply();
+  const original=path.join(temporary,'原始.c');await fs.writeFile(original,code('original'));await files([original]);await button('打开源码').click();await equal(code('original'),'external opened');
+  await edit(code('changed'));await save();assert.equal(await fs.readFile(original,'utf8'),code('changed'));
+  await edit(code('carried'));await answer(1);await create('实验2','Lab 2-1');await equal(code('carried'),'creating project carries code');assert.equal(await fs.readFile(original,'utf8'),code('changed'));await save();
+  assert.equal(await button('导入源码').count(),1);pass('scratch opens and saves original; creating a project and first topic preserves unsaved code');
+  const imported=path.join(temporary,'导入版本.cpp');await fs.writeFile(imported,'#include <iostream>\nint main(){std::cout<<"中文";}\n');await files([imported]);const count=await tabs().count();await button('导入源码').click();await until(()=>tabs().count().then(n=>n===count+1),'import creates a tab');
+  const importedPath=(await state()).sourcePath;assert.notEqual(importedPath,imported);await edit('// managed edit\n'+await fs.readFile(imported,'utf8'));await save();assert.ok(!(await fs.readFile(imported,'utf8')).includes('managed edit'));assert.match(await fs.readFile(importedPath,'utf8'),/managed edit/);
+  await files([importedPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'same owned import completes');assert.equal(await tabs().count(),count+1);pass('project import copies C/C++ source, saves managed version and reopens same-topic file without duplication');
+  const first=(await names())[0];await tabs().nth(0).click();await edit(code('first')+'// first unsaved\n');await editor().focus();await page.keyboard.press('Control+End');await page.keyboard.insertText('AAA');
+  const firstText=(await state()).draft.source;await tabs().nth(1).click();const secondBefore=(await state()).draft.source;await editor().focus();await page.keyboard.press('Control+End');await page.keyboard.insertText('BBB');await page.keyboard.press('Control+z');await equal(secondBefore,'second undo independent');await page.keyboard.press('Control+Shift+Z');await equal(secondBefore+'BBB','second redo independent');
+  await tabs().nth(0).click();await equal(firstText,'first contents retained');await page.keyboard.press('Control+z');await equal(firstText.slice(0,-3),'first undo history retained');await page.keyboard.press('Control+Shift+Z');await equal(firstText,'first redo retained');
+  await save(true);for(const tab of (await state()).documents){if(tab.sourceFile&&tab.documentId===(await state()).draft.documentId)assert.equal(await fs.readFile(tab.sourceFile,'utf8'),firstText);}
+  assert.equal(await page.locator('.tab-dirty').count(),0);pass('tabs retain independent text, caret and native undo/redo; Save All saves every open file');
+  await context('另存为新版本',0);await until(()=>tabs().count().then(n=>n===count+2),'new version tab');await edit(code('v3'));await save();
+  await page.keyboard.press('Control+Tab');await page.keyboard.press('Control+Shift+Tab');
+  await context('复制路径');const copied=await app.evaluate(({clipboard})=>clipboard.readText());assert.equal(copied,(await state()).sourcePath);
+  await context('复制相对路径');assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),path.relative(data,copied));
+  const versionPath=(await state()).sourcePath;await edit(code('dirty'));await answer(2);await context('关闭');assert.equal(await tabs().count(),count+2);
+  await answer(1);await context('关闭');await until(()=>tabs().count().then(n=>n===count+1),'discard closes tab');assert.equal(await fs.readFile(versionPath,'utf8'),code('v3'));pass('version creation, next/previous tabs, copy paths and close cancel/discard preserve saved versions');
+  await context('关闭其他',0);await until(()=>tabs().count().then(n=>n===1),'close others');
+  for(let n=0;n<6;n++){await context('另存为新版本',0);await edit(code('version '+n));await save();await page.waitForTimeout(15);}
+  const allFiles=await fs.readdir(path.join(data,'projects','实验2')),allSources=allFiles.filter(n=>/\.(c|cpp)$/.test(n));assert.ok(allSources.length>=7);
+  await create(null,'Lab 2-2');await files([versionPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'foreign import complete');const foreignPath=(await state()).sourcePath;assert.notEqual(foreignPath,versionPath);
+  await select('题号').selectOption('Lab 2-1');await until(()=>tabs().count().then(n=>n===5),'latest five reopened');assert.equal(await select('题号').inputValue(),'Lab 2-1');
+  await files([versionPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'old managed version opens');
+  assert.ok((await names()).some(n=>n.includes(path.basename(versionPath))));assert.deepEqual((await fs.readdir(path.join(data,'projects','实验2'))).filter(n=>/\.(c|cpp)$/.test(n)).sort(),[...allSources,'Lab 2-2.c',path.basename(foreignPath)].sort());
+  pass('switching topics reopens latest five versions, retains all files, copies foreign-topic source and allows older versions to open');
+  await answer(1);await context('全部关闭');await until(()=>tabs().count().then(n=>n===0),'all closed');assert.equal(await editor().count(),0);assert.equal(await page.getByRole('button',{name:/编译并运行/}).isDisabled(),true);
+  await files([versionPath]);await page.locator('.toolbar-actions').getByRole('button',{name:'导入源码',exact:true}).click();await until(()=>tabs().count().then(n=>n===1),'reopen after close all');pass('close all leaves a clean empty editor and reopening a version restores it');
+  // UTF-8 PTY: narrow stdio, split byte writes, stderr, input and emoji.
+  const interactive='#include <stdio.h>\nint main(void){char line[256];fputs("你好 good evening.\\n",stdout);fputs("错误输出\\n",stderr);fflush(NULL);if(fgets(line,sizeof line,stdin)){printf("收到:%s",line);fflush(stdout);}return 0;}\n';
+  await edit(interactive);await page.evaluate(()=>window.__output='');await editor().focus();await page.keyboard.press('F9');await output('你好 good evening.');await output('错误输出');
+  await page.locator('.xterm-helper-textarea').focus();await page.keyboard.insertText('中文输入');await page.keyboard.press('Enter');await output('收到:中文输入');await idle();
+  const split='#include <stdio.h>\nint main(void){unsigned char s[]={0xE4,0xBD,0xA0,0xE5,0xA5,0xBD,0xF0,0x9F,0x98,0x80,0};for(int i=0;s[i];i++){putchar(s[i]);fflush(stdout);}return 0;}\n';
+  await edit(split);await page.evaluate(()=>window.__output='');await page.keyboard.press('Control+Enter');await output('你好😀');await idle();
+  assert.ok(!(await page.evaluate(()=>window.__output)).includes('\uFFFD'));pass('F9 / Ctrl+Enter compile and debug Chinese stdin/stdout/stderr, split UTF-8 bytes and emoji without garbling');
+  for(const [name,bytes,expected] of [
+   ['编码.cpp',Buffer.from('#include <iostream>\nint main(){std::cout<<"你好 C++ 😀"<<std::endl;std::cerr<<"错误 C++"<<std::endl;}','utf8'),'你好 C++ 😀'],
+   ['GBK.c',Buffer.concat([Buffer.from('#include <stdio.h>\nint main(void){puts("'),Buffer.from([0xc4,0xe3,0xba,0xc3]),Buffer.from(' GBK");return 0;}\n')]),'你好 GBK'],
+   ['UTF16.c',Buffer.concat([Buffer.from([255,254]),Buffer.from('#include <stdio.h>\nint main(void){puts("你好 UTF16");return 0;}\n','utf16le')]),'你好 UTF16']
+  ]){
+   const file=path.join(temporary,name);await fs.writeFile(file,bytes);await files([file]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'encoded source imported');
+   await page.evaluate(()=>window.__output='');await page.keyboard.press('F9');await output(expected);await idle();assert.deepEqual(await fs.readFile(file),bytes);
+  }
+  pass('real C++ Unicode output and GBK / UTF-16 imports compile as UTF-8 while originals retain exact bytes');
+  const flood='#include <stdio.h>\nint main(void){for(int i=0;i<12000;i++)printf("行%d 你好\\n",i);puts("END-中文");return 0;}\n';await edit(flood);await page.evaluate(()=>window.__output='');await page.keyboard.press('F9');await output('END-中文');await idle();
+  assert.equal((await page.evaluate(()=>window.__output.match(/你好/g)?.length)),12000);pass('large terminal output drains without truncation or Unicode replacement');
+  await edit('#include <stdio.h>\nint main(void){puts("等待输入");fflush(stdout);for(;;){}return 0;}\n');await page.keyboard.press('F9');await output('等待输入');await page.locator('.xterm-helper-textarea').focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t.includes('停止')),'Ctrl C interrupts');pass('terminal Ctrl+C stops process tree');
+  await edit('invalid syntax');await page.keyboard.press('F9');await idle();assert.match(await button('输出').getAttribute('class'),/active/);
+  await edit(code('3.0'));await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('3.00');await save();
+  const rules=path.join(data,'projects','实验2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(rules,'utf8'));problem.testCases.push({id:'float',input:'',expectedOutput:'3.00',comparison:{type:'floatTokens',absoluteTolerance:0}});await fs.writeFile(rules,JSON.stringify(problem));
+  await button('重新加载').click();await until(()=>button('导入源码').isEnabled(),'reload complete');await page.keyboard.press('F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');
+  await settings();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window opens');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();
+  await popup.getByRole('textbox',{name:'编译并运行 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'shortcut change saves');
+  await popup.getByRole('textbox',{name:'保存当前 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await popup.getByRole('alert').waitFor();assert.match(await popup.getByRole('alert').textContent(),/重复/);
+  await popup.close();await button('取消').click();await page.keyboard.press('F8');await page.locator('.verdict.ac').waitFor();await idle();assert.deepEqual((await state()).config.shortcuts.run,['F8']);pass('separate shortcut window applies custom bindings immediately and rejects conflicts');
+  await settings();await select('界面缩放').selectOption('1.25');await apply();assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()),1.25);
+  await settings();await button('清理编译缓存').click();await until(()=>page.locator('.cache-controls').textContent().then(t=>t.includes('已清理')),'cache cleared');assert.ok((await fs.readdir(path.join(data,'projects','实验2'))).includes(path.basename(versionPath)));await select('界面缩放').selectOption('1');await apply();pass('native UI zoom persists and cache clearing preserves sources and rules');
+  await answer(0);await save();await app.close();app=await launch();await ready();assert.deepEqual((await state()).config.shortcuts.run,['F8']);assert.equal((await state()).config.zoomFactor,1);assert.ok((await state()).draft.source.includes('3.0'));assert.equal(await tabs().count(),5);
+  assert.deepEqual(errors,[]);await page.screenshot({path:path.join(evidence,'workspace-final.png'),fullPage:true});
+  await fs.writeFile(path.join(evidence,'workspace-checks.json'),JSON.stringify({platform:process.platform,checks},null,2));pass('versions, custom shortcuts and settings survive restart; no renderer errors');
+  console.log('ALL WORKSPACE CHECKS PASSED ('+checks.length+' groups)');
+ }catch(error){for(const opened of app.windows())if(opened!==page&&!opened.isClosed())console.error(await opened.locator('body').innerText());if(page&&!page.isClosed()){console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'workspace-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
+ finally{await app.evaluate(()=>globalThis.__answer=1).catch(()=>{});await app.close().catch(()=>{});await restore();await fs.rm(temporary,{recursive:true,force:true});}
 }
 module.exports={runScenario};
-if(require.main===module){
- const {_electron}=require('playwright');
- runScenario(_electron,{executable:path.resolve(process.argv[2]),cwd:process.cwd(),evidence:path.resolve(process.argv[3])}).catch(e=>{console.error(e);process.exitCode=1;});
-}
+if(require.main===module){const {_electron}=require('playwright');runScenario(_electron,{executable:path.resolve(process.argv[2]),cwd:process.cwd(),evidence:path.resolve(process.argv[3])}).catch(e=>{console.error(e);process.exitCode=1;});}

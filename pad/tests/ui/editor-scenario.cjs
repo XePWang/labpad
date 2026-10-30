@@ -203,7 +203,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   await restoreClipboard();await fs.rm(temporary,{recursive:true,force:true});
  }
 }
-module.exports={runEditorScenario};
+module.exports={runEditorScenario,clipboardGuard};
 if(require.main===module){
  const {_electron}=require('playwright');
  runEditorScenario(_electron,{executable:path.resolve(process.argv[2]),cwd:process.cwd(),evidence:path.resolve(process.argv[3])}).catch(e=>{console.error(e);process.exitCode=1;});

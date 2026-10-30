@@ -1,6 +1,6 @@
 {
   "name": "labpad",
-  "version": "0.1.0-dev.5",
+  "version": "0.1.0-dev.6",
   "description": "C 语言实验自测与源码导出工具",
   "author": "LabPad contributors",
   "license": "MIT",
@@ -33,8 +33,10 @@
     "fflate": "0.8.3",
     "iconv-lite": "^0.7.0",
     "node-pty": "1.1.0",
+    "proper-lockfile": "4.1.2",
     "reka-ui": "2.11.0",
     "splitpanes": "4.1.2",
+    "tinykeys": "4.0.1",
     "tree-kill": "^1.2.2",
     "vue": "^3.5.35",
     "write-file-atomic": "8.0.0"
@@ -42,6 +44,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0",
+    "@types/proper-lockfile": "4.1.4",
     "@types/write-file-atomic": "4.0.3",
     "@vitejs/plugin-vue": "^6.0.7",
     "electron": "45.1.0",

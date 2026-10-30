@@ -116,17 +116,17 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
   pass('same-name import cancels or creates a separate copy; invalid projects never appear partially');
   await select('实验项目').selectOption('实验2');await until(()=>select('实验项目').inputValue().then(v=>v==='实验2'),'return to original');await idle();
   await changeTopic('Lab 2-1');
-  const external=path.join(temporary,'external.cpp');await fs.writeFile(external,'// external before dialog\nint main(){return 0;}\n');await files([external]);await button('打开源码').click();await idle();
+  const external=path.join(temporary,'external.cpp');await fs.writeFile(external,'// external before dialog\nint main(){return 0;}\n');await files([external]);await button('导入源码').click();await idle();
   const packagePath=await target('submission.zip');await setAnswer(1);await app.evaluate(()=>globalThis.__holdWarning=true);
   await chooseMenu('导出','导出实验项目');await until(()=>app.evaluate(()=>typeof globalThis.__resolveWarning==='function'),'preflight is waiting');
-  assert.equal(await button('打开源码').isDisabled(),true);assert.equal(await select('题号').isDisabled(),true);assert.equal(await editor().getAttribute('contenteditable'),'false');
+  assert.equal(await button('导入源码').isDisabled(),true);assert.equal(await select('题号').isDisabled(),true);assert.equal(await editor().getAttribute('contenteditable'),'false');
   await fs.writeFile(external,'// external changed during review\nint main(){return 1;}\n');
   await app.evaluate(()=>{globalThis.__holdWarning=false;globalThis.__resolveWarning(1);});await until(()=>fs.stat(packagePath).then(()=>true,()=>false),'atomic snapshot ZIP');await idle();
   const contents=await archive(packagePath),prefix='240101_张三_12345678_实验2/';
   assert.deepEqual(Object.keys(contents),[prefix+'12345678_warmup 2-1.c',prefix+'12345678_Lab 2-1.cpp',prefix+'12345678_Lab 2-2.c']);
   assert.match(contents[prefix+'12345678_Lab 2-1.cpp'],/external before dialog/);assert.equal(await app.evaluate(()=>globalThis.__saveNames.at(-1)),'240101_张三_12345678_实验2.zip');
-  await changeTopic('warmup 2-1');await changeTopic('Lab 2-1');assert.match((await state()).draft.source,/external changed during review/);
-  pass('project archive matches specified root and names; preflight freezes export contents and blocks overlapping edits; per-topic external links reopen correctly');
+  await changeTopic('warmup 2-1');await changeTopic('Lab 2-1');assert.match((await state()).draft.source,/external before dialog/);
+  pass('project archive matches specified root and names; preflight freezes export contents and blocks overlapping edits; per-topic imported copies reopen correctly');
   await app.evaluate(()=>globalThis.__saveTarget='');await chooseMenu('导出','导出实验项目');await idle();assert.deepEqual(await archive(packagePath),contents);
   if(process.platform==='linux'||process.platform==='win32'){
    if(process.platform==='linux')await fs.chmod(temporary,0o500);else await fs.chmod(packagePath,0o444);await app.evaluate((_,v)=>globalThis.__saveTarget=v,packagePath);await chooseMenu('导出','导出实验项目');await idle();
@@ -134,9 +134,9 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
   }
   await page.screenshot({path:path.join(evidence,'project-export.png'),fullPage:true});
   assert.deepEqual(errors,[]);await app.close();app=await launch();await prepare();
-  assert.equal((await state()).draft.language,'cpp');assert.match((await state()).draft.source,/external changed during review/);
+  assert.equal((await state()).draft.language,'cpp');assert.match((await state()).draft.source,/external before dialog/);
   assert.equal((await state()).projects.length,2);assert.equal((await state()).config.studentId,'12345678');
-  pass('save-dialog cancellation and failed archive replacement preserve prior ZIP; project metadata and external links survive restart');
+  pass('save-dialog cancellation and failed archive replacement preserve prior ZIP; project metadata and imported copies survive restart');
   console.log('ALL PROJECT CHECKS PASSED ('+checks.length+' groups)');
  }catch(error){
   if(page&&!page.isClosed()){console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'project-failure.png'),fullPage:true}).catch(()=>{});}throw error;

@@ -1,20 +1,30 @@
 import {mkdir,readFile,writeFile,rename,access,readdir,cp,stat,mkdtemp,rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import path from 'node:path';
+import {randomUUID} from 'node:crypto';
 import iconv from 'iconv-lite';
 import writeFileAtomic from 'write-file-atomic';
 import {defaultConfig,defaultProblem,defaultSource} from '../shared/defaults';
 import {filePart,selection,validateConfig,validateDraft,validateProblem} from '../shared/validate';
 import {parseLabPackage,labDraft} from '../shared/project-format';
-import type {CheckRecord,LabState,ProblemState} from '../shared/project-format';
+import type {CheckRecord,LabState,ProblemState,SourceDocument} from '../shared/project-format';
 import type {Config,Draft,LoadedDraft,Language,Problem,Project} from '../shared/types';
 export function decodeText(bytes:Buffer):{text:string;encoding:string}{
- try{return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes).replace(/^\uFEFF/,''),encoding:'UTF-8'};}
+ if(bytes.length>=2&&((bytes[0]===255&&bytes[1]===254)||(bytes[0]===254&&bytes[1]===255))){
+  const encoding=bytes[0]===255?'UTF-16 LE':'UTF-16 BE';
+  if(bytes.length%2)throw new Error('UTF-16 源文件不完整');
+  return {text:new TextDecoder(encoding==='UTF-16 LE'?'utf-16le':'utf-16be',{fatal:true}).decode(bytes),encoding};
+ }
+ try{return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes),encoding:bytes.subarray(0,3).equals(Buffer.from([239,187,191]))?'UTF-8 BOM':'UTF-8'};}
  catch{const text=iconv.decode(bytes,'cp936');if(!iconv.encode(text,'cp936').equals(bytes))throw new Error('无法完整识别文件编码，请先将文件另存为 UTF-8');return {text,encoding:'GBK / CP936'};}
 }
 export async function writeSource(file:string,source:string,encoding='UTF-8'){
- const text=source.replace(/^\uFEFF/,''),bytes=encoding==='GBK / CP936'?iconv.encode(text,'cp936'):Buffer.from(text,'utf8');
- if(encoding==='GBK / CP936'&&iconv.decode(bytes,'cp936')!==text)throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
+ const text=source.replace(/^\uFEFF/,''),codec=encoding==='GBK / CP936'?'cp936':encoding==='UTF-16 LE'?'utf16le':encoding==='UTF-16 BE'?'utf16be':'utf8';
+ let bytes=iconv.encode(text,codec);
+ if(codec==='cp936'&&iconv.decode(bytes,codec)!==text)throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
+ if(encoding==='UTF-8 BOM')bytes=Buffer.concat([Buffer.from([239,187,191]),bytes]);
+ if(encoding==='UTF-16 LE')bytes=Buffer.concat([Buffer.from([255,254]),bytes]);
+ if(encoding==='UTF-16 BE')bytes=Buffer.concat([Buffer.from([254,255]),bytes]);
  await writeFileAtomic(file,bytes);
 }
 export async function readJSON(file:string):Promise<unknown>{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readFile(file)).replace(/^\uFEFF/,''));}
@@ -33,7 +43,7 @@ export class Storage{
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28}});
+   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:value.shortcuts??defaultConfig().shortcuts});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }
@@ -74,6 +84,10 @@ export class Storage{
   }
   p=this.paths(labId,problemId,language);let warning:string|undefined;
   const binding=problemId?stored?.sources[language]:undefined;
+  if(stored?.documents?.length){
+   const selected=stored.documents.find(d=>d.id===stored.activeDocumentId&&(preferStored||d.language===language))??stored.documents.find(d=>d.language===language);
+   if(selected)return this.readDocument(labId,problemId,selected,problem);
+  }
   if(binding){
    try{const decoded=decodeText(await readFile(binding.path));return {language,source:decoded.text,problem,sourceFile:binding.path,sourceEncoding:decoded.encoding};}
    catch{warning='关联源码无法读取：'+binding.path+'；现显示项目内的源码，请检查原文件位置。';}
@@ -85,11 +99,16 @@ export class Storage{
   const snapshot=structuredClone(validateDraft(draft)),p=this.paths(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language);
   return this.enqueue(async()=>{
    await mkdir(p.dir,{recursive:true});
-   if(saveSource)await this.atomic(p.source,snapshot.source.replace(/^\uFEFF/,''));
+   let version:SourceDocument|undefined;
+   if(snapshot.documentId){
+    const state=this.stateFor(await this.readState(snapshot.problem.labId,snapshot.problem.problemId),snapshot.problem.problemId,snapshot.language);
+    version=state.documents?.find(d=>d.id===snapshot.documentId);if(!version)throw new Error('源码版本已不存在，请重新打开');
+   }
+   if(saveSource)await writeSource(version?this.documentPath(snapshot.problem.labId,snapshot.problem.problemId,version):p.source,snapshot.source,version?.encoding);
    await this.atomic(p.problem,JSON.stringify(snapshot.problem,null,2)+'\n');
    if(saveSource){
     const meta=await this.readState(snapshot.problem.labId,snapshot.problem.problemId),state=this.stateFor(meta,snapshot.problem.problemId,snapshot.language);
-    state.language=snapshot.language;state.starters[snapshot.language]??=defaultSource(snapshot.language);delete state.sources[snapshot.language];
+    state.language=snapshot.language;if(version)state.activeDocumentId=version.id;state.starters[snapshot.language]??=defaultSource(snapshot.language);delete state.sources[snapshot.language];
     meta.problems={...meta.problems,[snapshot.problem.problemId]:state};await this.writeState(snapshot.problem.labId,snapshot.problem.problemId,meta);
    }
   });
@@ -107,7 +126,86 @@ export class Storage{
   return this.enqueue(async()=>{
    const meta=await this.readState(d.problem.labId,d.problem.problemId),state=this.stateFor(meta,d.problem.problemId,d.language);
    state.starters[d.language]??=defaultSource(d.language);state.checks[d.language]=structuredClone(record);
+   const version=state.documents?.find(v=>v.id===d.documentId);if(version)version.check=structuredClone(record);
    meta.problems={...meta.problems,[d.problem.problemId]:state};await this.writeState(d.problem.labId,d.problem.problemId,meta);
+  });
+ }
+ documentPath(labId:string,problemId:string,version:SourceDocument){
+  filePart(version.file,'源码文件名');
+  return version.externalPath??path.join(this.paths(labId,problemId,version.language).dir,version.file);
+ }
+ private async readDocument(labId:string,problemId:string,version:SourceDocument,problem:Problem):Promise<LoadedDraft>{
+  const file=this.documentPath(labId,problemId,version);
+  const decoded=await exists(file)?decodeText(await readFile(file)):{text:version.starter??defaultSource(version.language),encoding:version.encoding};
+  return {documentId:version.id,source:decoded.text,language:version.language,problem:structuredClone(problem),sourceFile:file,sourceEncoding:decoded.encoding,name:path.basename(file)};
+ }
+ async openDocuments(labId:string,problemId:string,language:Language):Promise<LoadedDraft[]>{
+  const legacy=await this.load(labId,problemId,language,true);
+  await this.enqueue(async()=>{
+   const meta=await this.readState(labId,problemId),state=this.stateFor(meta,problemId,legacy.language);
+   state.documents??=[];
+   if(!state.documents.length){
+    for(const lang of ['c','cpp'] as Language[]){
+     const p=this.paths(labId,problemId,lang),binding=state.sources[lang];
+     if(!await exists(p.source)&&!binding&&lang!==legacy.language)continue;
+     let file=path.basename(p.source),externalPath:string|undefined,source=defaultSource(lang);
+     if(binding){
+      const decoded=decodeText(await readFile(binding.path));source=decoded.text;
+      if(labId){file=await this.nextSourceFile(labId,problemId,lang,state.documents);await writeSource(path.join(p.dir,file),source);}
+      else externalPath=binding.path;
+     }else if(await exists(p.source))source=decodeText(await readFile(p.source)).text;
+     state.documents.push({id:randomUUID(),file,language:lang,encoding:externalPath?binding!.encoding:'UTF-8',externalPath,starter:state.starters[lang]??defaultSource(lang),check:binding&&labId?undefined:state.checks[lang]});
+    }
+    state.activeDocumentId=state.documents.find(d=>d.language===legacy.language)?.id;
+    delete state.sources.c;delete state.sources.cpp;
+    meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);
+   }
+  });
+  const state=await this.projectState(labId,problemId,language),versions=await Promise.all(state.documents!.map(async v=>({v,time:await stat(this.documentPath(labId,problemId,v)).then(s=>s.mtimeMs,()=>0)})));
+  versions.sort((a,b)=>b.time-a.time||a.v.file.localeCompare(b.v.file));
+  return Promise.all(versions.slice(0,5).map(({v})=>this.readDocument(labId,problemId,v,legacy.problem)));
+ }
+ private async nextSourceFile(labId:string,problemId:string,language:Language,versions:SourceDocument[]){
+  const p=this.paths(labId,problemId,language),ext=language==='c'?'.c':'.cpp',base=problemId||'空项目';
+  let n=1,file=base+ext;
+  while(versions.some(d=>d.file.toLowerCase()===file.toLowerCase())||await exists(path.join(p.dir,file)))file=base+'.v'+(++n)+ext;
+  return file;
+ }
+ async importSource(labId:string,problemId:string,file:string,forceCopy=false):Promise<LoadedDraft>{
+  const language:Language=path.extname(file).toLowerCase()==='.cpp'?'cpp':'c',decoded=decodeText(await readFile(file)),legacy=await this.load(labId,problemId,language);
+  await this.openDocuments(labId,problemId,language);
+  return this.enqueue(async()=>{
+   const meta=await this.readState(labId,problemId),state=this.stateFor(meta,problemId,language);
+   const canonical=await (await import('node:fs/promises')).realpath(file);
+   let selected:SourceDocument|undefined;
+   if(!forceCopy)for(const version of state.documents??[]){
+    if(await (await import('node:fs/promises')).realpath(this.documentPath(labId,problemId,version)).catch(()=>null)===canonical){selected=version;break;}
+   }
+   if(!selected){
+    const filename=await this.nextSourceFile(labId,problemId,language,state.documents??[]),externalPath=!labId&&!forceCopy?canonical:undefined;
+    selected={id:randomUUID(),file:filename,language,encoding:externalPath?decoded.encoding:'UTF-8',externalPath,starter:state.starters[language]??defaultSource(language)};
+    if(!externalPath){await mkdir(this.paths(labId,problemId,language).dir,{recursive:true});await writeSource(this.documentPath(labId,problemId,selected),decoded.text);}
+    state.documents!.push(selected);
+   }
+   state.activeDocumentId=selected.id;state.language=language;meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);
+   return this.readDocument(labId,problemId,selected,legacy.problem);
+  });
+ }
+ async newVersion(draft:Draft):Promise<LoadedDraft>{
+  const d=structuredClone(validateDraft(draft));await this.openDocuments(d.problem.labId,d.problem.problemId,d.language);
+  return this.enqueue(async()=>{
+   const meta=await this.readState(d.problem.labId,d.problem.problemId),state=this.stateFor(meta,d.problem.problemId,d.language);
+   const version:SourceDocument={id:randomUUID(),file:await this.nextSourceFile(d.problem.labId,d.problem.problemId,d.language,state.documents??[]),language:d.language,encoding:'UTF-8',starter:state.starters[d.language]??defaultSource(d.language)};
+   await mkdir(this.paths(d.problem.labId,d.problem.problemId,d.language).dir,{recursive:true});await writeSource(this.documentPath(d.problem.labId,d.problem.problemId,version),d.source);
+   state.documents!.push(version);state.activeDocumentId=version.id;state.language=d.language;meta.problems={...meta.problems,[d.problem.problemId]:state};await this.writeState(d.problem.labId,d.problem.problemId,meta);
+   return {...d,documentId:version.id,sourceFile:this.documentPath(d.problem.labId,d.problem.problemId,version),name:version.file,sourceEncoding:'UTF-8'};
+  });
+ }
+ activateDocument(labId:string,problemId:string,id:string){
+  return this.enqueue(async()=>{
+   const meta=await this.readState(labId,problemId),state=this.stateFor(meta,problemId,'c'),version=state.documents?.find(d=>d.id===id);
+   if(!version)throw new Error('找不到该源码版本');state.activeDocumentId=id;state.language=version.language;
+   meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);
   });
  }
  async projects():Promise<Project[]>{
@@ -157,10 +255,11 @@ export class Storage{
   filePart(lab,'项目名');filePart(name,'题号');await this.flush();
   if(!await exists(path.join(this.root,'projects',lab)))throw new Error('请先新建或选择实验项目');
   if(await exists(this.paths(lab,name,language).problem))throw new Error('题号已存在，请从下拉菜单中选择');
+  if(await exists(this.paths(lab,name,'c').source)||await exists(this.paths(lab,name,'cpp').source))throw new Error('题号与现有源码文件名冲突，请更换题号');
   const draft={source:defaultSource(language),language,problem:defaultProblem(lab,name)};await this.save(draft);return draft;
  }
  async copyDataTo(target:string){
-  await this.flush();const names=['projects','空项目.c','空项目.cpp','空项目.json','.labpad'];
+  await this.flush();const names=['projects','空项目.c','空项目.cpp','空项目.json','.labpad',...(await readdir(this.root)).filter(n=>/^空项目\.v\d+\.(c|cpp)$/.test(n))];
   for(const name of [...names,'config.json'])if(await exists(path.join(target,name)))throw new Error('目标目录已有 LabPad 数据，请选择其他目录，避免覆盖');
   const projects=path.join(this.root,'projects'),relative=path.relative(projects,target);
   if(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)))throw new Error('数据目录不能放在当前 projects 目录内部');

@@ -11,7 +11,7 @@ export function fingerprint(draft:Draft,compiler:CompilerConfig,identity:string)
  const p=draft.problem,c=p.comparison;
  return createHash('sha256').update(JSON.stringify([draft.language,draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
   c.type,c.type==='floatTokens'?c.absoluteTolerance:null,c.type==='floatTokens'?c.relativeTolerance:null,
-  p.testCases.map(t=>[t.id,t.input,t.expectedOutput]),compiler,identity])).digest('hex');
+  p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),compiler,identity])).digest('hex');
 }
 export function checkRecord(draft:Draft,hash:string,result?:JudgeResult):CheckRecord{
  const total=draft.problem.testCases.length,passed=result?.cases.filter(c=>c.status==='completed'&&c.verdict==='AC').length??0;
@@ -30,7 +30,7 @@ function submissionFolder(config:Config,labId:string){
 async function testStatus(storage:Storage,draft:Draft,config:Config,identity:string){
  const total=draft.problem.testCases.length;
  if(!total)return '未设置测试点';
- const record=(await storage.projectState(draft.problem.labId,draft.problem.problemId,draft.language)).checks[draft.language];
+ const state=await storage.projectState(draft.problem.labId,draft.problem.problemId,draft.language),record=draft.documentId?state.documents?.find(v=>v.id===draft.documentId)?.check:state.checks[draft.language];
  if(!record)return '尚未测试';
  if(record.fingerprint!==fingerprint(draft,config.compiler,identity))return '内容或编译器已变更，需重新测试';
  if(record.status==='passed'&&record.total===total&&record.passed===total)return '';
@@ -53,7 +53,7 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
  const identities=new Map<Language,string>();
  for(const id of ids){
   const draft=id===current.problem.problemId?current:await storage.load(labId,id,'c',true);
-  const state=await storage.projectState(labId,id,draft.language),starter=state.starters[draft.language]??defaultSource(draft.language);
+  const state=await storage.projectState(labId,id,draft.language),starter=state.documents?.find(v=>v.id===draft.documentId)?.starter??state.starters[draft.language]??defaultSource(draft.language);
   let same=draft.source.replace(/\r\n/g,'\n').trim()===starter.replace(/\r\n/g,'\n').trim();
   if(!same){try{same=(await services.format(draft.source,draft.language)).trim()===(await services.format(starter,draft.language)).trim();}catch{}}
   if(same||!draft.source.trim())unedited.push(id);

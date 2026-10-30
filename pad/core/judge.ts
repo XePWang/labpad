@@ -29,7 +29,7 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
    else if(r.reason==='output')c.verdict='OLE';
    else if(r.code!==0||r.signal)c.verdict='RE';
    else{
-    const comparison=draft.problem.comparison;
+    const comparison=test.comparison??draft.problem.comparison;
     const checker=path.join(compiler.paths.checkers,(comparison.type==='wcmp'?'wcmp':'float-tokens')+(process.platform==='win32'?'.exe':''));
     const input=path.join(cwd,'input'),actual=path.join(cwd,'actual'),answer=path.join(cwd,'answer');
     await Promise.all([writeFile(input,test.input,'utf8'),writeFile(actual,r.stdout),writeFile(answer,test.expectedOutput,'utf8')]);

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.testCases",
+  "comparison": {
+    "type": "wcmp"
+  },
+  "testCases": [
+    {
+      "id": "exact",
+      "input": "1\n",
+      "expectedOutput": "3.00\n"
+    },
+    {
+      "id": "float",
+      "input": "2\n",
+      "expectedOutput": "3.00\n",
+      "comparison": {
+        "type": "floatTokens",
+        "absoluteTolerance": 1e-06,
+        "relativeTolerance": 1e-06
+      }
+    }
+  ]
+}

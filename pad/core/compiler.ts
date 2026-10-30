@@ -1,4 +1,5 @@
 import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
+import {CompilerCache} from './cache';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {runProcess} from './process';
@@ -8,15 +9,17 @@ export interface RuntimePaths {toolchain:string;checkers:string;processHost?:str
 export interface Prepared {compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
  readonly session:Promise<string>;
+ readonly cache:CompilerCache;
  constructor(readonly paths:RuntimePaths){
-  this.session=mkdtemp(path.join(tmpdir(),'labpad-'));
+  this.session=mkdtemp(path.join(tmpdir(),'labpad-runtime-'+process.pid+'-'));
+  this.cache=new CompilerCache(this.paths.cacheDirectory??path.join(tmpdir(),'labpad-compiler-cache-'+(process.getuid?.()??'user')));
  }
  async environment(config?:CompilerConfig):Promise<NodeJS.ProcessEnv>{
   const root=await this.session;
-  const cache=this.paths.cacheDirectory??path.join(tmpdir(),'labpad-compiler-cache-'+(process.getuid?.()??'user'));
+  const cache=this.cache.directory;
   await mkdir(cache,{recursive:true});
-  return {...(config?compilerEnvironment(process.env,config):process.env),LANG:'C.UTF-8',LC_ALL:'C.UTF-8',
-   ZIG_GLOBAL_CACHE_DIR:cache,ZIG_LOCAL_CACHE_DIR:path.join(root,'cache')};
+  return {...(config?compilerEnvironment(process.env,config):process.env),LANG:process.platform==='darwin'?'en_US.UTF-8':'C.UTF-8',LC_ALL:process.platform==='darwin'?'en_US.UTF-8':'C.UTF-8',
+   ZIG_GLOBAL_CACHE_DIR:cache,ZIG_LOCAL_CACHE_DIR:path.join(cache,'local')};
  }
  resolve(config:CompilerConfig,language:Language):{program:string;prefix:string[]}{
   const zig=config.mode==='builtin'||config.kind==='zig';
@@ -40,8 +43,11 @@ export class Compiler {
  async compile(source:string,language:Language,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
   const directory=await mkdtemp(path.join(await this.session,'run-'));
   const executable=path.join(directory,process.platform==='win32'?'program.exe':'program');
-  const cleanup=()=>rm(directory,{recursive:true,force:true});
+  const cleanup=()=>rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+  let release:(()=>Promise<void>)|undefined;
   try{
+   if(config.mode==='builtin'||config.kind==='zig'){release=await this.cache.acquire(signal);await this.cache.trim();}
+   signal?.throwIfAborted();
    const sourcePath=path.join(directory,'main.'+(language==='c'?'c':'cpp'));
    await writeFile(sourcePath,source.replace(/^\uFEFF/,''),'utf8');
    const {program,prefix}=this.resolve(config,language);
@@ -56,7 +62,7 @@ export class Compiler {
     try{await access(executable);}catch{throw new Error('编译器没有生成可执行文件，请检查编译参数');}
    }
    return {compilation,executable,directory,cleanup};
-  }catch(error){await cleanup();throw error;}
+  }catch(error){await cleanup();throw error;}finally{await release?.();}
  }
- async dispose(){await rm(await this.session,{recursive:true,force:true});}
+ async dispose(){await rm(await this.session,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 }

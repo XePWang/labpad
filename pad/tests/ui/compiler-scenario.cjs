@@ -11,7 +11,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
  assert.equal(path.dirname(temporary),path.resolve(os.tmpdir()));
  const data=path.join(temporary,'labpad'),fixture=path.join(temporary,'installed zig'),errors=[],checks=[];
  const target=(process.platform==='win32'?'win':process.platform==='darwin'?'mac':'linux')+'-'+process.arch;
- const bundled=executable?path.join(path.dirname(executable),'resources','toolchain'):path.resolve(cwd,'../.work/toolchains',target);
+ const bundled=executable?path.join(path.dirname(path.resolve(executable)),'resources','toolchain'):path.resolve(cwd,'../.work/toolchains',target);
  const binary=process.platform==='win32'?'zig.exe':'zig',installed=path.join(fixture,binary);
  await fs.mkdir(fixture);await fs.copyFile(path.join(bundled,binary),installed);await fs.symlink(path.join(bundled,'lib'),path.join(fixture,'lib'),process.platform==='win32'?'junction':'dir');
  const environment={...process.env,LABPAD_DATA_DIR:data},pathKey=Object.keys(environment).find(k=>k.toLowerCase()==='path')??'PATH';
@@ -49,11 +49,11 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
   pass('selected compiler resets category, both paths and matching C/C++/link defaults; settings commit explicitly');
 
   await page.locator('.cm-content').fill('#include <stdio.h>\nint main(void){printf("42");}\n');
-  await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('42');await button('保存').click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save source');
+  await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('42');await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save source');
   await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});
   const cpp=path.join(temporary,'external.cpp');await fs.writeFile(cpp,'#include <iostream>\nint main(){std::cout<<42;}\n');await app.evaluate((_,file)=>{globalThis.__source=file;},cpp);await button('打开源码').click();
   await until(()=>page.locator('.pane-heading').first().textContent().then(t=>t.includes('external.cpp')),'C++ source open');
-  await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});await button('保存').click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save C++ source');
+  await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save C++ source');
   pass('actual detected external Zig compiles and judges C and C++ from an installation path containing spaces and Chinese characters');
   await app.close();app=await launch();await prepare();assert.equal((await snapshot()).config.compiler.cPath,installed);
   pass('selected compiler persists across restart');

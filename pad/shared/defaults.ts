@@ -1,3 +1,4 @@
+import {defaultShortcuts} from './shortcuts';
 import type {Config,Problem,Language,CompilerConfig} from './types';
 export function defaultCompilerConfig(kind:CompilerConfig['kind'],msvc=false):CompilerConfig{
  return {mode:'builtin',kind,cPath:'',cppPath:'',cArgs:['-std=c17','-O2','-Wall','-Wextra'],cppArgs:['-std=c++17','-O2','-Wall','-Wextra'],linkArgs:msvc?[]:['-lm']};
@@ -5,7 +6,7 @@ export function defaultCompilerConfig(kind:CompilerConfig['kind'],msvc=false):Co
 export function defaultConfig():Config{
  return {schemaVersion:1,classId:'',name:'',studentId:'',currentLab:'',currentProblem:'',language:'c',
  compiler:defaultCompilerConfig('zig'),
- debugTimeLimitMs:null,terminalBufferLines:3000,saveMode:'manual',sourceFile:null,indentSize:4,theme:'dark',formatOnSave:true,layout:{editorPercent:53,outputPercent:28}};
+ debugTimeLimitMs:null,terminalBufferLines:3000,saveMode:'manual',sourceFile:null,indentSize:4,theme:'dark',formatOnSave:true,layout:{editorPercent:53,outputPercent:28},zoomFactor:1,shortcuts:defaultShortcuts()};
 }
 export function defaultProblem(labId:string,problemId:string):Problem{
  return {schemaVersion:1,labId,problemId,title:'',timeLimitMs:1000,outputLimitBytes:65536,comparison:{type:'wcmp'},testCases:[]};

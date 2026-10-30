@@ -1,3 +1,5 @@
+import {validateComparison} from './comparison';
+import {validateShortcuts} from './shortcuts';
 import type {Config,Draft,Problem,LayoutConfig} from './types';
 export function filePart(value:unknown,label:string):string {
  if(typeof value!=='string'||!value.trim()||/[<>:"/\\|?*\x00-\x1f]/.test(value)||/[. ]$/.test(value)||
@@ -16,18 +18,13 @@ export function validateProblem(value:unknown):Problem {
  if(typeof p.title!=='string')throw new Error('题目 title 必须为字符串');
  if(!Number.isSafeInteger(p.timeLimitMs)||p.timeLimitMs<=0||!Number.isSafeInteger(p.outputLimitBytes)||p.outputLimitBytes<=0)
  throw new Error('timeLimitMs 和 outputLimitBytes 必须为正整数');
- const c=p.comparison;
- if(!c||!['wcmp','floatTokens'].includes(c.type))throw new Error('comparison.type 必须为 wcmp 或 floatTokens');
- if(c.type==='floatTokens'){
- const values=[c.absoluteTolerance,c.relativeTolerance];
- if(values.every(v=>v===undefined)||values.some(v=>v!==undefined&&(!Number.isFinite(v)||v<0)))
- throw new Error('浮点模式至少设置一项有限且非负的 absoluteTolerance / relativeTolerance');
- }
+ validateComparison(p.comparison,'题目比较规则');
  if(!Array.isArray(p.testCases))throw new Error('testCases 必须为数组');
  const ids=new Set<string>();
  for(const t of p.testCases){
  if(!t||typeof t.id!=='string'||!t.id||ids.has(t.id)||typeof t.input!=='string'||typeof t.expectedOutput!=='string')
  throw new Error('测试点需要唯一 id 和字符串 input、expectedOutput');
+ if(t.comparison!==undefined)validateComparison(t.comparison,'测试点 '+t.id+' 比较规则');
  ids.add(t.id);
  }
  return p;
@@ -50,7 +47,8 @@ export function validateConfig(value:unknown):Config {
  if(!['manual','auto'].includes(c.saveMode)||!(c.sourceFile===null||typeof c.sourceFile==='string'))throw new Error('保存设置无效');
  if(!['c','cpp'].includes(c.language))throw new Error('源码语言无效');
  if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean')throw new Error('编辑器设置无效');
- validateLayout(c.layout);
+ validateLayout(c.layout);validateShortcuts(c.shortcuts);
+ if(!Number.isFinite(c.zoomFactor)||c.zoomFactor<0.75||c.zoomFactor>2)throw new Error('界面缩放应为 75% 至 200%');
  const b=c.compiler;
  if(!b||!['builtin','custom'].includes(b.mode)||!['zig','gcc','clang'].includes(b.kind)||
  typeof b.cPath!=='string'||typeof b.cppPath!=='string'||

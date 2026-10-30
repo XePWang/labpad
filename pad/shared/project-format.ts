@@ -4,7 +4,8 @@ import type {Draft,Language,Problem} from './types';
 export interface LabPackage{schemaVersion:1;kind:'labpad.project';labId:string;problems:LabProblem[]}
 export interface LabProblem{problemId:string;title:string;language:Language;source:string;timeLimitMs:number;outputLimitBytes:number;comparison:Problem['comparison'];testCases:Problem['testCases']}
 export interface CheckRecord{fingerprint:string;passed:number;total:number;status:'passed'|'failed'|'cancelled'|'error'|'running';checkedAt:string}
-export interface ProblemState{language:Language;starters:Partial<Record<Language,string>>;checks:Partial<Record<Language,CheckRecord>>;sources:Partial<Record<Language,{path:string;encoding:string}>>}
+export interface SourceDocument{id:string;file:string;language:Language;encoding:string;externalPath?:string;starter?:string;check?:CheckRecord}
+export interface ProblemState{documents?:SourceDocument[];activeDocumentId?:string;language:Language;starters:Partial<Record<Language,string>>;checks:Partial<Record<Language,CheckRecord>>;sources:Partial<Record<Language,{path:string;encoding:string}>>}
 export interface LabState{schemaVersion:1;labId:string;order?:string[];problems:Record<string,ProblemState>}
 export function parseLabPackage(value:unknown):LabPackage{
  const p=value as any;
