@@ -27,6 +27,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
  }
  async function settings(){await page.getByRole('button',{name:/设置/}).click();await settingsDialog().waitFor();}
  async function detect(){await button('自动检测').click();await dialog().waitFor({timeout:60000});}
+ async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
  function pass(label){checks.push(label);console.log('PASS '+label);}
  try{
   await prepare();await settings();assert.equal(await button('自动检测').count(),0);await select('编译器使用方式').selectOption('custom');
@@ -51,8 +52,8 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
   await page.locator('.cm-content').fill('#include <stdio.h>\nint main(void){printf("42");}\n');
   await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('42');await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save source');
   await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});
-  const cpp=path.join(temporary,'external.cpp');await fs.writeFile(cpp,'#include <iostream>\nint main(){std::cout<<42;}\n');await app.evaluate((_,file)=>{globalThis.__source=file;},cpp);await button('打开源码').click();
-  await until(()=>page.locator('.pane-heading').first().textContent().then(t=>t.includes('external.cpp')),'C++ source open');
+  const cpp=path.join(temporary,'external.cpp');await fs.writeFile(cpp,'#include <iostream>\nint main(){std::cout<<42;}\n');await app.evaluate((_,file)=>{globalThis.__source=file;},cpp);await importSource();
+  await until(async()=>{const loaded=await snapshot();return loaded.draft.language==='cpp'&&loaded.sourcePath!==cpp;},'C++ source imported as copy');
   await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save C++ source');
   pass('actual detected external Zig compiles and judges C and C++ from an installation path containing spaces and Chinese characters');
   await app.close();app=await launch();await prepare();assert.equal((await snapshot()).config.compiler.cPath,installed);

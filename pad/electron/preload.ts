@@ -2,12 +2,12 @@ import {contextBridge,ipcRenderer} from 'electron';
 import type {Bridge} from '../shared/types';
 function listen(channel:string,callback:(value:any)=>void){const handler=(_event:unknown,value:unknown)=>callback(value);ipcRenderer.on(channel,handler);return()=>ipcRenderer.removeListener(channel,handler);}
 const api:Bridge={
- openDocuments:(a,b,c)=>ipcRenderer.invoke('documents:open',a,b,c),activateDocument:id=>ipcRenderer.invoke('document:activate',id),newVersion:d=>ipcRenderer.invoke('source:version',d),copyPath:(v,r)=>ipcRenderer.invoke('path:copy',v,r),workspaceState:(d,s)=>ipcRenderer.send('workspace:state',d,s),
+ openDocuments:(a,b,c)=>ipcRenderer.invoke('documents:open',a,b,c),activateDocument:id=>ipcRenderer.invoke('document:activate',id),newVersion:(d,t)=>ipcRenderer.invoke('source:version',d,t),copyPath:(v,r)=>ipcRenderer.invoke('path:copy',v,r),workspaceState:(d,s)=>ipcRenderer.send('workspace:state',d,s),
  openShortcuts:()=>ipcRenderer.invoke('shortcuts:open'),shortcutSettings:()=>ipcRenderer.invoke('shortcuts:get'),saveShortcuts:v=>ipcRenderer.invoke('shortcuts:save',v),onShortcuts:c=>listen('shortcuts:changed',c),clearCache:()=>ipcRenderer.invoke('cache:clear'),
  saveProblem:p=>ipcRenderer.invoke('problem:save',p),bootstrap:()=>ipcRenderer.invoke('bootstrap'),reloadDocument:()=>ipcRenderer.invoke('draft:reload'),saveDraft:d=>ipcRenderer.invoke('draft:save',d),formatCode:(s,l,i)=>ipcRenderer.invoke('source:format',s,l,i),documentState:(d,s)=>ipcRenderer.send('document:state',d,s),
  loadDraft:(a,b,c,p=true)=>ipcRenderer.invoke('draft:load',a,b,c,p),projects:()=>ipcRenderer.invoke('projects'),
  createLab:n=>ipcRenderer.invoke('project:create',n),createProblem:(a,b,c)=>ipcRenderer.invoke('problem:create',a,b,c),
- saveConfig:(c,p)=>ipcRenderer.invoke('config:save',c,p),compilerInfo:c=>ipcRenderer.invoke('compiler:info',c),detectCompilers:()=>ipcRenderer.invoke('compiler:detect'),saveLayout:l=>ipcRenderer.invoke('layout:save',l),openSource:()=>ipcRenderer.invoke('source:open'),
+ saveConfig:(c,p)=>ipcRenderer.invoke('config:save',c,p),compilerInfo:c=>ipcRenderer.invoke('compiler:info',c),detectCompilers:()=>ipcRenderer.invoke('compiler:detect'),saveLayout:l=>ipcRenderer.invoke('layout:save',l),importSource:()=>ipcRenderer.invoke('source:import'),
  confirmUnsaved:()=>ipcRenderer.invoke('document:confirm'),validatePath:(p,k,e)=>ipcRenderer.invoke('path:validate',p,k,e),
  choosePath:(k,p)=>ipcRenderer.invoke('path:choose',k,p),revealPath:(p,k)=>ipcRenderer.invoke('path:reveal',p,k),
  importIO:(a,b)=>ipcRenderer.invoke('problem:import',a,b),importProject:()=>ipcRenderer.invoke('project:import'),exportProject:d=>ipcRenderer.invoke('project:export',d),exportSource:d=>ipcRenderer.invoke('source:export',d),showProblemFile:d=>ipcRenderer.invoke('problem:show',d),

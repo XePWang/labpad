@@ -7,6 +7,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
  try{
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
   const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.getByRole('tab'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
+ async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
   const runtime=await app.evaluate(({app})=>({pid:process.pid,profile:app.getPath('userData')}));
   await app.evaluate(({dialog})=>{globalThis.__answer=2;dialog.showMessageBox=async()=>({response:globalThis.__answer,checkboxChecked:false});});
   await page.getByRole('button',{name:/设置/}).click();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
@@ -19,11 +20,11 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   await page.keyboard.press('Control+k');await page.keyboard.press('u');await until(()=>tabs().count().then(n=>n===1),'close saved chord');assert.equal(await page.locator('.tab-dirty').count(),1);
   await page.keyboard.press('Control+k');await page.keyboard.press('w');await page.waitForTimeout(150);assert.equal(await tabs().count(),1);assert.equal((await state()).draft.source,source+'// unsaved'); // Cancel leaves all views.
   await app.evaluate(()=>globalThis.__answer=0);await page.keyboard.press('Control+F4');await until(()=>tabs().count().then(n=>n===0),'save and close');assert.equal(await editor().count(),0);
-  const owned=(await state()).draft.sourceFile;await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},owned);await page.locator('.toolbar-actions').getByRole('button',{name:'打开源码',exact:true}).click();await until(()=>tabs().count().then(n=>n===1),'reopen closed file');await editor().fill(source);await page.keyboard.press('Control+s');
+  const owned=(await state()).draft.sourceFile;await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},owned);await importSource();await until(()=>tabs().count().then(n=>n===1),'reopen closed file');await editor().fill(source);await page.keyboard.press('Control+s');
   console.log('PASS close right, close saved/all sequences, cancellation, Ctrl+F4 save and reopen');
   await until(async()=>(await fs.readFile(owned,'utf8'))===source,'original save completed');const beforeDiscard=await fs.readFile(owned,'utf8');await editor().fill(source+'// discarded source');await app.evaluate(()=>globalThis.__answer=1);await menu('全部关闭');await until(()=>tabs().count().then(n=>n===0),'discard and close all');
   await page.getByRole('button',{name:/新增测试点/}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'空项目.json'),'utf8')).testCases.length===1,'rules saved without a source view');assert.equal(await fs.readFile(owned,'utf8'),beforeDiscard);
-  await page.getByRole('button',{name:'删除测试点',exact:true}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存全部',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'空项目.json'),'utf8')).testCases.length===0,'rules cleared');await page.locator('.toolbar-actions').getByRole('button',{name:'打开源码',exact:true}).click();await until(()=>tabs().count().then(n=>n===1),'owned version reopens');
+  await page.getByRole('button',{name:'删除测试点',exact:true}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存全部',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'空项目.json'),'utf8')).testCases.length===0,'rules cleared');await importSource();await until(()=>tabs().count().then(n=>n===1),'owned version reopens');
   console.log('PASS saving rules with all source tabs closed never saves discarded source edits');
 
   // Open/close child windows repeatedly; record a user-defined key.

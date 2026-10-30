@@ -34,6 +34,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
  async function context(item,index){await tabs().nth(index??(await tabs().count()-1)).click({button:'right'});await page.getByRole('menuitem',{name:item,exact:true}).click();}
  async function idle(){await until(()=>page.getByRole('button',{name:/编译并运行/}).isEnabled(),'run finished',150000);}
  async function output(text){await until(()=>page.evaluate(t=>window.__output.includes(t),text),'terminal '+text,150000);}
+ async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
  function pass(label){checks.push(label);console.log('PASS '+label);}
  async function create(lab,problem){
   if(lab){await select('实验项目').selectOption('@new:lab');await input('项目名称').fill(lab);await button('新建').click();await until(()=>select('实验项目').inputValue().then(v=>v===lab),'created lab');}
@@ -41,13 +42,13 @@ async function runScenario(electron,{executable,cwd,evidence}){
  }
  try{
   await ready();await settings();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await apply();
-  const original=path.join(temporary,'原始.c');await fs.writeFile(original,code('original'));await files([original]);await button('打开源码').click();await equal(code('original'),'external opened');
-  await edit(code('changed'));await save();assert.equal(await fs.readFile(original,'utf8'),code('changed'));
-  await edit(code('carried'));await answer(1);await create('实验2','Lab 2-1');await equal(code('carried'),'creating project carries code');assert.equal(await fs.readFile(original,'utf8'),code('changed'));await save();
-  assert.equal(await button('导入源码').count(),1);pass('scratch opens and saves original; creating a project and first topic preserves unsaved code');
-  const imported=path.join(temporary,'导入版本.cpp');await fs.writeFile(imported,'#include <iostream>\nint main(){std::cout<<"中文";}\n');await files([imported]);const count=await tabs().count();await button('导入源码').click();await until(()=>tabs().count().then(n=>n===count+1),'import creates a tab');
+  const original=path.join(temporary,'原始.c');await fs.writeFile(original,code('original'));await files([original]);await importSource();await equal(code('original'),'external opened');
+  await edit(code('changed'));await save();assert.equal(await fs.readFile(original,'utf8'),code('original'));
+  await edit(code('carried'));await answer(1);await create('实验2','Lab 2-1');await equal(code('carried'),'creating project carries code');assert.equal(await fs.readFile(original,'utf8'),code('original'));await save();
+  assert.equal(await button('导入源码').count(),0);pass('scratch imports a managed copy without changing original; creating a project and first topic preserves unsaved code');
+  const imported=path.join(temporary,'导入版本.cpp');await fs.writeFile(imported,'#include <iostream>\nint main(){std::cout<<"中文";}\n');await files([imported]);const count=await tabs().count();await importSource();await until(()=>tabs().count().then(n=>n===count+1),'import creates a tab');
   const importedPath=(await state()).sourcePath;assert.notEqual(importedPath,imported);await edit('// managed edit\n'+await fs.readFile(imported,'utf8'));await save();assert.ok(!(await fs.readFile(imported,'utf8')).includes('managed edit'));assert.match(await fs.readFile(importedPath,'utf8'),/managed edit/);
-  await files([importedPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'same owned import completes');assert.equal(await tabs().count(),count+1);pass('project import copies C/C++ source, saves managed version and reopens same-topic file without duplication');
+  await files([importedPath]);await importSource();await until(()=>button('导入').isEnabled(),'same owned import completes');assert.equal(await tabs().count(),count+1);pass('project import copies C/C++ source, saves managed version and reopens same-topic file without duplication');
   const first=(await names())[0];await tabs().nth(0).click();await edit(code('first')+'// first unsaved\n');await editor().focus();await page.keyboard.press('Control+End');await page.keyboard.insertText('AAA');
   const firstText=(await state()).draft.source;await tabs().nth(1).click();const secondBefore=(await state()).draft.source;await editor().focus();await page.keyboard.press('Control+End');await page.keyboard.insertText('BBB');await page.keyboard.press('Control+z');await equal(secondBefore,'second undo independent');await page.keyboard.press('Control+Shift+Z');await equal(secondBefore+'BBB','second redo independent');
   await tabs().nth(0).click();await equal(firstText,'first contents retained');await page.keyboard.press('Control+z');await equal(firstText.slice(0,-3),'first undo history retained');await page.keyboard.press('Control+Shift+Z');await equal(firstText,'first redo retained');
@@ -62,13 +63,13 @@ async function runScenario(electron,{executable,cwd,evidence}){
   await context('关闭其他',0);await until(()=>tabs().count().then(n=>n===1),'close others');
   for(let n=0;n<6;n++){await context('另存为新版本',0);await edit(code('version '+n));await save();await page.waitForTimeout(15);}
   const allFiles=await fs.readdir(path.join(data,'projects','实验2')),allSources=allFiles.filter(n=>/\.(c|cpp)$/.test(n));assert.ok(allSources.length>=7);
-  await create(null,'Lab 2-2');await files([versionPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'foreign import complete');const foreignPath=(await state()).sourcePath;assert.notEqual(foreignPath,versionPath);
+  await create(null,'Lab 2-2');await files([versionPath]);await importSource();await until(()=>button('导入').isEnabled(),'foreign import complete');const foreignPath=(await state()).sourcePath;assert.notEqual(foreignPath,versionPath);
   await select('题号').selectOption('Lab 2-1');await until(()=>tabs().count().then(n=>n===5),'latest five reopened');assert.equal(await select('题号').inputValue(),'Lab 2-1');
-  await files([versionPath]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'old managed version opens');
+  await files([versionPath]);await importSource();await until(()=>button('导入').isEnabled(),'old managed version opens');
   assert.ok((await names()).some(n=>n.includes(path.basename(versionPath))));assert.deepEqual((await fs.readdir(path.join(data,'projects','实验2'))).filter(n=>/\.(c|cpp)$/.test(n)).sort(),[...allSources,'Lab 2-2.c',path.basename(foreignPath)].sort());
   pass('switching topics reopens latest five versions, retains all files, copies foreign-topic source and allows older versions to open');
   await answer(1);await context('全部关闭');await until(()=>tabs().count().then(n=>n===0),'all closed');assert.equal(await editor().count(),0);assert.equal(await page.getByRole('button',{name:/编译并运行/}).isDisabled(),true);
-  await files([versionPath]);await page.locator('.toolbar-actions').getByRole('button',{name:'导入源码',exact:true}).click();await until(()=>tabs().count().then(n=>n===1),'reopen after close all');pass('close all leaves a clean empty editor and reopening a version restores it');
+  await files([versionPath]);await importSource();await until(()=>tabs().count().then(n=>n===1),'reopen after close all');pass('close all leaves a clean empty editor and reopening a version restores it');
   // UTF-8 PTY: narrow stdio, split byte writes, stderr, input and emoji.
   const interactive='#include <stdio.h>\nint main(void){char line[256];fputs("你好 good evening.\\n",stdout);fputs("错误输出\\n",stderr);fflush(NULL);if(fgets(line,sizeof line,stdin)){printf("收到:%s",line);fflush(stdout);}return 0;}\n';
   await edit(interactive);await page.evaluate(()=>window.__output='');await editor().focus();await page.keyboard.press('F9');await output('你好 good evening.');await output('错误输出');
@@ -81,7 +82,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
    ['GBK.c',Buffer.concat([Buffer.from('#include <stdio.h>\nint main(void){puts("'),Buffer.from([0xc4,0xe3,0xba,0xc3]),Buffer.from(' GBK");return 0;}\n')]),'你好 GBK'],
    ['UTF16.c',Buffer.concat([Buffer.from([255,254]),Buffer.from('#include <stdio.h>\nint main(void){puts("你好 UTF16");return 0;}\n','utf16le')]),'你好 UTF16']
   ]){
-   const file=path.join(temporary,name);await fs.writeFile(file,bytes);await files([file]);await button('导入源码').click();await until(()=>button('导入源码').isEnabled(),'encoded source imported');
+   const file=path.join(temporary,name);await fs.writeFile(file,bytes);await files([file]);await importSource();await until(()=>button('导入').isEnabled(),'encoded source imported');
    await page.evaluate(()=>window.__output='');await page.keyboard.press('F9');await output(expected);await idle();assert.deepEqual(await fs.readFile(file),bytes);
   }
   pass('real C++ Unicode output and GBK / UTF-16 imports compile as UTF-8 while originals retain exact bytes');
@@ -91,7 +92,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
   await edit('invalid syntax');await page.keyboard.press('F9');await idle();assert.match(await button('输出').getAttribute('class'),/active/);
   await edit(code('3.0'));await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('3.00');await save();
   const rules=path.join(data,'projects','实验2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(rules,'utf8'));problem.testCases.push({id:'float',input:'',expectedOutput:'3.00',comparison:{type:'floatTokens',absoluteTolerance:0}});await fs.writeFile(rules,JSON.stringify(problem));
-  await button('重新加载').click();await until(()=>button('导入源码').isEnabled(),'reload complete');await page.keyboard.press('F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');
+  await button('重新加载').click();await until(()=>button('导入').isEnabled(),'reload complete');await page.keyboard.press('F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');
   await settings();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window opens');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();
   await popup.getByRole('textbox',{name:'编译并运行 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'shortcut change saves');
   await popup.getByRole('textbox',{name:'保存当前 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await popup.getByRole('alert').waitFor();assert.match(await popup.getByRole('alert').textContent(),/重复/);

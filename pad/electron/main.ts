@@ -15,7 +15,7 @@ import writeFileAtomic from 'write-file-atomic';
 import {parseLabPackage,parseTestCases} from '../shared/project-format';
 import {prepareSource,prepareProject,submissionZip,fingerprint,checkRecord,type Submission} from '../core/submission';
 import {judge} from '../core/judge';
-import {Storage,decodeText,readJSON,importPairs,exists,writeSource} from '../core/storage';
+import {Storage,readJSON,importPairs,exists,writeSource} from '../core/storage';
 import {filePart,selection,validateConfig,validateDraft,validateLayout,validateProblem} from '../shared/validate';
 import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,LoadedDraft,PathKind,SaveResult} from '../shared/types';
 app.setName('LabPad');if(process.platform==='win32')app.setAppUserModelId('cn.xep.labpad');
@@ -42,7 +42,7 @@ const compiler=new Compiler({toolchain,checkers,cacheDirectory:process.env.LABPA
 let shortcutWindow:BrowserWindow|undefined,openBuffers:Draft[]=[];
 let warmController:AbortController|undefined,warmTask:Promise<unknown>|undefined,warmTimer:ReturnType<typeof setTimeout>|undefined;
 let debugSession=0,acknowledge:((id:number,size:number)=>void)|undefined;
-let win:BrowserWindow,config:Config,currentDocument:Draft|undefined,documentDirty=false,sourceEncoding='UTF-8';
+let win:BrowserWindow,config:Config,currentDocument:Draft|undefined,documentDirty=false;
 let controller:AbortController|undefined,active:Promise<unknown>|undefined,terminal:IPty|undefined;
 let closing=false,initialized=false,saves:Promise<unknown>=Promise.resolve();
 const send=(channel:string,value:unknown)=>{if(win&&!win.isDestroyed())win.webContents.send(channel,value);};
@@ -67,17 +67,16 @@ async function validatePath(value:string,kind:PathKind,allowEmpty=false){
 }
 async function requirePath(value:string,kind:PathKind){const result=await validatePath(value,kind);if(!result.valid)throw new Error(result.message);}
 async function persist(value:Draft):Promise<SaveResult>{
- const snapshot=structuredClone(validateDraft(value)),original=JSON.stringify(snapshot),file=snapshot.documentId?null:config.sourceFile,encoding=sourceEncoding,options=structuredClone(config);
+ const snapshot=structuredClone(validateDraft(value)),original=JSON.stringify(snapshot),options=structuredClone(config);
  const task=saves.catch(()=>{}).then(async()=>{
   let formatWarning:string|undefined;
   if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
-  if(file){await writeSource(file,snapshot.source,encoding);await storage.bindSource(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language,file,encoding);}
-  await storage.save(snapshot,!file);
+  await storage.save(snapshot);
   config={...config,currentLab:snapshot.problem.labId,currentProblem:snapshot.problem.problemId,language:snapshot.language};
   await storage.saveConfig(config);
   if(currentDocument&&(JSON.stringify(currentDocument)===original||JSON.stringify(currentDocument)===JSON.stringify(snapshot))){currentDocument=structuredClone(snapshot);documentDirty=false;}
   const state=await storage.projectState(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language),version=state.documents?.find(v=>v.id===snapshot.documentId);
-  return {path:file||(version?storage.documentPath(snapshot.problem.labId,snapshot.problem.problemId,version):storage.paths(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language).source),source:snapshot.source,formatWarning};
+  return {path:(version?storage.documentPath(snapshot.problem.labId,snapshot.problem.problemId,version):storage.paths(snapshot.problem.labId,snapshot.problem.problemId,snapshot.language).source),source:snapshot.source,formatWarning};
  });
  saves=task.catch(()=>{});return task;
 }
@@ -86,8 +85,8 @@ async function selectDraft(lab:string,problem:string,language:Language,preferSto
  const initial=await storage.load(lab,problem,language,preferStored);
  let documents=await storage.openDocuments(lab,problem,language),draft=documents.find(d=>d.documentId===initial.documentId)??documents.find(d=>preferStored||d.language===language);
  if(!draft)draft=await storage.newVersion(initial);
- config={...config,currentLab:lab,currentProblem:problem,language:draft.language,sourceFile:lab?null:draft.sourceFile??null};await storage.saveConfig(config);
- currentDocument=draft;openBuffers=[draft];documentDirty=false;sourceEncoding=draft.sourceEncoding??'UTF-8';return draft;
+ config={...config,currentLab:lab,currentProblem:problem,language:draft.language,sourceFile:null};await storage.saveConfig(config);
+ currentDocument=draft;openBuffers=[draft];documentDirty=false;return draft;
 }
 async function settingsResult(){
  return {config,dataRoot:storage.root,projects:await storage.projects(),compilerLabel:await compiler.info(config.compiler).catch((e:Error)=>'编译器尚不可用：'+e.message)};
@@ -97,6 +96,7 @@ async function bootstrap(){
   if(config.sourceFile&&!config.currentLab&&!(await storage.projectState('','',config.language)).documents?.length&&await exists(config.sourceFile))await storage.importSource('','',config.sourceFile);
   const initial=await storage.load(config.currentLab,config.currentProblem,config.language,true),documents=await storage.openDocuments(config.currentLab,config.currentProblem,config.language);
   currentDocument=documents.find(d=>d.documentId===initial.documentId)??documents[0];documentDirty=false;
+  if(config.sourceFile){config={...config,sourceFile:null};await storage.saveConfig(config);}
  }
  const documents=await storage.openDocuments(currentDocument!.problem.labId,currentDocument!.problem.problemId,currentDocument!.language);
  const current=documents.find(d=>d.documentId===currentDocument!.documentId)??currentDocument as LoadedDraft;
@@ -171,8 +171,8 @@ async function initialize(){
  ipcMain.on('document:state',(event,value:Draft,dirty:boolean)=>{if(event.sender===win.webContents){currentDocument=structuredClone(validateDraft(value));documentDirty=!!dirty;}});
  ipcMain.on('workspace:state',(event,values:Draft[],dirty:boolean)=>{if(event.sender===win.webContents){openBuffers=values.map(d=>structuredClone(validateDraft(d)));documentDirty=!!dirty;}});
  handle('documents:open',(lab:string,problem:string,language:Language)=>storage.openDocuments(lab,problem,language));
- handle('document:activate',async(id:string)=>{if(!currentDocument)throw new Error('尚未打开文件');await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:currentDocument.problem.labId?null:storage.documentPath(currentDocument.problem.labId,currentDocument.problem.problemId,version)};await storage.saveConfig(config);}});
- handle('source:version',(value:Draft)=>{requireIdle();return storage.newVersion(value);});
+ handle('document:activate',async(id:string)=>{if(!currentDocument)throw new Error('尚未打开文件');await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:null};await storage.saveConfig(config);}});
+ handle('source:version',(value:Draft,fromTemplate:boolean)=>{requireIdle();return storage.newVersion(value,fromTemplate===true);});
  handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
  handle('cache:clear',async()=>{requireIdle();await stopWarmup();return compiler.cache.clear();});
  handle('shortcuts:open',async()=>{
@@ -212,13 +212,13 @@ async function initialize(){
  handle('layout:save',async(value:unknown)=>{const layout=validateLayout(value);await saves;config={...config,layout};await storage.saveConfig(config);return layout;});
  handle('compiler:detect',async()=>{requireIdle();return detectCompilers({cwd:await compiler.session,exclude:[toolchain],processHost:compiler.paths.processHost});});
  handle('compiler:info',(value:CompilerConfig)=>compiler.info(validateConfig({...config,compiler:value}).compiler));
- handle('source:open',async()=>{
+ handle('source:import',async()=>{
   requireIdle();await saves;
-  const selected=await dialog.showOpenDialog(win,{title:config.currentLab?'导入源码 · 当前题目':'打开单文件源码',properties:['openFile'],filters:[{name:'C / C++ 源码',extensions:['c','cpp']}]});
+  const selected=await dialog.showOpenDialog(win,{title:'导入单文件源码',properties:['openFile'],filters:[{name:'C / C++ 源码',extensions:['c','cpp']}]});
   if(selected.canceled)return null;
   const file=selected.filePaths[0];if(!['.c','.cpp'].includes(path.extname(file).toLowerCase()))throw new Error('仅支持 .c / .cpp 单文件');
   const document=await storage.importSource(config.currentLab,config.currentProblem,file);
-  currentDocument=document;sourceEncoding=document.sourceEncoding??'UTF-8';config={...config,sourceFile:config.currentLab?null:document.sourceFile??null,language:document.language};await storage.saveConfig(config);
+  currentDocument=document;config={...config,sourceFile:null,language:document.language};await storage.saveConfig(config);
   return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document};
  });
  handle('problem:save',async(value:unknown)=>{const problem=structuredClone(validateProblem(value));await saves;if(!currentDocument)throw new Error('尚未打开题目');await storage.save({...currentDocument,problem},false);});

@@ -23,6 +23,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
  async function drag(locator,dx,dy){
   const box=await locator.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+dx,box.y+box.height/2+dy,{steps:10});await page.mouse.up();await page.waitForTimeout(250);
  }
+ async function setSource(source){await editor().focus();await page.keyboard.press('Control+a');await page.keyboard.insertText(source);await until(async()=>(await state()).draft.source===source,'source inserted through editor input');}
  function pass(label){checks.push(label);console.log('PASS '+label);}
  try{
   await prepare();assert.equal(await page.locator('.runbar').count(),0);assert.equal(await page.getByText('程序设计实验 · 本地自测',{exact:true}).count(),0);assert.equal(await page.getByText('原始编译与运行信息',{exact:true}).count(),0);
@@ -31,8 +32,8 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   assert.equal(await page.locator('footer').locator(':scope > *').count(),2);assert.equal(await page.locator('footer .compiler-label').count(),0);assert.equal(await page.locator('footer .status-folder').count(),0);assert.equal(await page.locator('.toolbar .compiler-label').count(),0);
   assert.equal(await vertical().getAttribute('role'),'separator');assert.equal(await horizontal().getAttribute('role'),'separator');
   pass('one toolbar row keeps run/stop/status after problem selection; footer has two contextual items; redundant subtitles removed');
-  const multicursor='int value = value;\n';await editor().fill(multicursor);await editor().focus();await page.keyboard.press('Control+Home');for(let n=0;n<5;n++)await page.keyboard.press('ArrowRight');await page.keyboard.press('Control+d');await page.keyboard.press('Control+d');await until(()=>status().textContent().then(t=>t.includes('已选 10 个字符 · 1 行')),'multi-selection counts distinct lines');await page.waitForTimeout(550);await page.keyboard.insertText('item');await until(async()=>(await state()).draft.source==='int item = item;\n','multi-cursor edits');await page.keyboard.press('Control+z');await until(async()=>(await state()).draft.source===multicursor,'multi-cursor edit atomic undo');pass('Ctrl+D multi-selection reports distinct lines and edits atomically');
-  const source='int main(void) {\n    int value = 1;\n    return value;\n}\n';await editor().fill(source);await editor().focus();await page.keyboard.press('Control+Home');await page.keyboard.press('ArrowDown');
+  const multicursor='int value = value;\n';await setSource(multicursor);await editor().focus();await page.keyboard.press('Control+Home');for(let n=0;n<5;n++)await page.keyboard.press('ArrowRight');await page.keyboard.press('Control+d');await page.keyboard.press('Control+d');await until(()=>status().textContent().then(t=>t.includes('已选 10 个字符 · 1 行')),'multi-selection counts distinct lines');await page.waitForTimeout(550);await page.keyboard.insertText('item');await until(async()=>(await state()).draft.source==='int item = item;\n','multi-cursor edits');await page.keyboard.press('Control+z');await until(async()=>(await state()).draft.source===multicursor,'multi-cursor edit atomic undo');pass('Ctrl+D multi-selection reports distinct lines and edits atomically');
+  const source='int main(void) {\n    int value = 1;\n    return value;\n}\n';await setSource(source);await editor().focus();await page.keyboard.press('Control+Home');await page.keyboard.press('ArrowDown');
   await until(()=>page.locator('.cursor-position').textContent().then(t=>t.includes('行 2 · 列 1')),'cursor position follows arrows');
   await page.keyboard.press('Control+Home');await page.keyboard.press('Shift+ArrowDown');
   await until(()=>status().textContent().then(t=>t.includes('已选 '+(source.split('\n')[0].length+1)+' 个字符')),'selection status and shortcut hint');
@@ -60,7 +61,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   await page.screenshot({path:path.join(evidence,'layout-compact.png'),fullPage:true});
   await editor().focus();await page.keyboard.press('Control+Home');const oldHint=await status().textContent();await page.waitForTimeout(9300);assert.notEqual(await status().textContent(),oldHint);
   pass('smaller windows fit without page overflow; idle hints rotate and reduced rows preserve work area');
-  await editor().fill('#include <stdio.h>\nint main(void){int n;puts("ready");fflush(stdout);while(scanf("%d",&n)==1){printf("value=%d\\n",n);fflush(stdout);}return 0;}\n');
+  await setSource('#include <stdio.h>\nint main(void){int n;puts("ready");fflush(stdout);while(scanf("%d",&n)==1){printf("value=%d\\n",n);fflush(stdout);}return 0;}\n');
   await page.getByRole('button',{name:/编译并运行/}).click();await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'debug running',150000);
   await until(()=>page.evaluate(()=>window.__debug.join('').includes('ready')),'live debug terminal');
   const sizeBefore=await app.evaluate(()=>globalThis.__sizes.at(-1));await drag(horizontal(),0,80);

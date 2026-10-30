@@ -4,7 +4,7 @@ import {mkdtemp,mkdir,writeFile,readFile,rm,readdir,utimes} from 'node:fs/promis
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {Storage,decodeText,writeSource} from '../core/storage';
-import {defaultConfig,defaultProblem} from '../shared/defaults';
+import {defaultConfig,defaultProblem,defaultSource} from '../shared/defaults';
 import {validateProblem} from '../shared/validate';
 import {parseTestCases,parseLabPackage} from '../shared/project-format';
 import {fingerprint,checkRecord,prepareSource} from '../core/submission';
@@ -44,8 +44,8 @@ test('imports create owned versions, same-topic imports reopen, other-topic impo
   const again=await storage.importSource('实验2','Lab 2-1',imported.sourceFile!);assert.equal(again.documentId,imported.documentId);
   await storage.createProblem('实验2','Lab 2-2','c');
   const other=await storage.importSource('实验2','Lab 2-2',imported.sourceFile!);assert.notEqual(other.sourceFile,imported.sourceFile);assert.equal(other.source,'// modified');
-  const external=await storage.importSource('','',original);assert.equal(external.sourceFile,await (await import('node:fs/promises')).realpath(original));
-  await storage.save({...external,source:'// write back'});assert.equal(await readFile(original,'utf8'),'// write back');
+  const external=await storage.importSource('','',original);assert.notEqual(external.sourceFile,await (await import('node:fs/promises')).realpath(original));
+  await storage.save({...external,source:'// managed edit'});assert.equal(await readFile(original,'utf8'),'// original');assert.equal(await readFile(external.sourceFile!,'utf8'),'// managed edit');
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 test('only latest five versions reopen, old versions remain importable; active language and per-version pass evidence persist',async()=>{
@@ -101,4 +101,53 @@ test('shortcut defaults and configuration validate duplicate and sequence prefix
  const prefix=defaultShortcuts();prefix.run=['$mod+KeyK'];assert.throws(()=>validateShortcuts(prefix),/前缀/);
  const malformed=defaultShortcuts();malformed.run=['Control+'];assert.throws(()=>validateShortcuts(malformed),/格式/);
  const disabled=defaultShortcuts();disabled.run=[];assert.deepEqual(validateShortcuts(disabled).run,[]);
+});
+
+test('legacy scratch links become UTF-8 copies once, retain version IDs and leave GBK originals unchanged',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-import-upgrade-'));
+ try{
+  const storage=new Storage(path.join(dir,'data'));await storage.init();
+  const original=path.join(dir,'legacy.c'),source='// 中文\nint main(void){return 0;}\n';
+  await writeSource(original,source,'GBK / CP936');const originalBytes=await readFile(original);
+  const meta={schemaVersion:1,labId:'',problems:{'':{language:'c',starters:{c:source},checks:{},sources:{},activeDocumentId:'legacy-c',documents:[{id:'legacy-c',file:'空项目.c',language:'c',encoding:'GBK / CP936',externalPath:original,starter:source}]}}};
+  await writeFile(path.join(storage.root,'.labpad'),JSON.stringify(meta));
+  const docs=await storage.openDocuments('','','c');assert.equal(docs[0].documentId,'legacy-c');assert.equal(docs[0].source,source);assert.notEqual(docs[0].sourceFile,original);assert.equal(path.dirname(docs[0].sourceFile!),storage.root);assert.equal(decodeText(await readFile(docs[0].sourceFile!)).encoding,'UTF-8');
+  await storage.save({...docs[0],source:source+'// 😀\n'});assert.deepEqual(await readFile(original),originalBytes);
+  const again=await storage.openDocuments('','','c');assert.equal(again.length,1);assert.equal(again[0].sourceFile,docs[0].sourceFile);assert.match(again[0].source,/😀/);assert.equal((await storage.projectState('','','c')).documents![0].externalPath,undefined);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('saving a legacy version directly adopts a managed file instead of writing to its external path',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-import-save-'));
+ try{
+  const storage=new Storage(path.join(dir,'data'));await storage.init();const original=path.join(dir,'outside.c');await writeFile(original,'// keep original');
+  await writeFile(path.join(storage.root,'.labpad'),JSON.stringify({schemaVersion:1,labId:'',problems:{'':{language:'c',starters:{},checks:{},sources:{},documents:[{id:'old',file:'空项目.c',language:'c',encoding:'UTF-8',externalPath:original}]}}}));
+  await storage.save({documentId:'old',source:'// edited copy',language:'c',problem:defaultProblem('','')});
+  assert.equal(await readFile(original,'utf8'),'// keep original');const saved=await storage.load('','','c',true);assert.equal(saved.source,'// edited copy');assert.equal(path.dirname(saved.sourceFile!),storage.root);assert.equal((await storage.projectState('','','c')).documents![0].externalPath,undefined);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('missing legacy originals remain recoverable and are never recreated outside the data directory',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-import-missing-'));
+ try{
+  const storage=new Storage(path.join(dir,'data'));await storage.init();const missing=path.join(dir,'missing.c');
+  await writeFile(path.join(storage.root,'.labpad'),JSON.stringify({schemaVersion:1,labId:'',problems:{'':{language:'c',starters:{},checks:{},sources:{},documents:[{id:'old',file:'空项目.c',language:'c',encoding:'UTF-8',externalPath:missing,starter:'// template'}]}}}));
+  const docs=await storage.openDocuments('','','c');assert.match(docs[0].warning??'',/重新导入/);await storage.save({...docs[0],source:'// recovered copy'});
+  await assert.rejects(readFile(missing),{code:'ENOENT'});assert.equal((await storage.load('','','c',true)).source,'// recovered copy');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('new sources reuse per-topic language templates, preserve edits and fall back only when no template exists',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'labpad-new-source-'));
+ try{
+  const storage=new Storage(path.join(dir,'data'));await storage.init();
+  const c='// course C template\nint main(void){return 0;}\n',cpp='// course C++ template\nint main(){return 0;}\n';
+  await storage.importProject({schemaVersion:1,kind:'labpad.project',labId:'实验2',problems:[{problemId:'Lab 2-1',language:'c',source:c},{problemId:'Lab 2-2',language:'cpp',source:cpp},{problemId:'Lab 2-3',source:''}]});
+  const first=(await storage.openDocuments('实验2','Lab 2-1','c'))[0];await storage.save({...first,source:'// edited original version'});
+  const fresh=await storage.newVersion({...first,source:'// unsaved edit'},true);
+  assert.equal(fresh.source,c);assert.notEqual(fresh.documentId,first.documentId);assert.notEqual(fresh.sourceFile,first.sourceFile);assert.equal(await readFile(fresh.sourceFile!,'utf8'),c);assert.equal(await readFile(first.sourceFile!,'utf8'),'// edited original version');
+  const copy=await storage.newVersion({...fresh,source:'// explicit version copy'});assert.equal(copy.source,'// explicit version copy');
+  const fallback=await storage.newVersion({...fresh,language:'cpp'},true);assert.equal(fallback.source,defaultSource('cpp'));
+  const other=await storage.load('实验2','Lab 2-2','cpp',true);assert.equal((await storage.newVersion(other,true)).source,cpp);
+  const empty=await storage.load('实验2','Lab 2-3','c',true);assert.equal((await storage.newVersion(empty,true)).source,'');
+  const scratch=await storage.load('','','c');assert.equal((await storage.newVersion(scratch,true)).source,defaultSource('c'));
+ }finally{await rm(dir,{recursive:true,force:true});}
 });

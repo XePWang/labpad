@@ -52,6 +52,7 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
  const files:Submission['files']=[],unedited:string[]=[],unpassed:string[]=[],warnings:string[]=[];
  const identities=new Map<Language,string>();
  for(const id of ids){
+  if(id!==current.problem.problemId)await storage.openDocuments(labId,id,'c');
   const draft=id===current.problem.problemId?current:await storage.load(labId,id,'c',true);
   const state=await storage.projectState(labId,id,draft.language),starter=state.documents?.find(v=>v.id===draft.documentId)?.starter??state.starters[draft.language]??defaultSource(draft.language);
   let same=draft.source.replace(/\r\n/g,'\n').trim()===starter.replace(/\r\n/g,'\n').trim();

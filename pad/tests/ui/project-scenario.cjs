@@ -52,6 +52,7 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
   {problemId:'Lab 2-1',language:'cpp',source:'#include <iostream>\nint main() { std::cout << 9; }\n',testCases:[{id:'1',input:'',expectedOutput:'9'}]},
   {problemId:'Lab 2-2',source:printing(2),testCases:[]}
  ]};
+ async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
  function pass(label){checks.push(label);console.log('PASS '+label);}
  try{
   await prepare();
@@ -71,11 +72,11 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
   for(const name of ['导入','导出']){
    const trigger=button(name),arrow=trigger.locator('svg'),box=await trigger.boundingBox(),icon=await arrow.boundingBox();
    assert.ok(icon.width>=14&&icon.height>=14);assert.ok(Math.abs((icon.y+icon.height/2)-(box.y+box.height/2))<=1);
-   const size=await trigger.evaluate(e=>getComputedStyle(e).fontSize);assert.equal(size,await button('打开源码').evaluate(e=>getComputedStyle(e).fontSize));
+   const size=await trigger.evaluate(e=>getComputedStyle(e).fontSize);assert.equal(size,await button('保存').evaluate(e=>getComputedStyle(e).fontSize));
   }
   await page.locator('.toolbar-actions').screenshot({path:path.join(evidence,'menu-arrows.png')});
   pass('native dropdown keyboard opening, Escape, focus return, outside dismissal and centered 14px arrows with matching text size');
-  await projectJSON(value);await button('导入').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+  await projectJSON(value);await button('导入').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await page.keyboard.press('Enter');
   await until(()=>select('实验项目').inputValue().then(v=>v==='实验2'),'keyboard project import');await idle();
   assert.equal((await state()).draft.problem.problemId,'warmup 2-1');assert.equal((await state()).draft.source,printing('starter'));
   assert.deepEqual((await state()).projects,[{labId:'实验2',problems:['warmup 2-1','Lab 2-1','Lab 2-2']}]);
@@ -116,10 +117,10 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
   pass('same-name import cancels or creates a separate copy; invalid projects never appear partially');
   await select('实验项目').selectOption('实验2');await until(()=>select('实验项目').inputValue().then(v=>v==='实验2'),'return to original');await idle();
   await changeTopic('Lab 2-1');
-  const external=path.join(temporary,'external.cpp');await fs.writeFile(external,'// external before dialog\nint main(){return 0;}\n');await files([external]);await button('导入源码').click();await idle();
+  const external=path.join(temporary,'external.cpp');await fs.writeFile(external,'// external before dialog\nint main(){return 0;}\n');await files([external]);await importSource();await idle();
   const packagePath=await target('submission.zip');await setAnswer(1);await app.evaluate(()=>globalThis.__holdWarning=true);
   await chooseMenu('导出','导出实验项目');await until(()=>app.evaluate(()=>typeof globalThis.__resolveWarning==='function'),'preflight is waiting');
-  assert.equal(await button('导入源码').isDisabled(),true);assert.equal(await select('题号').isDisabled(),true);assert.equal(await editor().getAttribute('contenteditable'),'false');
+  assert.equal(await button('导入').isDisabled(),true);assert.equal(await select('题号').isDisabled(),true);assert.equal(await editor().getAttribute('contenteditable'),'false');
   await fs.writeFile(external,'// external changed during review\nint main(){return 1;}\n');
   await app.evaluate(()=>{globalThis.__holdWarning=false;globalThis.__resolveWarning(1);});await until(()=>fs.stat(packagePath).then(()=>true,()=>false),'atomic snapshot ZIP');await idle();
   const contents=await archive(packagePath),prefix='240101_张三_12345678_实验2/';

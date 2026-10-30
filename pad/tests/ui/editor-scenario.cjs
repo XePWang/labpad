@@ -20,7 +20,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
  const data=path.join(temporary,'labpad'),marker='LabPad-test-'+randomUUID(),errors=[],checks=[];
  const restoreClipboard=await clipboardGuard(marker);
  const launch=()=>electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data}});
- let app=await launch(),page,sequence=0,currentFile='';
+ let app=await launch(),page,sequence=0,currentFile='',originalFile='';
  const key=keys=>page.keyboard.press(keys);
  const editor=()=>page.locator('.cm-content');
  const button=name=>page.getByRole('button',{name,exact:true});
@@ -37,9 +37,9 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   });
  }
  async function open(source){
-  currentFile=path.join(temporary,'source-'+(++sequence)+'.c');await fs.writeFile(currentFile,source);
-  await app.evaluate((_,file)=>{globalThis.__file=file;},currentFile);
-  await button('打开源码').click();await equal(source,'open fixture');await editor().focus();
+  originalFile=path.join(temporary,'source-'+(++sequence)+'.c');await fs.writeFile(originalFile,source);
+  const previous=(await state()).draft.documentId;await app.evaluate((_,file)=>{globalThis.__file=file;},originalFile);
+  await importSource();await until(async()=>(await state()).draft.documentId!==previous,'fixture imported');await equal(source,'import fixture');currentFile=(await state()).sourcePath;assert.notEqual(currentFile,originalFile);assert.equal(await fs.readFile(originalFile,'utf8'),source);await editor().focus();
   await key('Control+Home');
  }
  async function settings(values){
@@ -52,6 +52,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
  }
  async function at(index){await editor().focus();await key('Control+Home');for(let n=0;n<index;n++)await key('ArrowRight');}
  async function saved(){await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save complete');}
+ async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
  function pass(label){checks.push(label);console.log('PASS '+label);}
  try{
   await prepare();const defaults=(await state()).config;
@@ -165,7 +166,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   await page.keyboard.insertText(' ');await saved();assert.equal(await fs.readFile(currentFile,'utf8'),expected);assert.equal(await text(),expected);
   const stamp=(await fs.stat(currentFile)).mtimeMs;await page.waitForTimeout(800);assert.equal((await fs.stat(currentFile)).mtimeMs,stamp,'formatted auto-save does not loop');
   await settings({'保存方式':'manual'});
-  pass('Ctrl+S formats and atomically saves original file; undo marks dirty; disabled formatting preserves bytes; auto-save formats once without loops');
+  pass('Ctrl+S formats and atomically saves managed copy; undo marks dirty; disabled formatting preserves bytes; auto-save formats once without loops');
 
   const background='int main(void){\n'+Array.from({length:5000},(_,i)=>'int item_'+i+'=1+2;').join('\n')+'\nreturn 0;}';
   async function queueFormatter(){
@@ -188,12 +189,12 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   await settings({'Tab / 缩进空格数':2,'主题':'light'});await key('Control+End');await page.keyboard.insertText('// persisted');
   await key('Control+s');await saved();const persisted=await text(),file=currentFile;
   await app.close();app=await launch();await prepare();const restored=await state();
-  assert.equal(restored.config.indentSize,2);assert.equal(restored.config.theme,'light');assert.equal(restored.config.formatOnSave,true);assert.equal(restored.config.sourceFile,file);assert.equal(restored.draft.source,persisted);
+  assert.equal(restored.config.indentSize,2);assert.equal(restored.config.theme,'light');assert.equal(restored.config.formatOnSave,true);assert.equal(restored.config.sourceFile,null);assert.equal(restored.draft.source,persisted);
   await editor().focus();await key('Control+Home');await key('Tab');assert.ok((await text()).startsWith('  int file_b;'));
   await app.evaluate(()=>{globalThis.__answer=2;});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await page.waitForTimeout(150);assert.equal(page.isClosed(),false);
   await app.evaluate(()=>{globalThis.__answer=0;});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
   await until(()=>page.isClosed(),'close save');assert.ok((await fs.readFile(file,'utf8')).includes('int file_b;'));
-  pass('per-document undo isolation, settings/source restart persistence and native close cancel/save');
+  pass('per-document undo isolation, settings/source restart persistence and native close cancel/save without altering imported originals');
   assert.deepEqual(errors,[]);await fs.writeFile(path.join(evidence,'checks.json'),JSON.stringify({platform:process.platform,checks},null,2));console.log('ALL EDITOR CHECKS PASSED ('+checks.length+' groups)');
  }catch(error){
   if(page&&!page.isClosed()){console.error('EDITOR SOURCE',JSON.stringify((await text()).slice(0,1500)));console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'failure.png'),fullPage:true}).catch(()=>{});}

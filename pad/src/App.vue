@@ -24,7 +24,7 @@ let hintTimer:ReturnType<typeof setInterval>|undefined,noticeTimer:ReturnType<ty
 const footerPulse=ref('');let pulseTimer:ReturnType<typeof setTimeout>|undefined;
 function flashFooter(text:string){clearTimeout(pulseTimer);footerPulse.value=text;pulseTimer=setTimeout(()=>{footerPulse.value='';},4000);}
 const tips=computed(()=>[
- config.value?.saveMode==='auto'?'自动保存已开启，写完稍停即可保存。':'Ctrl+S 保存当前源码；打开的文件会写回原路径。',
+ config.value?.saveMode==='auto'?'自动保存已开启，写完稍停即可保存。':'Ctrl+S 保存当前源码；导入副本也会保存在这里。',
  '空格小点只负责指路，导出的仍是普通空格。',
  '选中多行后按 Tab / Shift+Tab，整块调整缩进。',
  '没有测试点时，编译通过就会进入调试页。',
@@ -81,7 +81,7 @@ function recordState(){
  api.workspaceState(tabs.value.filter(t=>t.dirty||rulesDirty.value).map(t=>({...clone(t.document),problem:clone(draft.value!.problem)})),rulesDirty.value||tabs.value.some(t=>t.dirty));
 }
 function enqueueSave(value:Draft,id:number){
- const tab=tabs.value.find(t=>t.id===value.documentId);if(!tab)return Promise.reject(new Error('请先打开源码'));
+ const tab=tabs.value.find(t=>t.id===value.documentId);if(!tab)return Promise.reject(new Error('请先新建或导入源码'));
  tab.status='保存中…';if(tab.id===activeId.value)saveStatus.value=tab.status;
  const task=saveTail.catch(()=>{}).then(()=>api.saveDraft(value)).then(async result=>{
   const current=tabs.value.find(t=>t.id===value.documentId);
@@ -153,7 +153,7 @@ async function tabAction(value:string,id=activeId.value){
 function addDocument(document:LoadedDraft){
  const found=tabs.value.find(t=>t.id===document.documentId);
  if(!found)tabs.value.push({id:document.documentId!,document:clone(document),savedSource:document.source,dirty:false,revision:0,status:'已保存'});
- const was=fileBusy.value;fileBusy.value=false;activateTab(document.documentId!);fileBusy.value=was;
+ const was=fileBusy.value;fileBusy.value=false;activateTab(document.documentId!);fileBusy.value=was;recordState();
 }
 function selectionAction(event:Event,lab:boolean){const control=event.target as HTMLSelectElement,value=control.value;control.value=lab?draft.value!.problem.labId:draft.value!.problem.problemId;void action(()=>fileAction(()=>lab?selectLab(value):selectProblem(value)));}
 async function selectLab(value:string){
@@ -175,13 +175,18 @@ async function createItem(){
  }catch(e){newMessage.value=message(e);}finally{newSaving.value=false;}
 }
 function applyBootstrap(state:Awaited<ReturnType<typeof api.bootstrap>>){
- const external=state.config.sourceFile;config.value=state.config;projects.value=state.projects;version.value=state.version;dataRoot.value=state.dataRoot;compilerLabel.value=state.compilerLabel;
- replaceDraft(state.draft,state.sourcePath,state.documents);config.value.sourceFile=external;ready.value=true;if(state.warning)error.value=state.warning;
+ config.value=state.config;projects.value=state.projects;version.value=state.version;dataRoot.value=state.dataRoot;compilerLabel.value=state.compilerLabel;
+ replaceDraft(state.draft,state.sourcePath,state.documents);ready.value=true;if(state.warning)error.value=state.warning;
 }
 async function reload(){if(await beforeChange())applyBootstrap(await api.reloadDocument());}
-async function openSource(){
- const value=await api.openSource();if(!value)return;addDocument(value.document);
- notice.value=(draft.value!.problem.labId?'已导入 ':'已打开 ')+value.path+' · '+value.encoding;
+async function newSource(value:string){
+ if(value!=='c'&&value!=='cpp')return;
+ const created=await api.newVersion({...snapshot(),documentId:undefined,language:value},true);
+ addDocument(created);phase.value='准备就绪';flashFooter('已新建 · '+created.sourceFile);
+}
+async function importSourceFile(){
+ const value=await api.importSource();if(!value)return;addDocument(value.document);
+ notice.value='已导入 '+value.path+' · '+value.encoding;
 }
 async function importIO(){
  clearTimeout(saveTimer);await saveTail;
@@ -202,7 +207,7 @@ async function formatCode(){
  }finally{formatting.value=false;}
 }
 async function importProject(){if(!await beforeChange())return;const result=await api.importProject();if(result){applyBootstrap(result);notice.value='已导入项目：'+result.draft.problem.labId;}}
-async function chooseImport(value:string){await fileAction(value==='project'?importProject:importIO);}
+async function chooseImport(value:string){await fileAction(value==='source'?importSourceFile:value==='project'?importProject:importIO);}
 async function chooseExport(value:string){await fileAction(async()=>{const file=await(value==='project'?api.exportProject(snapshot()):api.exportSource(snapshot()));if(file)notice.value='已导出：'+file;});}
 function showCompilation(c:Compilation){
  logs.value='编译命令\n'+c.command.map(s=>/\s/.test(s)?JSON.stringify(s):s).join(' ')+'\n\n'
@@ -320,14 +325,14 @@ onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTim
   <template v-if="ready&&draft&&config">
    <section class="toolbar">
     <div class="project-select"><label>实验项目<select aria-label="实验项目" :value="draft.problem.labId" :disabled="blocked" @change="selectionAction($event,true)"><option value="">&lt;无&gt;</option><option v-for="p in projects" :key="p.labId" :value="p.labId">{{p.labId}}</option><option value="@new:lab">＋ 新建项目…</option></select></label><span class="path-divider">/</span><label>题号<select aria-label="题号" :value="draft.problem.problemId" :disabled="blocked" @change="selectionAction($event,false)"><option value="">&lt;无&gt;</option><option v-for="p in problems" :key="p" :value="p">{{p}}</option><option value="@new:problem" :disabled="!draft.problem.labId">＋ 新建题号…</option></select></label><div class="run-actions"><button class="primary" :disabled="blocked||!activeTab" title="编译并运行（F9 / Ctrl+Enter）" @click="action(run)">▶ {{draft.problem.testCases.length?'编译并运行测试点':'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
-    <div class="toolbar-actions"><ActionMenu label="导入" :items="[{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><button :disabled="blocked" @click="action(()=>fileAction(openSource))">{{draft.problem.labId?'导入源码':'打开源码'}}</button><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
+    <div class="toolbar-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
    </section>
    <Splitpanes class="work-layout" horizontal :maximize-panes="false" @resized="resized('outputPercent',$event)"><Pane :size="100-config.layout.outputPercent" :min-size="35" :max-size="88"><Splitpanes class="workspace" :maximize-panes="false" @resized="resized('editorPercent',$event)">
     <Pane class="editor-pane" :size="config.layout.editorPercent" :min-size="20" :max-size="80">
     <SourceTabs :tabs="tabs.map(t=>({id:t.id,name:t.document.name||t.document.sourceFile?.split(/[\\/]/).pop()||'空项目.c',path:t.document.sourceFile||'',dirty:t.dirty}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab" @action="(value,id)=>action(()=>tabAction(value,id))"/>
     <div v-if="activeTab" class="pane-heading editor-heading"><div :title="sourcePath||'保存后写入当前数据目录'"><span class="file-icon">{{draft.language==='c'?'C':'C++'}}</span>{{filename}}</div><div class="editor-actions"><button class="format-button" :disabled="blocked||formatting" @click="action(formatCode)">{{formatting?'格式化中…':'格式化代码'}}</button><span class="save-status" :class="{failed:saveStatus==='保存失败'}">{{saveStatus}}</span></div></div>
     <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="blocked" @cursor="cursor=$event"/>
-    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>打开源码或导入一个版本，继续编写。</p><button :disabled="blocked" @click="action(()=>fileAction(openSource))">{{draft.problem.labId?'导入源码':'打开源码'}}</button></div>
+    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/></div></div>
     <div class="editor-status"><span>{{draft.language==='c'?'C':'C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存'}}</span></div>
    </Pane>
     <Pane class="cases-pane" :size="100-config.layout.editorPercent" :min-size="20" :max-size="80"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><button :disabled="blocked" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="blocked" title="重新读取已保存的源码与题目规则" @click="action(()=>fileAction(reload))">重新加载</button><button :disabled="blocked" @click="addCase">＋ 新增</button></div></div>
@@ -356,7 +361,7 @@ onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTim
     <div v-if="settingsMessage" class="settings-message" role="alert">{{settingsMessage}}</div>
     <fieldset class="settings-scroll" :disabled="settingsSaving">
      <section><h3>个人信息</h3><p>填写学号后，导出的文件名会自动加上学号。留空也可以导出。</p><div class="field-grid"><label>班号<input v-model="settings.classId" aria-label="班号" placeholder="例如 9527"></label><label>姓名<input v-model="settings.name" aria-label="姓名" placeholder="例如 马冬梅"></label><label>学号<input v-model="settings.studentId" aria-label="学号" placeholder="例如 7355608"></label></div></section>
-     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><div class="field-grid two"><label>界面缩放<select v-model.number="settings.zoomFactor" aria-label="界面缩放"><option v-for="scale in [0.75,0.8,0.9,1,1.1,1.25,1.5,1.75,2]" :key="scale" :value="scale">{{Math.round(scale*100)}}%</option></select></label><label>快捷键<button aria-label="设置快捷键…" @click="action(()=>api.openShortcuts())">设置快捷键…</button></label></div><p>项目内编辑导入副本；空项目打开源码时，保存写回原文件。</p></section>
+     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><div class="field-grid two"><label>界面缩放<select v-model.number="settings.zoomFactor" aria-label="界面缩放"><option v-for="scale in [0.75,0.8,0.9,1,1.1,1.25,1.5,1.75,2]" :key="scale" :value="scale">{{Math.round(scale*100)}}%</option></select></label><label>快捷键<button aria-label="设置快捷键…" @click="action(()=>api.openShortcuts())">设置快捷键…</button></label></div><p>导入的源码保存在数据目录；保存更新当前副本。</p></section>
      <section><h3>数据位置</h3><PathField v-model="settingsRoot" label="数据保存位置" kind="directory" @valid="pathValidity.data=$event"/><p>请选择已存在的文件夹。更换位置时复制现有资料，原目录保留。</p></section>
      <section><div class="settings-section-heading"><h3>编译器</h3><button v-if="settings.compiler.mode==='custom'" :disabled="compilerScanning||!!busy" @click="action(detectInstalledCompilers)">{{compilerScanning?'正在检测…':'自动检测'}}</button></div><p>内置 Zig 启动时静默预热，自动使用可用核心；缓存超过 2 GB 时自动回收。</p><div class="field-grid"><label>使用方式<select v-model="settings.compiler.mode" aria-label="编译器使用方式"><option value="builtin">内置 Zig</option><option value="custom">自定义编译器</option></select></label><label v-if="settings.compiler.mode==='custom'">编译器类型<select v-model="settings.compiler.kind" aria-label="编译器类型"><option value="zig">Zig</option><option value="gcc">GCC</option><option value="clang">Clang</option></select></label></div><div v-if="settings.compiler.mode==='custom'" class="compiler-paths"><PathField v-model="settings.compiler.cPath" label="C 编译器路径" kind="executable" @valid="pathValidity.c=$event"/><PathField v-model="settings.compiler.cppPath" label="C++ 编译器路径" kind="executable" :allow-empty="settings.compiler.kind==='zig'||settings.language==='c'" @valid="pathValidity.cpp=$event"/></div><div class="cache-controls"><button :disabled="!!busy||clearingCache" @click="clearCache">{{clearingCache?'正在清理…':'清理编译缓存'}}</button><span role="status">{{cacheMessage}}</span></div></section>
      <section><h3>高级编译参数</h3><p>每行一个参数。源码和输出路径由程序追加。</p><div class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></section>

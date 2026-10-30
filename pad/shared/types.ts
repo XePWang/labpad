@@ -25,11 +25,11 @@ export interface Bridge{
  saveProblem(problem:Problem):Promise<void>;bootstrap():Promise<Bootstrap>;reloadDocument():Promise<Bootstrap>;saveDraft(draft:Draft):Promise<SaveResult>;formatCode(source:string,language:Language,indentSize:number):Promise<string>;documentState(draft:Draft,dirty:boolean):void;
  loadDraft(labId:string,problemId:string,language:Language,preferStored?:boolean):Promise<LoadedDraft>;
  projects():Promise<Project[]>;createLab(name:string):Promise<Draft>;createProblem(lab:string,name:string,language:Language):Promise<Draft>;
- openDocuments(lab:string,problem:string,language:Language):Promise<LoadedDraft[]>;activateDocument(id:string):Promise<void>;newVersion(draft:Draft):Promise<LoadedDraft>;copyPath(value:string,relative:boolean):Promise<void>;workspaceState(drafts:Draft[],dirty:boolean):void;
+ openDocuments(lab:string,problem:string,language:Language):Promise<LoadedDraft[]>;activateDocument(id:string):Promise<void>;newVersion(draft:Draft,fromTemplate?:boolean):Promise<LoadedDraft>;copyPath(value:string,relative:boolean):Promise<void>;workspaceState(drafts:Draft[],dirty:boolean):void;
  openShortcuts():Promise<void>;shortcutSettings():Promise<{shortcuts:Record<string,string[]>;theme:'light'|'dark'}>;saveShortcuts(value:Record<string,string[]>):Promise<void>;onShortcuts(callback:(value:Record<string,string[]>)=>void):()=>void;
  clearCache():Promise<number>;
  saveConfig(config:Config,dataRoot:string):Promise<SettingsResult>;compilerInfo(config:CompilerConfig):Promise<string>;detectCompilers():Promise<DetectedCompiler[]>;saveLayout(layout:LayoutConfig):Promise<LayoutConfig>;
- openSource():Promise<{source:string;language:Language;encoding:string;path:string;document:LoadedDraft}|null>;
+ importSource():Promise<{source:string;language:Language;encoding:string;path:string;document:LoadedDraft}|null>;
  confirmUnsaved():Promise<'save'|'discard'|'cancel'>;
  validatePath(value:string,kind:PathKind,allowEmpty?:boolean):Promise<{valid:boolean;message:string}>;
  choosePath(kind:PathKind,current:string):Promise<string|null>;revealPath(value:string,kind:PathKind):Promise<void>;

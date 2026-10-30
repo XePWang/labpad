@@ -56,7 +56,7 @@ test('whole project import is staged, ordered, preserves old data and recovers a
   await s.importProject(packageValue(),'实验2 (3)');assert.equal((await s.projects()).length,3);
  });
 });
-test('legacy data loads without metadata; per-topic external source bindings survive switching and relocation',async()=>{
+test('legacy source bindings remain readable before adoption and relocation',async()=>{
  await temporary(async(s,dir)=>{
   const folder=path.join(dir,'projects','旧项目');await mkdir(folder,{recursive:true});
   const p=defaultProblem('旧项目','旧题');await writeFile(path.join(folder,'旧题.json'),JSON.stringify(p));await writeFile(path.join(folder,'旧题.cpp'),'// legacy cpp');

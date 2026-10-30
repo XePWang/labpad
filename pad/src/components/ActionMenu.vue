@@ -17,4 +17,7 @@ const emit=defineEmits<{select:[value:string]}>();
 .action-menu-item[data-highlighted]{background:var(--accent);color:#fff}
 .action-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .action-menu-trigger>span{display:block}.menu-chevron{display:block;flex-shrink:0;align-self:center}
+
+.empty-editor-actions{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+.app-shell[data-theme] .empty-editor-actions .action-menu-trigger{background:var(--accent);border-color:var(--accent);color:#fff}
 </style>

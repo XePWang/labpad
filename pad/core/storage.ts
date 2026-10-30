@@ -103,12 +103,13 @@ export class Storage{
    if(snapshot.documentId){
     const state=this.stateFor(await this.readState(snapshot.problem.labId,snapshot.problem.problemId),snapshot.problem.problemId,snapshot.language);
     version=state.documents?.find(d=>d.id===snapshot.documentId);if(!version)throw new Error('源码版本已不存在，请重新打开');
+    if(saveSource&&version.externalPath)version=await this.managedVersion(snapshot.problem.labId,snapshot.problem.problemId,version,state.documents!);
    }
    if(saveSource)await writeSource(version?this.documentPath(snapshot.problem.labId,snapshot.problem.problemId,version):p.source,snapshot.source,version?.encoding);
    await this.atomic(p.problem,JSON.stringify(snapshot.problem,null,2)+'\n');
    if(saveSource){
     const meta=await this.readState(snapshot.problem.labId,snapshot.problem.problemId),state=this.stateFor(meta,snapshot.problem.problemId,snapshot.language);
-    state.language=snapshot.language;if(version)state.activeDocumentId=version.id;state.starters[snapshot.language]??=defaultSource(snapshot.language);delete state.sources[snapshot.language];
+    state.language=snapshot.language;if(version){state.activeDocumentId=version.id;state.documents=state.documents!.map(v=>v.id===version!.id?version!:v);}state.starters[snapshot.language]??=defaultSource(snapshot.language);delete state.sources[snapshot.language];
     meta.problems={...meta.problems,[snapshot.problem.problemId]:state};await this.writeState(snapshot.problem.labId,snapshot.problem.problemId,meta);
    }
   });
@@ -137,24 +138,31 @@ export class Storage{
  private async readDocument(labId:string,problemId:string,version:SourceDocument,problem:Problem):Promise<LoadedDraft>{
   const file=this.documentPath(labId,problemId,version);
   const decoded=await exists(file)?decodeText(await readFile(file)):{text:version.starter??defaultSource(version.language),encoding:version.encoding};
-  return {documentId:version.id,source:decoded.text,language:version.language,problem:structuredClone(problem),sourceFile:file,sourceEncoding:decoded.encoding,name:path.basename(file)};
+  return {documentId:version.id,source:decoded.text,language:version.language,problem:structuredClone(problem),sourceFile:file,sourceEncoding:decoded.encoding,name:path.basename(file),...(version.externalPath&&!await exists(file)?{warning:'原关联源码无法读取：'+file+'；请重新导入。当前显示初始模板。'}:{})};
  }
  async openDocuments(labId:string,problemId:string,language:Language):Promise<LoadedDraft[]>{
   const legacy=await this.load(labId,problemId,language,true);
   await this.enqueue(async()=>{
    const meta=await this.readState(labId,problemId),state=this.stateFor(meta,problemId,legacy.language);
    state.documents??=[];
+   let migrated=false;
+   for(let i=0;i<state.documents.length;i++){
+    const old=state.documents[i];if(!old.externalPath||!await exists(old.externalPath))continue;
+    const adopted=await this.managedVersion(labId,problemId,old,state.documents),decoded=decodeText(await readFile(old.externalPath));
+    await mkdir(this.paths(labId,problemId,old.language).dir,{recursive:true});await writeSource(this.documentPath(labId,problemId,adopted),decoded.text);
+    state.documents[i]=adopted;migrated=true;
+   }
+   if(migrated){meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);}
    if(!state.documents.length){
     for(const lang of ['c','cpp'] as Language[]){
      const p=this.paths(labId,problemId,lang),binding=state.sources[lang];
      if(!await exists(p.source)&&!binding&&lang!==legacy.language)continue;
-     let file=path.basename(p.source),externalPath:string|undefined,source=defaultSource(lang);
+     let file=path.basename(p.source),source=defaultSource(lang);
      if(binding){
-      const decoded=decodeText(await readFile(binding.path));source=decoded.text;
-      if(labId){file=await this.nextSourceFile(labId,problemId,lang,state.documents);await writeSource(path.join(p.dir,file),source);}
-      else externalPath=binding.path;
+      source=await exists(binding.path)?decodeText(await readFile(binding.path)).text:legacy.source;
+      file=await this.nextSourceFile(labId,problemId,lang,state.documents);await mkdir(p.dir,{recursive:true});await writeSource(path.join(p.dir,file),source);
      }else if(await exists(p.source))source=decodeText(await readFile(p.source)).text;
-     state.documents.push({id:randomUUID(),file,language:lang,encoding:externalPath?binding!.encoding:'UTF-8',externalPath,starter:state.starters[lang]??defaultSource(lang),check:binding&&labId?undefined:state.checks[lang]});
+     state.documents.push({id:randomUUID(),file,language:lang,encoding:'UTF-8',starter:state.starters[lang]??defaultSource(lang),check:binding&&labId?undefined:state.checks[lang]});
     }
     state.activeDocumentId=state.documents.find(d=>d.language===legacy.language)?.id;
     delete state.sources.c;delete state.sources.cpp;
@@ -171,6 +179,9 @@ export class Storage{
   while(versions.some(d=>d.file.toLowerCase()===file.toLowerCase())||await exists(path.join(p.dir,file)))file=base+'.v'+(++n)+ext;
   return file;
  }
+ private async managedVersion(labId:string,problemId:string,version:SourceDocument,versions:SourceDocument[]):Promise<SourceDocument>{
+  return {...version,file:await this.nextSourceFile(labId,problemId,version.language,versions.filter(v=>v.id!==version.id)),encoding:'UTF-8',externalPath:undefined};
+ }
  async importSource(labId:string,problemId:string,file:string,forceCopy=false):Promise<LoadedDraft>{
   const language:Language=path.extname(file).toLowerCase()==='.cpp'?'cpp':'c',decoded=decodeText(await readFile(file)),legacy=await this.load(labId,problemId,language);
   await this.openDocuments(labId,problemId,language);
@@ -182,19 +193,20 @@ export class Storage{
     if(await (await import('node:fs/promises')).realpath(this.documentPath(labId,problemId,version)).catch(()=>null)===canonical){selected=version;break;}
    }
    if(!selected){
-    const filename=await this.nextSourceFile(labId,problemId,language,state.documents??[]),externalPath=!labId&&!forceCopy?canonical:undefined;
-    selected={id:randomUUID(),file:filename,language,encoding:externalPath?decoded.encoding:'UTF-8',externalPath,starter:state.starters[language]??defaultSource(language)};
-    if(!externalPath){await mkdir(this.paths(labId,problemId,language).dir,{recursive:true});await writeSource(this.documentPath(labId,problemId,selected),decoded.text);}
+    const filename=await this.nextSourceFile(labId,problemId,language,state.documents??[]);
+    selected={id:randomUUID(),file:filename,language,encoding:'UTF-8',starter:state.starters[language]??defaultSource(language)};
+    await mkdir(this.paths(labId,problemId,language).dir,{recursive:true});await writeSource(this.documentPath(labId,problemId,selected),decoded.text);
     state.documents!.push(selected);
    }
    state.activeDocumentId=selected.id;state.language=language;meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);
    return this.readDocument(labId,problemId,selected,legacy.problem);
   });
  }
- async newVersion(draft:Draft):Promise<LoadedDraft>{
+ async newVersion(draft:Draft,fromTemplate=false):Promise<LoadedDraft>{
   const d=structuredClone(validateDraft(draft));await this.openDocuments(d.problem.labId,d.problem.problemId,d.language);
   return this.enqueue(async()=>{
    const meta=await this.readState(d.problem.labId,d.problem.problemId),state=this.stateFor(meta,d.problem.problemId,d.language);
+   if(fromTemplate)d.source=state.starters[d.language]??defaultSource(d.language);
    const version:SourceDocument={id:randomUUID(),file:await this.nextSourceFile(d.problem.labId,d.problem.problemId,d.language,state.documents??[]),language:d.language,encoding:'UTF-8',starter:state.starters[d.language]??defaultSource(d.language)};
    await mkdir(this.paths(d.problem.labId,d.problem.problemId,d.language).dir,{recursive:true});await writeSource(this.documentPath(d.problem.labId,d.problem.problemId,version),d.source);
    state.documents!.push(version);state.activeDocumentId=version.id;state.language=d.language;meta.problems={...meta.problems,[d.problem.problemId]:state};await this.writeState(d.problem.labId,d.problem.problemId,meta);
