@@ -34,14 +34,34 @@
           "expectedOutput": "850\n"
         },
         {
+          "id": "n-4",
+          "input": "4\n",
+          "expectedOutput": "2450\n"
+        },
+        {
           "id": "n-5",
           "input": "5\n",
           "expectedOutput": "6450\n"
         },
         {
+          "id": "n-6",
+          "input": "6\n",
+          "expectedOutput": "16050\n"
+        },
+        {
           "id": "n-10",
           "input": "10\n",
           "expectedOutput": "460850\n"
+        },
+        {
+          "id": "n-15",
+          "input": "15\n",
+          "expectedOutput": "22937650\n"
+        },
+        {
+          "id": "n-19",
+          "input": "19\n",
+          "expectedOutput": "471859250\n"
         },
         {
           "id": "n-20",
@@ -95,7 +115,17 @@
         "    // 设计子函数：每轮生成随机数，最多猜 7 次，并根据猜测提示大小。",
         "    // 猜对时显示 Correct；用完机会后告知正确答案。",
         "    // 主函数支持继续或结束游戏，在注释中说明操作方式。",
-        "    // 手动检查：首次猜中、7 次未猜中、继续新一轮、主动退出。",
+        "    // 手动检查（在临时调试副本中固定答案，检查后恢复随机生成）：",
+        "    // 01 首次猜中：显示 Correct，立即结束本轮。",
+        "    // 02 猜大：提示偏大，并允许继续猜测。",
+        "    // 03 猜小：提示偏小，并允许继续猜测。",
+        "    // 04 第 7 次猜中：仍按成功处理。",
+        "    // 05 连续 7 次猜错：结束本轮并显示正确答案，不再索要第 8 次猜测。",
+        "    // 06 提前猜中：本轮剩余次数不再索要输入。",
+        "    // 07 成功后继续：进入新一轮，恢复 7 次机会。",
+        "    // 08 失败后继续：进入新一轮，恢复 7 次机会。",
+        "    // 09 成功或失败后退出：按注释约定的操作正常结束程序。",
+        "    // 10 连玩多轮：随机生成在每轮执行；不要求相邻两轮答案一定不同。",
         "    return 0;",
         "}"
       ],
@@ -125,8 +155,8 @@
       ],
       "comparison": {
         "type": "floatTokens",
-        "absoluteTolerance": 0.00001,
-        "relativeTolerance": 0.00001
+        "absoluteTolerance": 1e-05,
+        "relativeTolerance": 1e-05
       },
       "testCases": [
         {
@@ -158,6 +188,26 @@
           "id": "zero-root",
           "input": "0 0 0 0.000001\n",
           "expectedOutput": "Iterations: 0\nRoot: 0.000000\n"
+        },
+        {
+          "id": "derivative-zero",
+          "input": "3 1 1 1e-6\n",
+          "expectedOutput": "Iterations: 0\nRoot: 1.000000\n"
+        },
+        {
+          "id": "initial-residual",
+          "input": "0 8 2.000001 0.0001\n",
+          "expectedOutput": "Iterations: 0\nRoot: 2.000001\n"
+        },
+        {
+          "id": "step-threshold",
+          "input": "0 1000000 100.00001 0.0001\n",
+          "expectedOutput": "Iterations: 1\nRoot: 100.000000\n"
+        },
+        {
+          "id": "negative-three-roots",
+          "input": "3 0 -1.5 1e-8\n",
+          "expectedOutput": "Iterations: 4\nRoot: -1.732051\n"
         }
       ]
     }
