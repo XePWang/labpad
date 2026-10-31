@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.project",
+  "labId": "实验3",
+  "problems": [
+    {
+      "problemId": "Lab 3-1",
+      "title": "游泳接力距离（递推）",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    int n = 0;",
+        "    if (scanf(\"%d\", &n) != 1) return 0;",
+        "    // 第一个人的速度为 25 米/分钟，游泳时间为 2 分钟。",
+        "    // 后一个人的速度是前一个人的 2 倍，游泳时间多 2 分钟。",
+        "    // 计算 n 个人的总距离，只输出一个整数和换行。",
+        "    return 0;",
+        "}"
+      ],
+      "comparison": {
+        "type": "wcmp"
+      },
+      "testCases": [
+        {
+          "id": "n-2",
+          "input": "2\n",
+          "expectedOutput": "250\n"
+        },
+        {
+          "id": "n-3",
+          "input": "3\n",
+          "expectedOutput": "850\n"
+        },
+        {
+          "id": "n-5",
+          "input": "5\n",
+          "expectedOutput": "6450\n"
+        },
+        {
+          "id": "n-10",
+          "input": "10\n",
+          "expectedOutput": "460850\n"
+        },
+        {
+          "id": "n-20",
+          "input": "20\n",
+          "expectedOutput": "996147250\n"
+        },
+        {
+          "id": "n-21",
+          "input": "21\n",
+          "expectedOutput": "2097152050\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 3-2",
+      "title": "900 卡食物搭配（穷举）",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "",
+        "int main(void) {",
+        "    // 本题没有输入。面条、桔子、西瓜、蔬菜分别为 160、40、50、80 卡/份。",
+        "    // 总热量 900 卡；面条至少 1 份；桔子与西瓜合计至少 1 份；总份数不超过 10。",
+        "    // 按面条、桔子、西瓜、蔬菜份数依次从小到大遍历。",
+        "    // 每种搭配输出一行，格式为 \"%d %d %d %d\\n\"。",
+        "    return 0;",
+        "}"
+      ],
+      "comparison": {
+        "type": "wcmp"
+      },
+      "testCases": [
+        {
+          "id": "all-combinations",
+          "input": "",
+          "expectedOutput": "2 0 2 6\n3 0 2 4\n3 2 2 3\n4 0 2 2\n4 2 2 1\n4 4 2 0\n5 0 2 0\n"
+        }
+      ]
+    },
+    {
+      "problemId": "Lab 3-3",
+      "title": "猜数字游戏（交互调试）",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "#include <stdlib.h>",
+        "#include <time.h>",
+        "",
+        "int main(void) {",
+        "    // 随机交互题：测试点留空，编译成功后在下方“调试”页试玩。",
+        "    // 设计子函数：每轮生成随机数，最多猜 7 次，并根据猜测提示大小。",
+        "    // 猜对时显示 Correct；用完机会后告知正确答案。",
+        "    // 主函数支持继续或结束游戏，在注释中说明操作方式。",
+        "    // 手动检查：首次猜中、7 次未猜中、继续新一轮、主动退出。",
+        "    return 0;",
+        "}"
+      ],
+      "comparison": {
+        "type": "wcmp"
+      },
+      "testCases": []
+    },
+    {
+      "problemId": "Lab 3-4",
+      "title": "牛顿迭代法求三次方程（选做）",
+      "language": "c",
+      "source": [
+        "#include <stdio.h>",
+        "#include <math.h>",
+        "",
+        "int main(void) {",
+        "    double a, b, x0, epsilon;",
+        "    if (scanf(\"%lf%lf%lf%lf\", &a, &b, &x0, &epsilon) != 4) return 0;",
+        "    // 设计自定义函数，用牛顿迭代求解 x^3 - a*x - b = 0。",
+        "    // 本项目统一格式：标签后保留一个空格，输出 \"Iterations: %d\\nRoot: %.6f\\n\"。",
+        "    // 初始次数为 0；每轮先检查 |f'(x)| < 1e-12 或 |f(x)| < epsilon，满足则退出。",
+        "    // 否则计算下一估计值，次数加 1；更新 x 后，若 |新值 - 旧值| < epsilon 则退出。",
+        "    // 初值已满足条件时输出次数 0；数值 token 的绝对/相对误差均为 1e-5，满足其一即通过。",
+        "    return 0;",
+        "}"
+      ],
+      "comparison": {
+        "type": "floatTokens",
+        "absoluteTolerance": 0.00001,
+        "relativeTolerance": 0.00001
+      },
+      "testCases": [
+        {
+          "id": "guide-iteration",
+          "input": "2 2 1.5 0.000001\n",
+          "expectedOutput": "Iterations: 4\nRoot: 1.769292\n"
+        },
+        {
+          "id": "guide-initial-root",
+          "input": "3 2 2 0.000001\n",
+          "expectedOutput": "Iterations: 0\nRoot: 2.000000\n"
+        },
+        {
+          "id": "positive-root",
+          "input": "0 8 1 1e-8\n",
+          "expectedOutput": "Iterations: 6\nRoot: 2.000000\n"
+        },
+        {
+          "id": "negative-root",
+          "input": "0 -8 -1 1e-8\n",
+          "expectedOutput": "Iterations: 6\nRoot: -2.000000\n"
+        },
+        {
+          "id": "irrational-root",
+          "input": "1 1 1 1e-8\n",
+          "expectedOutput": "Iterations: 5\nRoot: 1.324718\n"
+        },
+        {
+          "id": "zero-root",
+          "input": "0 0 0 0.000001\n",
+          "expectedOutput": "Iterations: 0\nRoot: 0.000000\n"
+        }
+      ]
+    }
+  ]
+}

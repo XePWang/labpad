@@ -40,7 +40,7 @@ Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Opti
 
 ### 实验项目
 
-[实验1](examples/lab-1.project.json)包含 Lab 1-1、Lab 1-2、Lab 1-3；[实验2](examples/lab-2.project.json)包含 warmup 2-1 至 2-4、Lab 2-1 至 2-4。
+[实验1](examples/lab-1.project.json)包含 Lab 1-1、Lab 1-2、Lab 1-3；[实验2](examples/lab-2.project.json)包含 warmup 2-1 至 2-4、Lab 2-1 至 2-4；[实验3](examples/lab-3.project.json)包含 Lab 3-1 至 Lab 3-4。
 
 ~~~json
 {
@@ -63,7 +63,7 @@ Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Opti
 
 题号按 problems 顺序显示，每题可选择 c/cpp。source 支持完整字符串或逐行数组，省略时使用默认模板；title 默认等于题号。时限默认 1000 ms，输出上限默认 65536 字节，测试点默认空数组。同名项目可取消或建立副本。
 
-课程示例提供编写起点与公开样例。Lab 1-2 使用固定虚构参数 x=12、y=8，修改个人参数后应同步修改预期输出；金字塔使用严格文本；回文素数配置 5000 ms。输入回显不属于程序输出。详细格式见助教指南。
+课程示例提供编写起点与公开样例。Lab 1-2 使用固定虚构参数 x=12、y=8，修改个人参数后应同步修改预期输出；金字塔使用严格文本；回文素数配置 5000 ms。实验3的猜数字游戏使用交互调试；选做牛顿迭代题在标签与数字之间保留空格，绝对、相对容差均为 1e-5，迭代计数约定见助教指南。输入回显不属于程序输出。详细格式见助教指南。
 
 ### 标准 I/O
 
@@ -152,7 +152,7 @@ Linux 批测默认使用 Bubblewrap；安装与环境预检、CSV 字段和可�
 - 调试增加独立 > 输入行；操作错误移除 Electron 包装文字，保留原始编译诊断。
 - 按 macOS 常用约定完善默认快捷键及旧配置迁移。
 - 新增 TypeScript CLI，支持目录/嵌套 ZIP、XLS/XLSX/CSV 名单、完整版本择优、隐藏测试、百分制与单人续测。
-- 补充实验1、实验2完整项目示例和三份版本化指南。平台验证范围与完整流程证据见[验证记录](doc/0.1.0-dev.7/verification.md)。
+- 补充实验1、实验2完整项目示例和三份版本化指南；课程数据后续补充实验3，包括随机交互题与牛顿迭代浮点样例。平台验证范围与完整流程证据见[验证记录](doc/0.1.0-dev.7/verification.md)。
 
 ### 0.1.0-dev.6
 
