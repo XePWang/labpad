@@ -4,6 +4,8 @@
 
 撰写日期：2026-11-01
 
+更新日期：2026-11-02
+
 ## 1. 模块与项目模型
 桌面采用 Electron、Vue 3、TypeScript、CodeMirror 6。CLI 与桌面共用 core/compiler、core/build、core/judge 和 Checker。
 
@@ -130,3 +132,6 @@ dev 版本使用 GitHub Pre-release。附件只含 Windows x64、Linux x64、mac
 
 ### LPMake diagnostics
 ConfigError 统一生成英文文件/行列、源码与指针；hint、note 独立可选。Spec 的 origin 保存原始文本与声明位置，供解析后的文件解析和 CLI 策略校验定位。显示宽度使用 string-width，覆盖宽字符与 Tab；诊断容器保留等宽排版。
+
+### 默认语言标准
+shared/defaults.ts 统一定义 C17 / C++20，编译器配置、LPMake 默认参数和新建模板共用。未设置标准且不继承参数时仍补齐标准；显式 -std / -ansi、LPMake 标准及后置原始参数保留优先级。验收指纹和 CLI 评分上下文使用生效后的默认参数，防止沿用不同语言标准下的旧结果。

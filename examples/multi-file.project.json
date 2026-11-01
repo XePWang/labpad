@@ -45,7 +45,7 @@
   "files": [
     {
       "path": "LPMake.txt",
-      "content": "# src 中新建的 C 文件自动参与构建\ntarget(\"sum\")\nset_standard(\"c11\")\nadd_includedirs(\"include\")\nadd_files(\"src/*.c\")\n"
+      "content": "# src 中新建的 C 文件自动参与构建\ntarget(\"sum\")\nset_standard(\"c17\")\nadd_includedirs(\"include\")\nadd_files(\"src/*.c\")\n"
     },
     {
       "path": "src/main.c",

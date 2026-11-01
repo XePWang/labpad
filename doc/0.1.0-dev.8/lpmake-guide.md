@@ -4,7 +4,11 @@
 
 撰写日期：2026-11-01
 
+更新日期：2026-11-02
+
 LPMake 用来说明一个多文件实验中要编译哪些文件、使用什么语言标准和参数。它放在项目根目录，文件名为 **LPMake.txt**。LabPad 读取它构建一个可执行程序，再用项目测试点自测或进入交互调试。
+
+新建项目默认 C17 / C++20。set_standard() 可明确选择课程要求的其他标准；关闭本机参数继承时，缺省语言标准仍为 C17 / C++20。
 
 ## 1. 从一个 C 项目开始
 文件结构：
@@ -23,7 +27,7 @@ LPMake：
 ~~~text
 # src 中新增的 C 文件会自动参与构建
 target("sum")
-set_standard("c11")
+set_standard("c17")
 add_includedirs("include")
 add_files("src/*.c")
 ~~~
@@ -146,7 +150,7 @@ add_files("src/*.c")
 
 ### set_standard
 ~~~text
-set_standard("c11")
+set_standard("c17")
 set_standard("c++20")
 ~~~
 
@@ -161,7 +165,7 @@ set_standard("c++20")
 | C++ | c++11、c++14、c++17、c++20、c++23 |
 | GNU C++ | gnu++11、gnu++14、gnu++17、gnu++20、gnu++23 |
 
-具体标准还需所选编译器支持。未指定的语言槽保留允许继承的本机默认标准；关闭继承且不指定标准时，采用编译器自身默认值。
+具体标准还需所选编译器支持。未指定的语言槽使用允许继承的本机标准；没有明确标准时兜底为 C17 / C++20。关闭参数继承也保留这两个语言默认值。
 
 ## 5. debug、release 和优化
 ~~~text
@@ -261,7 +265,7 @@ add_ldflags("-pthread")
 
 ~~~text
 target("priority")
-set_standard("c11")
+set_standard("c17")
 set_mode("debug")
 set_optimize("O3")
 add_cflags("-O0")
@@ -294,7 +298,7 @@ int main() {
 ## 11. C/C++ 混合项目
 ~~~text
 target("mixed")
-set_standard("c11")
+set_standard("c17")
 set_standard("c++20")
 add_includedirs("include")
 add_files("src/*.c", "src/*.cpp")

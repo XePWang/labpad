@@ -335,7 +335,7 @@ async function initialize(){
  handle('problem:import',async(lab:string,problem:string)=>{
   requireIdle();selection(lab,problem);await saves;
   const current=currentDocument?.problem.labId===lab&&currentDocument.problem.problemId===problem?structuredClone(currentDocument):await storage.load(lab,problem,config.language);
-  const selected=await dialog.showOpenDialog(win,{title:'导入标准 I/O · 当前题目',properties:['openFile','multiSelections'],filters:[{name:'标准 I/O',extensions:['json','in','out','ans']}]});
+  const selected=await dialog.showOpenDialog(win,{title:'导入测试点 · 当前题目',properties:['openFile','multiSelections'],filters:[{name:'标准 I/O',extensions:['json','in','out','ans']}]});
   if(selected.canceled)return null;
   const patch=selected.filePaths.length===1&&path.extname(selected.filePaths[0]).toLowerCase()==='.json'
    ?parseIOPatch(await readJSON(selected.filePaths[0]),current.problem):{testCases:(await importPairs(selected.filePaths,lab,problem)).testCases};

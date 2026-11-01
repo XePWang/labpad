@@ -1,5 +1,5 @@
 import {parseTemplates,type SourceTemplates} from './templates';
-import {defaultProblem,defaultSource} from './defaults';import {filePart,validateProblem} from './validate';import {parse,ConfigError} from './lpmake';import {testPatch,rulesOf} from './test-import';import type {Language,Problem,CompilerConfig} from './types';import type {CheckRecord} from './project-format';
+import {defaultProblem,defaultSource,defaultStandards} from './defaults';import {filePart,validateProblem} from './validate';import {parse,ConfigError} from './lpmake';import {testPatch,rulesOf} from './test-import';import type {Language,Problem,CompilerConfig} from './types';import type {CheckRecord} from './project-format';
 export interface WorkspaceSnapshot{files:Record<string,string>;inheritDefaults:boolean}
 export interface WorkspaceFile{path:string;directory:boolean}
 export interface WorkspaceState{templates?:SourceTemplates;schemaVersion:2;mode:'project';labId:string;tests:Problem;inheritDefaults:boolean;starters?:Record<string,string>;activeFile?:string;openFiles?:string[];expanded?:string[];sidebarWidth?:number;sidebarCollapsed?:boolean;check?:CheckRecord}
@@ -17,7 +17,7 @@ export function uniquePaths(paths:string[]){
  for(const p of paths){let parent=p;while(parent.includes('/')){parent=parent.slice(0,parent.lastIndexOf('/'));if(seen.has(parent.normalize('NFC').toLowerCase()))throw new Error('文件与文件夹冲突：'+parent);}}
 }
 export function workspaceTemplate(language:Language='c'):Record<string,string>{
- const suffix=language==='c'?'c':'cpp';return {'LPMake.txt':'# 新建源码放在 src 中，即可参与构建。\ntarget("app")\nset_standard("'+(language==='c'?'c11':'c++20')+'")\nadd_files("src/*.'+suffix+'")\n', ['src/main.'+suffix]:defaultSource(language)};
+ const suffix=language==='c'?'c':'cpp';return {'LPMake.txt':'# 新建源码放在 src 中，即可参与构建。\ntarget("app")\nset_standard("'+defaultStandards[language]+'")\nadd_files("src/*.'+suffix+'")\n', ['src/main.'+suffix]:defaultSource(language)};
 }
 export function parseWorkspacePackage(value:unknown):WorkspacePackage{
  const p=value as any;if(!p||p.schemaVersion!==2||p.kind!=='labpad.project'||p.mode!=='project')throw new Error('请选择schemaVersion为2、mode为project的实验项目');

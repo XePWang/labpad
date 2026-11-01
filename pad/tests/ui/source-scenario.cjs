@@ -34,7 +34,7 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
  try{
   await prepare();assert.equal(await button('打开源码').count(),0);assert.equal(await button('导入源码').count(),0);
   assert.deepEqual((await toolbar().getByRole('button').allTextContents()).slice(0,2),['新建源码','导入']);
-  await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入标准 I/O','导入实验项目']);await page.keyboard.press('Escape');
+  await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入测试点','导入实验项目']);await page.keyboard.press('Escape');
   pass('toolbar places New Source before Import; import menu contains source, standard I/O and project in the requested order');
   await closeAll();const c=await create('c',true);assert.equal(path.dirname(c.sourcePath),data);await editor().fill(printing('new-c'));await save();await run('new-c');
   const cSaved=await fs.readFile(c.sourcePath,'utf8');await closeAll();const cpp=await create('cpp',true);assert.equal(path.dirname(cpp.sourcePath),data);assert.notEqual(cpp.sourcePath,c.sourcePath);await editor().fill('#include <iostream>\nint main(){std::cout<<"new-cpp";}\n');await save();await run('new-cpp');assert.equal(await fs.readFile(c.sourcePath,'utf8'),cSaved);

@@ -1,3 +1,4 @@
+import {defaultCompilerConfig} from './defaults';
 import stringWidth from 'string-width';
 import type {SyntaxNode} from '@lezer/common';
 import {parser} from './lpmake-parser';
@@ -11,7 +12,8 @@ export interface Spec {version:1;target:string;language?:Language;standards:Part
 export interface Unit {path:string;language:Language;args:string[]}
 export interface Plan {version:1;target:string;units:Unit[];linkLanguage:Language;linkArgs:string[];mode:Spec['mode']}
 export interface Defaults {c:string[];cpp:string[];link:string[]}
-export const defaults:Defaults={c:['-std=c17','-O2','-Wall','-Wextra'],cpp:['-std=c++17','-O2','-Wall','-Wextra'],link:['-lm']};
+const compilerDefaults=defaultCompilerConfig('gcc');
+export const defaults:Defaults={c:compilerDefaults.cArgs,cpp:compilerDefaults.cppArgs,link:compilerDefaults.linkArgs};
 export class ConfigError extends Error {
  line:number;column:number;
  constructor(text:string,pos:number,reason:string,hint?:string,note?:string,to=pos+1){

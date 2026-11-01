@@ -1,3 +1,4 @@
+import {withDefaultStandard} from '../shared/defaults';
 import {readFile,writeFile,mkdir,rename,rm,stat} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
@@ -143,7 +144,8 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
   const roster=await readRoster(path.resolve(lab,value.roster)),config=await compilerConfig(value.compiler),isolation=value.isolation??'bubblewrap';
   if(!['bubblewrap','none'].includes(isolation))throw Error('isolation 应为 bubblewrap 或 none');
   await mkdir(path.join(lab,'build'),{recursive:true});compiler=new Compiler({...paths,workDirectory:path.join(lab,'build'),cacheDirectory:path.join(lab,'build','compiler-cache'),isolation});
-  const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,config,await compiler.identity(config,'c'),await compiler.identity(config,'cpp'),isolation]);
+  const contextCompiler={...config,cArgs:withDefaultStandard(config.cArgs,'c'),cppArgs:withDefaultStandard(config.cppArgs,'cpp')};
+ const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,contextCompiler,await compiler.identity(config,'c'),await compiler.identity(config,'cpp'),isolation]);
   let state:GradeState={schemaVersion:1,context,students:{}};
   if(options.studentId){
    if(!roster.some(s=>s.studentId===options.studentId))throw Error('该学号不在点名册中：'+options.studentId);

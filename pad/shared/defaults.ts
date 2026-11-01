@@ -1,7 +1,11 @@
 import {defaultShortcuts} from './shortcuts';
 import type {Config,Problem,Language,CompilerConfig} from './types';
+export const defaultStandards={c:'c17',cpp:'c++20'} as const;
+export function withDefaultStandard(args:readonly string[],language:Language):string[]{
+ return args.some(arg=>arg.startsWith('-std=')||arg==='-ansi')?[...args]:['-std='+defaultStandards[language],...args];
+}
 export function defaultCompilerConfig(kind:CompilerConfig['kind'],msvc=false):CompilerConfig{
- return {mode:'builtin',kind,cPath:'',cppPath:'',cArgs:['-std=c17','-O2','-Wall','-Wextra'],cppArgs:['-std=c++17','-O2','-Wall','-Wextra'],linkArgs:msvc?[]:['-lm']};
+ return {mode:'builtin',kind,cPath:'',cppPath:'',cArgs:['-std='+defaultStandards.c,'-O2','-Wall','-Wextra'],cppArgs:['-std='+defaultStandards.cpp,'-O2','-Wall','-Wextra'],linkArgs:msvc?[]:['-lm']};
 }
 export function defaultConfig():Config{
  return {schemaVersion:1,classId:'',name:'',studentId:'',currentLab:'',currentProblem:'',language:'c',

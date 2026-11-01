@@ -1,3 +1,4 @@
+import {withDefaultStandard} from '../shared/defaults';
 import {ConfigError} from '../shared/lpmake';
 import {workspacePath,workspacePackage} from '../shared/workspace';
 import {rulesOf} from '../shared/test-import';
@@ -11,9 +12,9 @@ import type {CheckRecord} from '../shared/project-format';
 export type Submission=ExportPreview;
 export interface SubmissionServices{identity(language:Language):Promise<string>;format(source:string,language:Language):Promise<string>}
 export function fingerprint(draft:Draft,compiler:CompilerConfig,identity:string){
- const p=draft.problem;
+ const p=draft.problem,options={...compiler,cArgs:withDefaultStandard(compiler.cArgs,'c'),cppArgs:withDefaultStandard(compiler.cppArgs,'cpp')};
  return createHash('sha256').update(JSON.stringify([draft.workspace?'workspace':draft.language,draft.workspace??draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
-  p.comparison,p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),compiler,identity])).digest('hex');
+  p.comparison,p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),options,identity])).digest('hex');
 }
 export function checkRecord(draft:Draft,hash:string,result?:JudgeResult,previous?:CheckRecord):CheckRecord{
  const total=draft.problem.testCases.length,selected=new Set(result?.selectedCaseIds??draft.problem.testCases.map(t=>t.id));

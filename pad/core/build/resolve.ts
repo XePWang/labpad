@@ -1,3 +1,4 @@
+import {withDefaultStandard} from '../../shared/defaults';
 import {realpath,stat} from 'node:fs/promises';import path from 'node:path';import {glob} from 'tinyglobby';
 import {relative,defaults,diagnostic,type Spec,type Plan,type Unit,type Language,type Command} from '../../shared/lpmake';
 const inside=(root:string,file:string)=>{const rel=path.relative(root,file);return !rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel);};
@@ -24,7 +25,7 @@ export async function resolve(spec:Spec,root:string,base=defaults,inherit=true):
   let full:string;try{full=await realpath(path.join(root,name));}catch{throw fail('add_files',undefined,'Source file '+JSON.stringify(name)+' is unavailable.','Restore the file or update the source patterns, then build again.');}
   if(!inside(canonical,full))throw fail('add_files',undefined,'Source file '+JSON.stringify(name)+' resolves outside the project.','Move the source into the project and remove external symlinks.');
   const ext=path.extname(name).toLowerCase();if(!['.c','.cpp','.cc','.cxx'].includes(ext))throw fail('add_files',undefined,'Unsupported source extension in '+JSON.stringify(name)+'.','Use .c, .cpp, .cc or .cxx files. Exclude headers and data files from add_files().');
-  const inferred:Language=ext==='.c'?'c':'cpp',language=spec.language??inferred,args=[...(inherit?base[language]:[])];
+  const inferred:Language=ext==='.c'?'c':'cpp',language=spec.language??inferred,args=spec.standards[language]?[...(inherit?base[language]:[])]:withDefaultStandard(inherit?base[language]:[],language);
   if(spec.standards[language])args.push('-std='+spec.standards[language]);
   args.push(...(spec.mode==='debug'?['-g','-O0','-UNDEBUG']:['-O2','-DNDEBUG']));
   if(spec.optimize)args.push('-'+spec.optimize);

@@ -1,3 +1,4 @@
+import {withDefaultStandard} from '../shared/defaults';
 import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
 import {CompilerCache} from './cache';
 import {tmpdir} from 'node:os';
@@ -51,7 +52,7 @@ export class Compiler {
    const sourcePath=path.join(directory,'main.'+(language==='c'?'c':'cpp'));
    await writeFile(sourcePath,source.replace(/^\uFEFF/,''),'utf8');
    const {program,prefix}=this.resolve(config,language);
-   const args=[...prefix,...(language==='c'?config.cArgs:config.cppArgs),sourcePath,...config.linkArgs,'-o',executable];
+   const args=[...prefix,...withDefaultStandard(language==='c'?config.cArgs:config.cppArgs,language),sourcePath,...config.linkArgs,'-o',executable];
    const r=await runProcess(program,args,{cwd:directory,timeLimitMs:120000,outputLimitBytes:524288,
     signal,env:await this.environment(config),processHost:this.paths.processHost});
    if(r.reason&&r.reason!=='cancelled')throw new Error(r.reason==='timeout'?'编译工具运行超时':'编译工具输出超过上限');

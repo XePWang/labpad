@@ -17,7 +17,7 @@ test('common compiler locations cover PATH, CodeBlocks, MSYS2, Scoop, Homebrew a
 });
 test('compiler profiles reset defaults, omit libm for MSVC targets and do not share mutable arrays',()=>{
  const gcc=defaultCompilerConfig('gcc'),clang=defaultCompilerConfig('clang',true),zig=defaultCompilerConfig('zig');
- assert.deepEqual(gcc.cArgs,['-std=c17','-O2','-Wall','-Wextra']);assert.deepEqual(gcc.cppArgs,['-std=c++17','-O2','-Wall','-Wextra']);
+ assert.deepEqual(gcc.cArgs,['-std=c17','-O2','-Wall','-Wextra']);assert.deepEqual(gcc.cppArgs,['-std=c++20','-O2','-Wall','-Wextra']);
  assert.deepEqual(gcc.linkArgs,['-lm']);assert.deepEqual(clang.linkArgs,[]);assert.equal(zig.kind,'zig');
  gcc.cArgs.push('-custom');assert.ok(!zig.cArgs.includes('-custom'));
 });
