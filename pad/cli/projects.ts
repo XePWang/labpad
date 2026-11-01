@@ -1,3 +1,4 @@
+import {ConfigError} from '../shared/lpmake';
 import {readdir,lstat,readFile,mkdir,writeFile} from 'node:fs/promises';import path from 'node:path';import {createHash} from 'node:crypto';import {archiveFiles} from '../core/project-archive';import {decodeText,exists,readJSON} from '../core/storage';import {workspacePath,uniquePaths,type WorkspaceSnapshot} from '../shared/workspace';import type {Intake,Candidate} from './collect';import type {Student} from './roster';
 export function snapshotHash(files:Record<string,string>){return createHash('sha256').update(JSON.stringify(Object.entries(files).sort(([a],[b])=>a<b?-1:a>b?1:0))).digest('hex');}
 export async function directoryFiles(root:string):Promise<Record<string,string>>{
@@ -42,5 +43,5 @@ export async function collectProjects(submit:string,src:string,students:Student[
 }
 export function controlledStudentBuild(files:Record<string,string>){
  // Teacher opt-in permits the declaration language only, never external file or tool hooks.
- const make=files['LPMake.txt'];if(!make)throw new Error('学生项目缺少 LPMake.txt');return make;
+ const make=files['LPMake.txt'];if(!make)throw new ConfigError('',0,'The submission is missing LPMake.txt.','Include LPMake.txt in the project root.');return make;
 }

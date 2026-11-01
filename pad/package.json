@@ -30,6 +30,7 @@
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.15",
     "@lezer/common": "1.5.4",
+    "@lezer/highlight": "1.2.5",
     "@lezer/lr": "1.4.11",
     "@uiw/codemirror-theme-vscode": "4.25.12",
     "@wasm-fmt/clang-format": "23.1.1",
@@ -43,12 +44,12 @@
     "proper-lockfile": "4.1.2",
     "reka-ui": "2.11.0",
     "splitpanes": "4.1.2",
+    "string-width": "4.2.3",
     "tinyglobby": "0.2.17",
     "tinykeys": "4.0.1",
     "tree-kill": "^1.2.2",
     "vue": "^3.5.35",
-    "write-file-atomic": "8.0.0",
-    "@lezer/highlight": "1.2.5"
+    "write-file-atomic": "8.0.0"
   },
   "devDependencies": {
     "@lezer/generator": "1.8.1",

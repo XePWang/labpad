@@ -77,3 +77,5 @@ html,body{height:100%;overflow:clip}.app-shell{overflow:clip}
 .app-shell[data-theme] .case-card[data-status=running]{background:var(--running-bg);border-color:var(--running)}
 
 .app-shell[data-theme] .build-excluded{color:var(--warning)}
+
+.source-diagnostic{white-space:pre;overflow:auto;max-width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.55;text-align:left}

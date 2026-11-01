@@ -274,7 +274,8 @@ async function initialize(){
  handle('document:activate',async(id:string)=>{if(!currentDocument)throw new Error('尚未打开文件');if(currentDocument.file&&await storage.workspace.isProject(currentDocument.problem.labId)){await storage.workspace.update(currentDocument.problem.labId,{activeFile:currentDocument.file});return;}await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:null};await storage.saveConfig(config);}});
  handle('source:version',(value:Draft,fromTemplate:boolean)=>{requireIdle();return storage.newVersion(value,fromTemplate===true);});
  handle('clipboard:write',(text:string)=>{if(typeof text!=='string')throw new Error('复制内容无效');clipboard.writeText(text);});
-  handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
+  handle('path:show-file',async(file:string)=>{if(typeof file!=='string'||!path.isAbsolute(file))throw new Error('请选择已保存的源码文件');try{if(!(await stat(file)).isFile())throw new Error();await access(file,constants.R_OK);}catch{throw new Error('文件不存在或无法访问，请先保存源码');}shell.showItemInFolder(file);});
+ handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
  handle('cache:clear',async()=>{requireIdle();await stopWarmup();return compiler.cache.clear();});
  handle('shortcuts:open',async()=>{
   if(shortcutWindow&&!shortcutWindow.isDestroyed()){shortcutWindow.focus();return;}

@@ -360,11 +360,11 @@ Zig 直接通过 zig cc / zig c++ 构建并复用受控缓存；GCC/Clang 采用
 ## 13. 常见错误
 | 提示或现象 | 检查与处理 |
 | --- | --- |
-| LPMake 行列处语法无效 | 检查英文括号、双引号、逗号及未闭合字符串 |
-| 未知命令 | 对照命令表；add_includedirs 中间没有空格 |
+| Unexpected token / Unexpected end of file | 检查英文括号、双引号、逗号及未闭合字符串 |
+| Unknown command | 对照命令表；add_includedirs 中间没有空格 |
 | 重复声明 standard:c | 保留一条 C 标准；C++ 标准可另写一条 |
-| 没有参与构建的源文件 | 检查 add_files、扩展名、Glob 层级与 remove_files |
-| 源文件不存在 | 修正显式路径或同步重命名引用 |
+| No source files remain in the build | 检查 add_files、扩展名、Glob 层级与 remove_files |
+| Source file ... does not exist | 修正显式路径或同步重命名引用 |
 | 包含/库目录不在项目内 | 使用存在的项目内相对目录 |
 | 找不到头文件 | 检查 #include 名称、目录大小写和 add_includedirs |
 | 多次定义 main | 多文件模式只保留一个 main，排除独立试验入口 |
@@ -373,3 +373,16 @@ Zig 直接通过 zig cc / zig c++ 构建并复用受控缓存；GCC/Clang 采用
 | 保存后格式不变 | LPMake 不使用 clang-format；可通过构建设置调整声明 |
 
 完整实验操作见[学生指南](student-guide.md)，项目下发和批测见[助教指南](ta-guide.md)，实现及验证见[技术说明](maintainer-guide.md)。
+
+## 诊断格式
+LPMake 诊断使用英文，给出文件、行列、源码及定位指针。已识别的修正建议显示为 hint，相关上下文显示为 note；两者按需出现。
+
+~~~text
+LPMake.txt:2:14: error: Unsupported language "cpp".
+  2 | set_language("cpp")
+    |              ^~~~~
+  hint: Use set_language("c") or set_language("c++").
+  note: Omit set_language() to infer the language from each source extension.
+~~~
+
+修正上例中的 cpp 为 c++ 后重新运行。缺失文件、目录、未匹配源文件及重复声明也会定位到对应配置；源码中的 Tab 在诊断显示中展开为 4 个空格。

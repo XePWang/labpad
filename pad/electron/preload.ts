@@ -16,7 +16,7 @@ const api:Bridge={
  createLab:(n,m)=>invoke('project:create',n,m),createProblem:(a,b,c)=>invoke('problem:create',a,b,c),
  saveConfig:(c,p)=>invoke('config:save',c,p),compilerInfo:c=>invoke('compiler:info',c),detectCompilers:()=>invoke('compiler:detect'),saveLayout:l=>invoke('layout:save',l),importSource:()=>invoke('source:import'),
  confirmUnsaved:()=>invoke('document:confirm'),validatePath:(p,k,e)=>invoke('path:validate',p,k,e),
- choosePath:(k,p)=>invoke('path:choose',k,p),revealPath:(p,k)=>invoke('path:reveal',p,k),
+ choosePath:(k,p)=>invoke('path:choose',k,p),revealPath:(p,k)=>invoke('path:reveal',p,k),revealSource:file=>invoke('path:show-file',file),
  importIO:(a,b)=>invoke('problem:import',a,b),importProject:()=>invoke('project:import'),exportTests:(k,p)=>invoke('tests:export',k,p),showProblemFile:d=>invoke('problem:show',d),
  judge:(d,ids)=>invoke('judge',d,ids),cancel:()=>invoke('cancel'),debugStart:d=>invoke('debug:start',d),
  debugInput:d=>ipcRenderer.send('debug:input',d),debugResize:(c,r)=>ipcRenderer.send('debug:resize',c,r),debugStop:()=>invoke('debug:stop'),

@@ -48,7 +48,7 @@ export interface Bridge{
  importSource():Promise<{source:string;language:Language;encoding:string;path:string;document:LoadedDraft;reused?:boolean}|null>;
  confirmUnsaved():Promise<'save'|'discard'|'cancel'>;
  validatePath(value:string,kind:PathKind,allowEmpty?:boolean):Promise<{valid:boolean;message:string}>;
- choosePath(kind:PathKind,current:string):Promise<string|null>;revealPath(value:string,kind:PathKind):Promise<void>;
+ choosePath(kind:PathKind,current:string):Promise<string|null>;revealPath(value:string,kind:PathKind):Promise<void>;revealSource(file:string):Promise<void>;
  importIO(labId:string,problemId:string):Promise<Problem|null>;importProject():Promise<(Bootstrap&{updatedProblems?:Problem[]})|null>;exportTests(kind:'current'|'project',problem:Problem):Promise<string|null>;showProblemFile(draft:Draft):Promise<void>;
  judge(draft:Draft,ids?:string[]):Promise<JudgeResult>;cancel():Promise<void>;debugStart(draft:Draft):Promise<void>;debugInput(data:string):void;debugResize(cols:number,rows:number):void;debugStop():Promise<void>;
  onJudge(callback:(event:JudgeEvent)=>void):()=>void;onDebugData(callback:(data:string,ack:()=>void)=>void):()=>void;onDebugState(callback:(state:DebugState)=>void):()=>void;

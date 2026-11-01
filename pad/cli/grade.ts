@@ -7,7 +7,7 @@ import lockfile from 'proper-lockfile';
 import writeFileAtomic from 'write-file-atomic';
 import {retainVersions} from './versions';
 import {parseWorkspacePackage} from '../shared/workspace';
-import {parse as parseMake} from '../shared/lpmake';
+import {parse as parseMake,diagnostic,ConfigError} from '../shared/lpmake';
 import {collectProjects} from './projects';
 import {compileDraft} from '../core/build';
 import {Compiler,type RuntimePaths} from '../core/compiler';
@@ -52,12 +52,12 @@ async function gradeStudent(student:Student,problems:Problem[],intake:Intake,com
    const draft:Draft={source:candidate.source,language:candidate.language,problem};let configurationError:string|undefined;
    try{if(candidate.workspace){
     const files={...candidate.workspace.files};files['LPMake.txt']=workspaceConfig?.allowStudentBuild?files['LPMake.txt']:workspaceConfig!.lpmake;
-    if(!files['LPMake.txt'])throw new Error('项目缺少 LPMake.txt');const spec=parseMake(files['LPMake.txt']).spec;
+    if(!files['LPMake.txt'])throw new ConfigError('',0,'The submission is missing LPMake.txt.','Include the build configuration file in the project submission.');const spec=parseMake(files['LPMake.txt']).spec;
     if(workspaceConfig?.allowStudentBuild){
      const allowed=/^(?:-W(?:all|extra|error|pedantic|no-[A-Za-z0-9_-]+)|-std=(?:c|gnu)(?:\+\+)?[0-9]+|-O[0-3s]|-g[0-3]?|-pthread|-pipe|-pedantic(?:-errors)?|-fno-omit-frame-pointer)$/;
-     for(const flag of [...spec.cflags,...spec.cxxflags])if(!allowed.test(flag))throw new Error('学生LPMake包含不允许的编译参数：'+flag);
-     for(const flag of spec.ldflags)if(!['-pthread','-s','-static'].includes(flag))throw new Error('学生LPMake包含不允许的链接参数：'+flag);
-     if(spec.links.some(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)))throw new Error('学生LPMake包含无效库名');
+     for(const flag of [...spec.cflags,...spec.cxxflags])if(!allowed.test(flag))throw diagnostic(spec,spec.cflags.includes(flag)?'add_cflags':'add_cxxflags',flag,'Compiler flag '+JSON.stringify(flag)+' is not allowed by the grading configuration.','Remove this flag or ask the instructor to approve the required build option.');
+     for(const flag of spec.ldflags)if(!['-pthread','-s','-static'].includes(flag))throw diagnostic(spec,'add_ldflags',flag,'Linker flag '+JSON.stringify(flag)+' is not allowed by the grading configuration.','Remove this flag or ask the instructor to approve the required link option.');
+     if(spec.links.some(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)))throw diagnostic(spec,'add_links',spec.links.find(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)),'A library name contains unsupported characters.','Use a library name such as "m"; do not pass paths or linker flags to add_links().');
     }
     draft.workspace={files,inheritDefaults:workspaceConfig?.inheritDefaults??true};
    }}catch(e){configurationError=e instanceof Error?e.message:String(e);}

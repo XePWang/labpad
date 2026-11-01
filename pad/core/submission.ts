@@ -1,3 +1,4 @@
+import {ConfigError} from '../shared/lpmake';
 import {workspacePath,workspacePackage} from '../shared/workspace';
 import {rulesOf} from '../shared/test-import';
 import {createHash} from 'node:crypto';
@@ -134,7 +135,7 @@ export async function prepareWorkspaceProject(storage:Storage,current:Draft,conf
  if(!current.problem.testCases.length||!record||record.status!=='passed')warnings.push('尚未全部通过：'+labId+'。请在导出前重新测试。');
  if(missing)warnings.push(missing);
  const files=Object.entries(snapshot.files).map(([name,source])=>({name,source}));
- if(!files.some(f=>f.name==='LPMake.txt'))throw new Error('项目缺少 LPMake.txt');
+ if(!files.some(f=>f.name==='LPMake.txt'))throw new ConfigError('',0,'The project is missing LPMake.txt.','Include LPMake.txt in the project root.');
  if(includeConfig){
   const pkg:any=workspacePackage(labId,snapshot,current.problem,state.templates);pkg.files=pkg.files.map((f:any)=>({path:f.path}));
   files.push({name:'labpad.project.json',source:JSON.stringify(pkg,null,2)+'\n'});

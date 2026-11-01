@@ -1,5 +1,5 @@
 import {parseTemplates,type SourceTemplates} from './templates';
-import {defaultProblem,defaultSource} from './defaults';import {filePart,validateProblem} from './validate';import {parse} from './lpmake';import {testPatch,rulesOf} from './test-import';import type {Language,Problem,CompilerConfig} from './types';import type {CheckRecord} from './project-format';
+import {defaultProblem,defaultSource} from './defaults';import {filePart,validateProblem} from './validate';import {parse,ConfigError} from './lpmake';import {testPatch,rulesOf} from './test-import';import type {Language,Problem,CompilerConfig} from './types';import type {CheckRecord} from './project-format';
 export interface WorkspaceSnapshot{files:Record<string,string>;inheritDefaults:boolean}
 export interface WorkspaceFile{path:string;directory:boolean}
 export interface WorkspaceState{templates?:SourceTemplates;schemaVersion:2;mode:'project';labId:string;tests:Problem;inheritDefaults:boolean;starters?:Record<string,string>;activeFile?:string;openFiles?:string[];expanded?:string[];sidebarWidth?:number;sidebarCollapsed?:boolean;check?:CheckRecord}
@@ -25,7 +25,7 @@ export function parseWorkspacePackage(value:unknown):WorkspacePackage{
  if(p.build.inheritDefaults!==undefined&&typeof p.build.inheritDefaults!=='boolean')throw new Error('inheritDefaults应为布尔值');
  if(!Array.isArray(p.files)||!p.files.length)throw new Error('项目缺少files，请同时提供 LPMake.txt 和源码');
  const files=p.files.map((f:any)=>{const name=workspacePath(f?.path),content=f.content;if(typeof content!=='string')throw new Error('缺少文件内容：'+name);return {path:name,content};});
- uniquePaths(files.map((f:{path:string})=>f.path));const make=files.find((f:{path:string})=>f.path==='LPMake.txt');if(!make)throw new Error('项目缺少 LPMake.txt');parse(make.content);
+ uniquePaths(files.map((f:{path:string})=>f.path));const make=files.find((f:{path:string})=>f.path==='LPMake.txt');if(!make)throw new ConfigError('',0,'The project is missing LPMake.txt.','Include LPMake.txt in the project root.');parse(make.content);
  const tests=validateProblem({...defaultProblem(labId,''),...testPatch(p.tests??{},labId,''),labId,problemId:''});
  const templates=parseTemplates(p.templates);return {...(templates?{templates}:{}),schemaVersion:2,kind:'labpad.project',mode:'project',labId,build:{system:'lpmake',file:'LPMake.txt',inheritDefaults:p.build.inheritDefaults??true},files,tests};
 }
@@ -35,3 +35,5 @@ export function workspacePackage(labId:string,snapshot:WorkspaceSnapshot,tests:P
 export function effectiveCompiler(base:CompilerConfig,options?:ProjectBuildOptions):CompilerConfig{
  return !options||options.inheritDefaults?structuredClone(base):{...structuredClone(base),cArgs:[...options.cArgs],cppArgs:[...options.cppArgs],linkArgs:[...options.linkArgs]};
 }
+
+export interface WorkspaceEdit {action:'newFile'|'newFolder'|'rename';file:string;name:string;template?:boolean;syncReferences?:boolean}

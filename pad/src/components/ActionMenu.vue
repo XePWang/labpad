@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import {DropdownMenuRoot,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem,DropdownMenuSeparator} from 'reka-ui';
 defineProps<{label:string;items:{label:string;value:string;separator?:boolean}[];disabled?:boolean}>();
-const emit=defineEmits<{select:[value:string]}>();
+const emit=defineEmits<{select:[value:string];closeAutoFocus:[event:Event]}>();
 </script>
 <template>
  <DropdownMenuRoot>
   <DropdownMenuTrigger :disabled="disabled" class="action-menu-trigger"><span>{{label}}</span><svg class="menu-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" focusable="false"><path d="m3 5 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></DropdownMenuTrigger>
-  <DropdownMenuContent class="action-menu" align="end" :side-offset="6" :collision-padding="8">
+  <DropdownMenuContent @close-auto-focus="emit('closeAutoFocus',$event)" class="action-menu" align="end" :side-offset="6" :collision-padding="8">
    <template v-for="item in items" :key="item.value"><DropdownMenuSeparator v-if="item.separator" class="menu-separator"/><DropdownMenuItem class="action-menu-item" @select="emit('select',item.value)">{{item.label}}</DropdownMenuItem></template>
   </DropdownMenuContent>
  </DropdownMenuRoot>
 </template>
 <style>
 .action-menu{min-width:174px;padding:5px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 26px #0005;z-index:40;outline:none}
-.menu-separator{height:1px;margin:5px;background:var(--border)}\n.action-menu-item{padding:9px 13px;border-radius:3px;font-size:12px;cursor:default;outline:none;user-select:none}
+.menu-separator{height:1px;margin:5px;background:var(--border)}
+.action-menu-item{padding:9px 13px;border-radius:3px;font-size:12px;cursor:default;outline:none;user-select:none}
 .action-menu-item[data-highlighted]{background:var(--accent);color:#fff}
 .action-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .action-menu-trigger>span{display:block}.menu-chevron{display:block;flex-shrink:0;align-self:center}

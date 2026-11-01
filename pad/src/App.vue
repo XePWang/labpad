@@ -7,7 +7,7 @@ import ProjectSelect from './components/ProjectSelect.vue';
 import ZoomSelect from './components/ZoomSelect.vue';
 import BuildSettings from './components/BuildSettings.vue';
 import {parse,editArgument} from '../shared/lpmake';
-import type {WorkspaceFile,ProjectBuildOptions} from '../shared/workspace';
+import type {WorkspaceFile,WorkspaceEdit,ProjectBuildOptions} from '../shared/workspace';
 import CodeEditor from './components/CodeEditor.vue';
 import DebugTerminal from './components/DebugTerminal.vue';
 import OutputDiff from './components/OutputDiff.vue';
@@ -28,7 +28,7 @@ const fileBusy=ref(false),blocked=computed(()=>!!busy.value||fileBusy.value||!!e
 const busy=ref<'judge'|'debug'|null>(null),debugRunning=ref(false),bottomTab=ref<'output'|'debug'>('output');
 const logs=ref(''),error=ref(''),notice=ref(''),saveStatus=ref('已保存'),dirty=ref(false),ready=ref(false);
 const settingsOpen=ref(false),settingsSaving=ref(false),settingsMessage=ref(''),pathValidity=ref({data:true,c:true,cpp:true});
-const runningCases=ref<string[]>([]),selectedCases=ref<string[]>([]),problemStates=ref<Record<string,TestState>>({}),closedIds=ref<string[]>([]),browsingTabs=ref(false),compilationFailed=ref(false);
+const runningCases=ref<string[]>([]),selectedCases=ref<string[]>([]),problemStates=ref<Record<string,TestState>>({}),closedIds=ref<string[]>([]),compilationFailed=ref(false);
 const exportKind=ref<'source'|'project'|null>(null),exportCurrent=ref<Draft>(),exportBuffers=ref<Draft[]>([]),exportDialog=ref<InstanceType<typeof ExportDialog>>();
 let checkTimer:ReturnType<typeof setTimeout>|undefined;
 const results=ref<Record<string,CaseResult>>({}),diffOpen=ref<Record<string,boolean>>({}),finished=ref(false),phase=ref('准备就绪');
@@ -76,7 +76,7 @@ const compilerChoiceOpen=ref(false),compilerScanning=ref(false),detectedCompiler
 const workspaceMode=computed(()=>projects.value.find(p=>p.labId===draft.value?.problem.labId)?.mode==='project');
 const includedSources=ref<string[]|null>(null),membershipMessage=ref('');let membershipTimer:ReturnType<typeof setTimeout>|undefined;
 const fileEntries=ref<WorkspaceFile[]>([]),expanded=ref<string[]>([]),sidebarWidth=ref(190),sidebarCollapsed=ref(false),newMode=ref<'problem-set'|'project'>('problem-set');
-const fileDialog=ref<{action:string;file:string;name:string;language:'c'|'cpp';template?:boolean;lpmake?:string}>(),fileMessage=ref(''),fileSaving=ref(false),syncReferences=ref(true);
+const fileTree=ref<InstanceType<typeof FileTree>>();
 const buildSettings=ref<{source:string;revision:number}>(),buildDocument=ref('');
 const projectOptions=ref<ProjectBuildOptions>({inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]}),parameterScope=ref<'global'|'project'>('global');
 const projectCArgs=computed({get:()=>projectOptions.value.cArgs.join('\n'),set:v=>projectOptions.value.cArgs=v.split(/\r?\n/).filter(Boolean)});
@@ -92,7 +92,7 @@ function editTab(id:string,text:string){
  if(id===activeId.value){editor.value?.applyText(text);}else{tab.document.source=text;tab.revision++;tab.dirty=text!==tab.savedSource;tab.status=tab.dirty?'未保存':'已保存';revision++;invalidate();recordState();}
 }
 async function treeAction(value:string,file:string){
- if(value==='collapse'){sidebarCollapsed.value=true;return;}if(value==='collapseAll'){expanded.value=[];return;}
+ if(value==='collapseAll'){expanded.value=[];return;}
  if(value==='build'){await openBuildSettings();return;}
  if(value==='reveal'){await api.workspaceFileAction(draft.value!.problem.labId,'reveal',file);return;}
  if(value==='delete'){
@@ -102,32 +102,30 @@ async function treeAction(value:string,file:string){
   if(removed.some(t=>t.id===activeId.value)){activeId.value='';if(tabs.value[0])activateTab(tabs.value[0].id);}
   invalidate();recordState();return;
  }
- fileMessage.value='';syncReferences.value=true;
- let lpmake:string|undefined;if(value==='rename')lpmake=tabs.value.find(t=>t.document.file==='LPMake.txt')?.document.source??(await api.workspaceOpen(draft.value!.problem.labId,'LPMake.txt')).source;
- fileDialog.value={action:value,file,name:value==='rename'?file:(file?file+'/':'')+(value==='newFolder'?'新文件夹':'new.c'),language:'c',lpmake};
 }
-async function applyFileAction(){
- if(!fileDialog.value||fileSaving.value)return;fileSaving.value=true;fileMessage.value='';
- try{
-  const form=clone(fileDialog.value),lab=draft.value!.problem.labId;let changedMake=form.lpmake;
-  if(form.action==='rename'&&syncReferences.value&&changedMake){
+async function commitTreeEdit(form:WorkspaceEdit){
+ if(blocked.value)throw new Error('请等待当前任务完成');
+ try{await fileAction(async()=>{
+  const lab=draft.value!.problem.labId,originalMake=form.action==='rename'?(tabs.value.find(t=>t.document.file==='LPMake.txt')?.document.source??(await api.workspaceOpen(lab,'LPMake.txt')).source):undefined;
+  let changedMake=originalMake;
+  if(form.action==='rename'&&form.syncReferences&&changedMake){
    const calls=parse(changedMake).calls,counts=new Map<string,number>();
    for(const call of calls){const index=counts.get(call.name)??0;counts.set(call.name,index+1);
     if(!['add_files','remove_files','add_includedirs','add_linkdirs'].includes(call.name))continue;
     for(const [n,arg] of call.args.entries())if(arg.value===form.file||arg.value.startsWith(form.file+'/'))changedMake=editArgument(changedMake,call.name,index,n,form.name+arg.value.slice(form.file.length));
    }
   }
-  fileEntries.value=await api.workspaceFileAction(lab,form.action as 'newFile'|'newFolder'|'rename',form.action==='rename'?form.file:form.name,form.action==='rename'?form.name:undefined,form.action==='newFile'&&!form.template?'':undefined);
+  fileEntries.value=await api.workspaceFileAction(lab,form.action,form.action==='rename'?form.file:form.name,form.action==='rename'?form.name:undefined,form.action==='newFile'&&!form.template?'':undefined);
   if(form.action==='rename'){
+   expanded.value=expanded.value.map(file=>file===form.file||file.startsWith(form.file+'/')?form.name+file.slice(form.file.length):file);
    for(const tab of tabs.value)if(tab.document.file===form.file||tab.document.file?.startsWith(form.file+'/')){
     const file=form.name+tab.document.file.slice(form.file.length),loaded=await api.workspaceOpen(lab,file),oldId=tab.id;
     tab.document={...loaded,source:tab.document.source};tab.id=loaded.documentId!;if(activeId.value===oldId){activeId.value=tab.id;documentEpoch.value=tab.id;pauseSave=true;draft.value={...clone(tab.document),problem:clone(draft.value!.problem)};sourcePath.value=loaded.sourceFile??null;pauseSave=false;}
    }
-   if(changedMake!==form.lpmake){await openFile('LPMake.txt');editTab(activeId.value,changedMake!);}
+   if(changedMake!==originalMake){let makeTab=tabs.value.find(t=>t.document.file==='LPMake.txt');if(!makeTab){const document=await api.workspaceOpen(lab,'LPMake.txt');makeTab={id:document.documentId!,document:clone(document),savedSource:document.source,dirty:false,revision:0,status:'已保存'};tabs.value.push(makeTab);}editTab(makeTab.id,changedMake!);}
   }else if(form.action==='newFile')await openFile(form.name);
-  if(form.name.includes('/'))expanded.value=[...new Set([...expanded.value,form.name.slice(0,form.name.lastIndexOf('/'))])];
-  fileDialog.value=undefined;invalidate();recordState();
- }catch(e){fileMessage.value=message(e);}finally{fileSaving.value=false;}
+  const parts=form.name.split('/');expanded.value=[...new Set([...expanded.value,...parts.slice(0,-1).map((_,i)=>parts.slice(0,i+1).join('/'))])];invalidate();recordState();
+ });}catch(error){throw new Error(message(error));}
 }
 async function openBuildSettings(){await openFile('LPMake.txt');const tab=activeTab.value!;buildDocument.value=tab.id;buildSettings.value={source:tab.document.source,revision:tab.revision};}
 function applyBuildSettings(text:string,version:number){
@@ -214,7 +212,7 @@ function replaceDraft(value:LoadedDraft,file:string|null=null,documents:LoadedDr
  activeId.value=value.documentId??tabs.value[0]?.id??'';documentEpoch.value=activeId.value;
  draft.value={...clone(value),documentId:activeId.value};sourcePath.value=file??value.sourceFile??null;dirty.value=false;rulesDirty.value=false;savedRules=JSON.stringify(value.problem);revision++;
  if(config.value){config.value.currentLab=value.problem.labId;config.value.currentProblem=value.problem.problemId;config.value.language=value.language;}
- selectedCases.value=value.problem.testCases.map(t=>t.id);closedIds.value=[];browsingTabs.value=true;
+ selectedCases.value=value.problem.testCases.map(t=>t.id);closedIds.value=[];
  if(value.warning)error.value=value.warning;results.value={};diffOpen.value={};finished.value=false;saveStatus.value='已保存';phase.value='准备就绪';pauseSave=false;recordState();queueChecks();
 }
 async function loadWorkspace(value:LoadedDraft){if(value.file){applyBootstrap(await api.bootstrap());return;}replaceDraft(value,null,await api.openDocuments(value.problem.labId,value.problem.problemId,value.language));}
@@ -236,7 +234,8 @@ async function beforeChange(){
 async function chooseSave(value:string){await(value==='all'?saveAll():saveNow());}
 async function tabAction(value:string,id=activeId.value){
  const index=tabs.value.findIndex(t=>t.id===id),tab=tabs.value[index];if(!tab)return;
- if(value==='copyPath'||value==='copyRelativePath'){if(tab.document.sourceFile)await api.copyPath(tab.document.sourceFile,value==='copyRelativePath');return;}
+ if(value==='reveal'){if(tab.document.sourceFile)await api.revealSource(tab.document.sourceFile);return;}
+ if(value==='copyPath'||value==='copyRelativePath'){if(value==='copyRelativePath'&&tab.document.file)await api.copyText(tab.document.file);else if(tab.document.sourceFile)await api.copyPath(tab.document.sourceFile,value==='copyRelativePath');return;}
  if(value==='version'){const created=await api.newVersion({...clone(tab.document),problem:clone(draft.value!.problem)});addDocument(created);return;}
  let targets=value==='others'?tabs.value.filter(t=>t.id!==id):value==='right'?tabs.value.slice(index+1):value==='saved'?tabs.value.filter(t=>!t.dirty):value==='all'?tabs.value:[tab];
  if(!targets.length)return;const closesAll=targets.length===tabs.value.length;
@@ -282,8 +281,9 @@ function applyBootstrap(state:Awaited<ReturnType<typeof api.bootstrap>>){
   replaceDraft(state.draft,state.sourcePath,state.documents);ready.value=true;if(state.warning)error.value=state.warning;
 }
 async function reload(){if(await beforeChange())applyBootstrap(await api.reloadDocument());}
+function keepTreeEditFocus(event:Event){if(document.querySelector('.tree-inline-edit'))event.preventDefault();}
 async function newSource(value:string){
- if(value!=='c'&&value!=='cpp')return;if(workspaceMode.value){fileMessage.value='';fileDialog.value={action:'newFile',file:'src',name:'src/new.'+(value==='c'?'c':'cpp'),language:value,template:true};return;}
+ if(value!=='c'&&value!=='cpp')return;if(workspaceMode.value){sidebarCollapsed.value=false;await nextTick();await fileTree.value?.newSource(value);return;}
  const created=await api.newVersion({...snapshot(),documentId:undefined,language:value},true);
  addDocument(created);phase.value='准备就绪';flashFooter('已新建 · '+created.sourceFile);
 }
@@ -303,7 +303,7 @@ async function importIO(){
 }
 async function formatCode(){
  if(formatting.value||blocked.value||!canFormat.value)return;
- browsingTabs.value=false;formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
+ formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
  try{
   const formatted=await api.formatCode(draft.value!.source,language,size);
   if(id!==revision||size!==config.value!.indentSize||language!==draft.value!.language){notice.value='代码或缩进设置已改变，请重新格式化';return;}
@@ -398,7 +398,7 @@ function installShortcuts(){
  const bindings:Record<string,(event:KeyboardEvent)=>void>={};
  prefixes=Object.values(config.value?.shortcuts??{}).flat().filter(key=>key.includes(' ')).map(key=>parseKeybinding(key)[0]);
  for(const [id,keys] of Object.entries(config.value?.shortcuts??{}))for(const key of keys)bindings[key]=event=>{
-  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value||fileDialog.value||buildSettings.value)return;
+  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value||buildSettings.value||(event.target as Element)?.closest?.('.tree-inline-edit'))return;
   const inTerminal=(event.target as Element)?.closest?.('.debug-terminal');
   if(id==='interrupt'){
    if(!inTerminal)return;event.preventDefault();event.stopPropagation();
@@ -450,19 +450,19 @@ onBeforeUnmount(()=>{clearTimeout(viewTimer);clearTimeout(membershipTimer);clear
 <template>
  <div class="app-shell" :data-theme="config?.theme||'dark'">
   <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span></div><span class="version">v{{version||'0.1.0-dev.8'}}</span></header>
-  <div v-if="error" class="alert error" role="alert"><span>{{error}}</span><button @click="error=''">关闭</button></div>
+  <div v-if="error" class="alert error" role="alert"><span :class="{'source-diagnostic':error.startsWith('LPMake.txt:')}">{{error}}</span><button @click="error=''">关闭</button></div>
   <div v-if="!ready" class="loading"><h2>正在准备工作区</h2><p>加载配置、源码与本地编译器。</p></div>
   <template v-if="ready&&draft&&config">
    <section class="toolbar">
     <div class="project-select"><label>实验项目<ProjectSelect :value="draft.problem.labId" :projects="projects" :disabled="blocked" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectLab(value)))" @delete="value=>action(()=>deleteLab(value))"/></label><template v-if="!workspaceMode"><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label></template><div class="run-actions"><button class="primary" :disabled="blocked||(!activeTab&&!workspaceMode)||(!!draft.problem.testCases.length&&!selectedCases.length)" :title="'编译并运行（'+shortcutLabel('run')+'）'" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
-    <div class="toolbar-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'},{label:'导出当前测试点',value:'currentTests',separator:true},{label:'导出项目测试点',value:'projectTests'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
+    <div class="toolbar-actions"><ActionMenu label="新建源码" @close-auto-focus="keepTreeEditFocus" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>workspaceMode?newSource($event):fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'},{label:'导出当前测试点',value:'currentTests',separator:true},{label:'导出项目测试点',value:'projectTests'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
    </section>
    <Splitpanes class="work-layout" horizontal :maximize-panes="false" @resized="resized('outputPercent',$event)"><Pane :size="100-config.layout.outputPercent" :min-size="35" :max-size="88"><Splitpanes class="workspace" :maximize-panes="false" @resized="resized('editorPercent',$event)">
     <Pane class="editor-pane" :size="config.layout.editorPercent" :min-size="20" :max-size="80">
-    <div class="editor-workspace"><FileTree v-if="workspaceMode&&!sidebarCollapsed" :style="{width:sidebarWidth+'px'}" :files="fileEntries" :expanded="expanded" :active="draft.file||''" :disabled="blocked" :theme="config.theme" @open="file=>action(()=>openFile(file))" @expand="expanded=$event" @resize="sidebarWidth=$event" @action="(value,file)=>action(()=>treeAction(value,file))"/><div class="editor-content"><button v-if="workspaceMode&&sidebarCollapsed" class="sidebar-toggle" @click="sidebarCollapsed=false">显示文件 ›</button>
-<SourceTabs v-if="tabs.length" :workspace="workspaceMode" :can-format="canFormat" :format-visible="cursor.focused&&!browsingTabs" :formatting="formatting" @browse="browsingTabs=true" @format="action(formatCode)" :tabs="tabs.map(t=>({id:t.id,name:tabName(t.document),path:t.document.sourceFile||'',dirty:t.dirty,status:t.id===activeId?saveStatus:t.status}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab($event)" @action="(value,id)=>action(()=>tabAction(value,id))"/>
-    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :file="draft.file" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="fileBusy||!!exportKind" @cursor="reportCursor" @pointerdown="browsingTabs=false" @keydown.capture="browsingTabs=false"/>
-    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><button :disabled="blocked" @click="action(recentSource)">最近源码</button></div></div>
+    <div class="editor-workspace"><FileTree ref="fileTree" :commit="commitTreeEdit" v-if="workspaceMode&&!sidebarCollapsed" :style="{width:sidebarWidth+'px'}" :files="fileEntries" :expanded="expanded" :active="draft.file||''" :disabled="blocked" :theme="config.theme" @open="file=>action(()=>openFile(file))" @expand="expanded=$event" @resize="sidebarWidth=$event" @action="(value,file)=>action(()=>treeAction(value,file))"/><div class="editor-content">
+<SourceTabs v-if="tabs.length||workspaceMode" :workspace="workspaceMode" :sidebar-collapsed="sidebarCollapsed" @sidebar="sidebarCollapsed=!sidebarCollapsed" :can-format="tabs.length>0&&canFormat" :formatting="formatting" @format="action(formatCode)" :tabs="tabs.map(t=>({id:t.id,name:tabName(t.document),path:t.document.sourceFile||'',dirty:t.dirty,status:t.id===activeId?saveStatus:t.status}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab($event)" @action="(value,id)=>action(()=>tabAction(value,id))"/>
+    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :file="draft.file" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="fileBusy||!!exportKind" @cursor="reportCursor"/>
+    <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" @close-auto-focus="keepTreeEditFocus" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>workspaceMode?newSource($event):fileAction(()=>newSource($event)))"/><button :disabled="blocked" @click="action(recentSource)">最近源码</button></div></div>
     <div class="editor-status"><span v-if="inactiveSource" class="build-excluded" title="检查 LPMake 的 add_files 与 remove_files">当前源码未参与构建</span><span v-else-if="workspaceMode&&membershipMessage" class="build-excluded" :title="membershipMessage">请检查 LPMake</span><span v-else>{{draft.language==='c'?'C':'C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存'}}</span></div>
    </div></div></Pane>
     <Pane class="cases-pane" :size="100-config.layout.editorPercent" :min-size="20" :max-size="80"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><ResultHelp :theme="config.theme"/><button v-if="failedIds.length" :disabled="blocked" @click="locateFailed">定位未通过</button><button v-if="failedIds.length" :disabled="blocked" @click="action(()=>run(failedIds))">重测未通过</button><button :disabled="blocked" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="blocked" title="重新读取已保存的源码与题目规则" @click="action(()=>fileAction(reload))">重新加载</button><button :disabled="blocked" @click="addCase">＋ 新增</button></div></div>
@@ -501,8 +501,8 @@ onBeforeUnmount(()=>{clearTimeout(viewTimer);clearTimeout(membershipTimer);clear
    </section>
   </div>
   <div v-if="compilerChoiceOpen" class="modal-backdrop compiler-picker-backdrop"><section ref="compilerDialog" tabindex="-1" class="compiler-picker" role="dialog" aria-modal="true" aria-labelledby="compiler-picker-title" @keydown.esc.stop.prevent="compilerChoiceOpen=false"><h2 id="compiler-picker-title">自动检测编译器</h2><template v-if="detectedCompilers.length"><p>选择编译器后，自动填写类型、路径和默认参数；保存设置后生效。</p><div class="compiler-options"><label v-for="candidate in detectedCompilers" :key="candidate.id" class="compiler-option"><input v-model="selectedCompiler" type="radio" name="detected-compiler" :value="candidate.id" :aria-label="candidate.name+' '+candidate.compiler.cPath"><span><strong>{{candidate.name}}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong><span>{{candidate.version}}</span><code>{{candidate.compiler.cPath}}</code><small v-if="candidate.target">{{candidate.target}}</small></span></label></div></template><p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p><div class="compiler-picker-actions"><button @click="compilerChoiceOpen=false">{{detectedCompilers.length?'取消':'关闭'}}</button><button v-if="detectedCompilers.length" class="primary" :disabled="!selectedCompiler" @click="useDetectedCompiler">使用此编译器</button></div></section></div>
-  <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label v-if="newKind==='lab'">项目类型<select v-model="newMode" aria-label="项目类型"><option value="problem-set">题目集 · 单文件练习</option><option value="project">多文件项目 · 一个程序</option></select></label><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
-  <div v-if="fileDialog" class="modal-backdrop" @keydown.esc.stop.prevent="!fileSaving&&(fileDialog=undefined)"><section class="create-dialog" role="dialog" aria-modal="true" aria-label="项目文件"><h2>{{fileDialog.action==='rename'?'重命名':fileDialog.action==='newFolder'?'新建文件夹':'新建项目文件'}}</h2><label>项目内路径<input v-model="fileDialog.name" aria-label="项目内路径" :disabled="fileSaving" @keydown.enter="applyFileAction"></label><p>使用 / 分隔文件夹，例如 src/stack.c 或 include/stack.h。</p><label v-if="fileDialog.action==='rename'" class="checkbox-field"><input v-model="syncReferences" type="checkbox">同步 LPMake 中对应的显式路径引用</label><p v-if="fileMessage" class="field-error" role="alert">{{fileMessage}}</p><div class="create-actions"><button :disabled="fileSaving" @click="fileDialog=undefined">取消</button><button class="primary" :disabled="fileSaving||!fileDialog.name" @click="applyFileAction">确定</button></div></section></div>
+  <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label v-if="newKind==='lab'">项目类型<select v-model="newMode" aria-label="项目类型"><option value="problem-set">题集 · 单文件练习</option><option value="project">项目 · 一个程序</option></select></label><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
+
    <BuildSettings v-if="buildSettings" :source="buildSettings.source" :revision="buildSettings.revision" @close="buildSettings=undefined" @apply="applyBuildSettings"/>
 <ExportDialog v-if="exportKind&&exportCurrent&&config" ref="exportDialog" :workspace="workspaceMode" :kind="exportKind" :current="exportCurrent" :buffers="exportBuffers" :theme="config.theme" :student-id="config.studentId" :suspended="settingsOpen" @close="exportKind=null" @settings="openSettings" @done="exportDone"/>
  </div>

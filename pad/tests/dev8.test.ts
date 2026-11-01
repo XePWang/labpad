@@ -11,7 +11,7 @@ test('LPMake list edits retain comments, repeated calls, trailing commas and und
  }
  const inserted=editList(text,'add_cflags',['-Wall']);assert.deepEqual(parse(inserted).spec.cflags,['-Wall']);assert.deepEqual(comments(inserted),comments(text));
  const standard=editSingle(text,'set_standard','c17','c');assert.deepEqual(parse(standard).spec.standards,{c:'c17',cpp:'c++20'});
- assert.throws(()=>editSingle(text,'target',undefined));assert.throws(()=>parse('target("a")\nadd_defines(" BAD")'),/LPMake.txt 2:/);
+ assert.throws(()=>editSingle(text,'target',undefined));assert.throws(()=>parse('target("a")\nadd_defines(" BAD")'),/LPMake\.txt:2:13: error:/);
 });
 test('workspace paths reject escapes and cross-platform conflicts',()=>{
  for(const p of ['../x.c','C:/x.c','/a.c','src\\x.c','src/NUL.c','.git/config','src/a:bad.c'])assert.throws(()=>workspacePath(p));
