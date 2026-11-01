@@ -32,6 +32,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
  try{
   await prepare();await settings();assert.equal(await button('自动检测').count(),0);await select('编译器使用方式').selectOption('custom');
   await select('编译器类型').selectOption('clang');await input('C 编译器路径').fill(path.join(temporary,'missing'));
+  await page.locator('summary').filter({hasText:/^本机默认参数$/}).click();
   await input('C 参数').fill('-invalid-c-option');await input('C++ 参数').fill('-invalid-cpp-option');await input('链接参数').fill('-invalid-link-option');
   await detect();const choice=page.getByRole('radio',{name:'Zig '+installed,exact:true});await choice.waitFor();
   assert.equal(await button('使用此编译器').isDisabled(),true);
@@ -41,6 +42,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
   await button('取消').last().click();await dialog().waitFor({state:'hidden'});assert.equal(await select('编译器类型').inputValue(),'clang');assert.equal(await input('C 参数').inputValue(),'-invalid-c-option');
   assert.equal((await snapshot()).config.compiler.mode,'builtin');
   pass('custom-mode detection lists real installed compilers, requires manual selection, excludes bundled Zig and cancels without changes');
+  await detect();await choice.check();await dialog().getByRole('checkbox',{name:'同时使用推荐参数（更新本机默认参数）',exact:true}).uncheck();await button('使用此编译器').click();await dialog().waitFor({state:'hidden'});assert.equal(await input('C 参数').inputValue(),'-invalid-c-option');assert.equal(await input('C++ 参数').inputValue(),'-invalid-cpp-option');assert.equal(await input('链接参数').inputValue(),'-invalid-link-option');pass('detected compiler can update only type and paths while preserving custom machine argument arrays');
   await detect();await choice.check();await button('使用此编译器').click();await dialog().waitFor({state:'hidden'});
   assert.equal(await select('编译器类型').inputValue(),'zig');assert.equal(await input('C 编译器路径').inputValue(),installed);assert.equal(await input('C++ 编译器路径').inputValue(),installed);
   assert.equal(await input('C 参数').inputValue(),'-std=c17\n-O2\n-Wall\n-Wextra');assert.equal(await input('C++ 参数').inputValue(),'-std=c++20\n-O2\n-Wall\n-Wextra');assert.equal(await input('链接参数').inputValue(),'-lm');

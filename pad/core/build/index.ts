@@ -1,3 +1,4 @@
+import {draftPlan,buildOptionsSignature} from './plan';
 import {mkdir,readFile,writeFile,rm,cp,mkdtemp,readdir,link} from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';import {performance} from 'node:perf_hooks';
 import type {Compiler,Prepared} from '../compiler';import {runProcess} from '../process';import {parse,ConfigError} from '../../shared/lpmake';import {resolve} from './resolve';import {workspacePath,uniquePaths,type WorkspaceSnapshot} from '../../shared/workspace';import type {CompilerConfig,Draft,Compilation} from '../../shared/types';
 export async function compileDraft(compiler:Compiler,draft:Draft,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
@@ -18,7 +19,7 @@ export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapsho
  let release:(()=>Promise<void>)|undefined;
  try{
   release=await compiler.cache.acquire(signal);await compiler.cache.trim();signal?.throwIfAborted();
-  const identity=[await compiler.identity(config,'c'),await compiler.identity(config,'cpp')],key=createHash('sha256').update(JSON.stringify([labId,identity,config])).digest('hex').slice(0,24);
+  const input:Draft={source:'',language:'c',problem:{labId} as Draft['problem'],workspace:snapshot},logical=draftPlan(input,config),identity=await compiler.identityFor(input,config),signature=buildOptionsSignature(input,config),effective={driver:signature.driver,units:[...new Set(logical.units.map(u=>JSON.stringify([u.language,u.args])))],linkLanguage:logical.linkLanguage,linkArgs:logical.linkArgs},key=createHash('sha256').update(JSON.stringify([labId,identity,effective])).digest('hex').slice(0,24);
   const buildRoot=path.join(compiler.cache.directory,'projects',key),root=path.join(buildRoot,'snapshot'),output=path.join(buildRoot,process.platform==='win32'?'program.exe':'program');
   await mkdir(buildRoot,{recursive:true});await writeFile(path.join(buildRoot,'owner.json'),JSON.stringify({labId}),'utf8');await rm(output,{force:true});
   await syncSnapshot(root,snapshot.files);

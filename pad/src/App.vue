@@ -6,6 +6,7 @@ import FileTree from './components/FileTree.vue';
 import ProjectSelect from './components/ProjectSelect.vue';
 import ZoomSelect from './components/ZoomSelect.vue';
 import BuildSettings from './components/BuildSettings.vue';
+import ProblemBuildSettings from './components/ProblemBuildSettings.vue';
 import {parse,editArgument} from '../shared/lpmake';
 import type {WorkspaceFile,WorkspaceEdit,ProjectBuildOptions} from '../shared/workspace';
 import CodeEditor from './components/CodeEditor.vue';
@@ -77,11 +78,11 @@ const workspaceMode=computed(()=>projects.value.find(p=>p.labId===draft.value?.p
 const includedSources=ref<string[]|null>(null),membershipMessage=ref('');let membershipTimer:ReturnType<typeof setTimeout>|undefined;
 const fileEntries=ref<WorkspaceFile[]>([]),expanded=ref<string[]>([]),sidebarWidth=ref(190),sidebarCollapsed=ref(false),newMode=ref<'problem-set'|'project'>('problem-set');
 const fileTree=ref<InstanceType<typeof FileTree>>();
-const buildSettings=ref<{source:string;revision:number}>(),buildDocument=ref('');
-const projectOptions=ref<ProjectBuildOptions>({inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]}),parameterScope=ref<'global'|'project'>('global');
-const projectCArgs=computed({get:()=>projectOptions.value.cArgs.join('\n'),set:v=>projectOptions.value.cArgs=v.split(/\r?\n/).filter(Boolean)});
-const projectCppArgs=computed({get:()=>projectOptions.value.cppArgs.join('\n'),set:v=>projectOptions.value.cppArgs=v.split(/\r?\n/).filter(Boolean)});
-const projectLinkArgs=computed({get:()=>projectOptions.value.linkArgs.join('\n'),set:v=>projectOptions.value.linkArgs=v.split(/\r?\n/).filter(Boolean)});
+const buildSettings=ref<{source:string;revision:number;optionsRevision:number;inheritDefaults:boolean}>(),buildDocument=ref(''),buildConflict=ref('');
+const buildInheritance=ref(true),savedBuildInheritance=ref(true),buildOptionsRevision=ref(0),problemBuildOpen=ref(false),useRecommended=ref(true);
+let buildReturnFocus:HTMLElement|undefined;
+const projectMenu=ref<InstanceType<typeof ProjectSelect>>();
+const projectOptions=ref<ProjectBuildOptions>({inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]});
 const inactiveSource=computed(()=>workspaceMode.value&&draft.value?.file&&/\.(c|cpp|cc|cxx)$/i.test(draft.value.file)&&includedSources.value!==null&&!includedSources.value.includes(draft.value.file));
 const canFormat=computed(()=>!workspaceMode.value||!!draft.value?.file&&/\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(draft.value.file));
 let viewTimer:ReturnType<typeof setTimeout>|undefined;
@@ -89,11 +90,11 @@ async function refreshFiles(){if(workspaceMode.value)fileEntries.value=await api
 async function openFile(file:string){const found=tabs.value.find(t=>t.document.file===file);if(found){activateTab(found.id);return;}addDocument(await api.workspaceOpen(draft.value!.problem.labId,file));}
 function editTab(id:string,text:string){
  const tab=tabs.value.find(t=>t.id===id);if(!tab)return;
- if(id===activeId.value){editor.value?.applyText(text);}else{tab.document.source=text;tab.revision++;tab.dirty=text!==tab.savedSource;tab.status=tab.dirty?'未保存':'已保存';revision++;invalidate();recordState();}
+ if(id===activeId.value){editor.value?.applyText(text);}else{tab.document.source=text;tab.revision++;tab.dirty=tabDirty(tab);tab.status=tab.dirty?'未保存':'已保存';revision++;invalidate();recordState();}
 }
 async function treeAction(value:string,file:string){
  if(value==='collapseAll'){expanded.value=[];return;}
- if(value==='build'){await openBuildSettings();return;}
+ if(value==='build'){await openExperimentBuild();return;}
  if(value==='reveal'){await api.workspaceFileAction(draft.value!.problem.labId,'reveal',file);return;}
  if(value==='delete'){
   const files=await api.workspaceFileAction(draft.value!.problem.labId,'delete',file);fileEntries.value=files;
@@ -127,18 +128,41 @@ async function commitTreeEdit(form:WorkspaceEdit){
   const parts=form.name.split('/');expanded.value=[...new Set([...expanded.value,...parts.slice(0,-1).map((_,i)=>parts.slice(0,i+1).join('/'))])];invalidate();recordState();
  });}catch(error){throw new Error(message(error));}
 }
-async function openBuildSettings(){await openFile('LPMake.txt');const tab=activeTab.value!;buildDocument.value=tab.id;buildSettings.value={source:tab.document.source,revision:tab.revision};}
-function applyBuildSettings(text:string,version:number){
- const tab=tabs.value.find(t=>t.id===buildDocument.value);if(!tab||tab.revision!==version){error.value='LPMake已变化，请重新打开构建设置。';return;}
- editTab(tab.id,text);buildSettings.value=undefined;
+function tabDirty(tab:SourceTab){return tab.document.source!==tab.savedSource||(tab.document.file==='LPMake.txt'&&buildInheritance.value!==savedBuildInheritance.value);}
+function refreshDirty(){
+ for(const tab of tabs.value){tab.dirty=tabDirty(tab);if(tab.status!=='保存中…')tab.status=tab.dirty?'未保存':'已保存';}
+ dirty.value=rulesDirty.value||tabs.value.some(t=>t.dirty);saveStatus.value=activeTab.value?.status??(dirty.value?'未保存':'已保存');
 }
+function withBuildOptions(value:Draft):Draft{return workspaceMode.value?{...value,workspaceBuild:{inheritDefaults:buildInheritance.value}}:value;}
+function scheduleSave(){clearTimeout(saveTimer);if(dirty.value&&config.value?.saveMode==='auto'&&!fileBusy.value)saveTimer=setTimeout(()=>void action(saveAll),350);}
+async function openBuildSettings(){
+ await openFile('LPMake.txt');const tab=activeTab.value!;buildDocument.value=tab.id;buildConflict.value='';
+ buildSettings.value={source:tab.document.source,revision:tab.revision,optionsRevision:buildOptionsRevision.value,inheritDefaults:buildInheritance.value};
+}
+async function openExperimentBuild(lab=draft.value?.problem.labId??''){
+ if(blocked.value||!lab)return;projectMenu.value?.closeMenus();buildReturnFocus=document.activeElement instanceof HTMLElement&&!document.activeElement.closest('[role="menuitem"],[role="option"]')?document.activeElement:document.querySelector<HTMLElement>('[aria-label="实验项目"]')??undefined;
+ if(lab!==draft.value?.problem.labId){await fileAction(()=>selectLab(lab));if(lab!==draft.value?.problem.labId)return;}
+ if(workspaceMode.value)await openBuildSettings();else{projectOptions.value=await api.projectBuildOptions(lab);problemBuildOpen.value=true;}
+}
+function applyBuildSettings(text:string,inherit:boolean,version:number,optionVersion:number){
+ const tab=tabs.value.find(t=>t.id===buildDocument.value);
+ if(!tab||tab.revision!==version||buildOptionsRevision.value!==optionVersion){buildConflict.value='构建配置已变化，请保留本次内容，重新打开构建设置核对。';return;}
+ const changed=text!==tab.document.source||inherit!==buildInheritance.value;
+ if(inherit!==buildInheritance.value){buildInheritance.value=inherit;buildOptionsRevision.value++;}
+ if(text!==tab.document.source)editTab(tab.id,text);
+ refreshDirty();buildSettings.value=undefined;
+ if(changed){revision++;recordState();invalidate();scheduleSave();}
+}
+async function previewBuild(source:string,inherit:boolean){return api.buildPreview({...snapshot(),file:'LPMake.txt',source,workspaceBuild:{inheritDefaults:inherit}});}
+async function previewProblemBuild(options:ProjectBuildOptions){return api.buildPreview(snapshot(),options);}
+async function saveProblemBuild(options:ProjectBuildOptions){await api.saveProjectBuildOptions(draft.value!.problem.labId,options);projectOptions.value=clone(options);revision++;queueChecks();notice.value='构建设置已保存';}
 async function deleteLab(lab:string){
  if(!await api.deleteProject(lab))return;const current=draft.value!.problem.labId===lab;projects.value=await api.projects();if(current)applyBootstrap(await api.bootstrap());notice.value='已删除项目：'+lab;
 }
 const newKind=ref<'lab'|'problem'|null>(null),newName=ref(''),newMessage=ref(''),newSaving=ref(false);
 let pauseSave=true,revision=0,saveTail:Promise<unknown>=Promise.resolve(),saveTimer:ReturnType<typeof setTimeout>|undefined;
 const disposers:(()=>void)[]=[];
-const snapshot=()=>clone(draft.value!);
+const snapshot=()=>withBuildOptions(clone(draft.value!));
 const passed=computed(()=>Object.values(results.value).filter(c=>c.verdict==='AC').length);
 const problems=computed(()=>projects.value.find(p=>p.labId===draft.value?.problem.labId)?.problems??[]);
 function tabName(document:LoadedDraft){
@@ -163,7 +187,7 @@ function queueChecks(){clearTimeout(checkTimer);checkTimer=setTimeout(()=>void r
 async function refreshChecks(){
  if(!draft.value||!activeId.value||busy.value)return;
  const d=snapshot(),epoch=revision;
- const state=await api.checkState(d),states=await api.problemStates(d,tabs.value.map(t=>({...clone(t.document),problem:clone(d.problem)})));
+ const state=await api.checkState(d),states=await api.problemStates(d,tabs.value.map(t=>(withBuildOptions({...clone(t.document),problem:clone(d.problem)}))));
  if(revision!==epoch||draft.value.documentId!==d.documentId)return;
  results.value=Object.fromEntries(state.cases.map(c=>[c.id,c]));finished.value=state.cases.length>0;problemStates.value=states;
 }
@@ -175,24 +199,26 @@ async function recentSource(){
 function recordState(){
  if(!draft.value)return;
  api.documentState(snapshot(),dirty.value);
- api.workspaceState(tabs.value.filter(t=>t.dirty||rulesDirty.value).map(t=>({...clone(t.document),problem:clone(draft.value!.problem)})),rulesDirty.value||tabs.value.some(t=>t.dirty));
+ api.workspaceState(tabs.value.filter(t=>t.dirty||rulesDirty.value).map(t=>(withBuildOptions({...clone(t.document),problem:clone(draft.value!.problem)}))),rulesDirty.value||tabs.value.some(t=>t.dirty));
 }
-function enqueueSave(value:Draft,id:number){
+function enqueueSave(input:Draft,id:number){
+ const value=withBuildOptions(input);
  const tab=tabs.value.find(t=>t.id===value.documentId);if(!tab)return Promise.reject(new Error('请先新建或导入源码'));
  tab.status='保存中…';if(tab.id===activeId.value)saveStatus.value=tab.status;
  const task=saveTail.catch(()=>{}).then(()=>api.saveDraft(value)).then(async result=>{
   const current=tabs.value.find(t=>t.id===value.documentId);
   if(current){
    current.savedSource=result.source;current.document.sourceFile=result.path;
+   if(current.document.file==='LPMake.txt'&&value.workspaceBuild)savedBuildInheritance.value=result.workspaceBuild?.inheritDefaults??value.workspaceBuild.inheritDefaults;
    if(current.revision===id||current.document.source===result.source){
-    current.document.source=result.source;current.dirty=false;current.status='已保存';
+    current.document.source=result.source;current.dirty=tabDirty(current);current.status=current.dirty?'未保存':'已保存';
     if(activeId.value===current.id){
      pauseSave=true;editor.value?.applyText(result.source);draft.value!.source=result.source;sourcePath.value=result.path;pauseSave=false;
     }
-   }else{current.dirty=current.document.source!==result.source;current.status=current.dirty?'未保存':'已保存';}
+   }else{current.dirty=tabDirty(current);current.status=current.dirty?'未保存':'已保存';}
   }
   if(JSON.stringify(value.problem)===JSON.stringify(draft.value!.problem)){savedRules=JSON.stringify(value.problem);rulesDirty.value=false;}
-  dirty.value=!!activeTab.value?.dirty||rulesDirty.value;saveStatus.value=activeTab.value?.status??'已保存';recordState();
+  refreshDirty();recordState();
   if(result.formatWarning)error.value=result.formatWarning;
   flashFooter('已保存 · '+result.path);projects.value=await api.projects();return result.path;
  }).catch(e=>{if(tab){tab.status='保存失败';tab.dirty=true;}saveStatus.value=activeTab.value?.status??'保存失败';error.value=message(e);recordState();throw e;});
@@ -201,13 +227,14 @@ function enqueueSave(value:Draft,id:number){
 watch(draft,()=>{
  if(pauseSave||!draft.value)return;
  revision++;const tab=activeTab.value;
- if(tab){tab.document={...clone(draft.value),sourceFile:sourcePath.value??undefined,name:tab.document.name,sourceEncoding:tab.document.sourceEncoding};tab.revision++;tab.dirty=tab.document.source!==tab.savedSource;tab.status=tab.dirty?'未保存':'已保存';}
+ if(tab){tab.document={...clone(draft.value),sourceFile:sourcePath.value??undefined,name:tab.document.name,sourceEncoding:tab.document.sourceEncoding};tab.revision++;tab.dirty=tabDirty(tab);tab.status=tab.dirty?'未保存':'已保存';}
  rulesDirty.value=JSON.stringify(draft.value.problem)!==savedRules;
- dirty.value=!!tab?.dirty||rulesDirty.value;saveStatus.value=dirty.value?'未保存':'已保存';footerPulse.value='';recordState();invalidate();clearTimeout(saveTimer);
+ refreshDirty();footerPulse.value='';recordState();invalidate();clearTimeout(saveTimer);
  if(config.value?.saveMode==='auto'&&!fileBusy.value){saveTimer=setTimeout(()=>void action(saveAll),350);}
 },{deep:true,flush:'sync'});
 function replaceDraft(value:LoadedDraft,file:string|null=null,documents:LoadedDraft[]=[value]){
- clearTimeout(saveTimer);pauseSave=true;const unique=new Map(documents.map(d=>[d.documentId!,d]));if(value.documentId)unique.set(value.documentId,value);
+ clearTimeout(saveTimer);pauseSave=true;buildInheritance.value=value.workspaceBuild?.inheritDefaults??true;savedBuildInheritance.value=buildInheritance.value;buildOptionsRevision.value++;
+ const unique=new Map(documents.map(d=>[d.documentId!,d]));if(value.documentId)unique.set(value.documentId,value);
  tabs.value=[...unique.values()].map(d=>({id:d.documentId!,document:clone(d),savedSource:d.source,dirty:false,revision:0,status:'已保存'}));
  activeId.value=value.documentId??tabs.value[0]?.id??'';documentEpoch.value=activeId.value;
  draft.value={...clone(value),documentId:activeId.value};sourcePath.value=file??value.sourceFile??null;dirty.value=false;rulesDirty.value=false;savedRules=JSON.stringify(value.problem);revision++;
@@ -219,7 +246,7 @@ async function loadWorkspace(value:LoadedDraft){if(value.file){applyBootstrap(aw
 function activateTab(id:string,focus=true){
  if(blocked.value||id===activeId.value)return;const tab=tabs.value.find(t=>t.id===id);if(!tab)return;
  clearTimeout(saveTimer);pauseSave=true;const problem=clone(draft.value!.problem);activeId.value=id;draft.value={...clone(tab.document),problem};sourcePath.value=tab.document.sourceFile??null;documentEpoch.value=id;
- dirty.value=tab.dirty||rulesDirty.value;saveStatus.value=dirty.value?'未保存':tab.status;revision++;config.value!.language=tab.document.language;pauseSave=false;invalidate();recordState();
+ refreshDirty();revision++;config.value!.language=tab.document.language;pauseSave=false;invalidate();recordState();
  void action(()=>api.activateDocument(id));if(focus)nextTick(()=>editor.value?.focus());
  if(config.value?.saveMode==='auto'&&(tabs.value.some(t=>t.dirty)||rulesDirty.value))saveTimer=setTimeout(()=>void action(saveAll),350);
 }
@@ -241,7 +268,8 @@ async function tabAction(value:string,id=activeId.value){
  if(!targets.length)return;const closesAll=targets.length===tabs.value.length;
  if(targets.some(t=>t.dirty)||(closesAll&&rulesDirty.value)){
   const choice=config.value!.saveMode==='auto'?'save':await api.confirmUnsaved();if(choice==='cancel')return;
-  if(choice==='save')for(const t of targets.filter(t=>t.dirty||rulesDirty.value))await enqueueSave({...clone(t.document),problem:clone(draft.value!.problem)},t.revision);
+   if(choice==='discard'&&targets.some(t=>t.document.file==='LPMake.txt')){buildInheritance.value=savedBuildInheritance.value;buildOptionsRevision.value++;}
+  if(choice==='save')for(const t of targets.filter(t=>t.dirty||rulesDirty.value))await enqueueSave(withBuildOptions({...clone(t.document),problem:clone(draft.value!.problem)}),t.revision);
   else if(closesAll&&workspaceMode.value){const original=await api.workspaceOpen(draft.value!.problem.labId,tab.document.file!);pauseSave=true;draft.value=clone(original);savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
    else if(closesAll&&rulesDirty.value){const original=await api.loadDraft(draft.value!.problem.labId,draft.value!.problem.problemId,draft.value!.language);pauseSave=true;draft.value!.problem=original.problem;savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
  }
@@ -322,7 +350,7 @@ async function chooseImport(value:string){await fileAction(value==='source'?impo
 async function chooseExport(value:string){
  if(blocked.value)return;if(value==='currentTests'||value==='projectTests'){const file=await api.exportTests(value==='currentTests'?'current':'project',clone(draft.value!.problem));if(file)notice.value='已导出：'+file;return;}if(value==='source'&&!activeTab.value)throw new Error('请先新建或导入源码');
  if(value==='project'&&!draft.value!.problem.labId)throw new Error('请先选择实验项目');
- await saveTail.catch(()=>{});exportCurrent.value=snapshot();exportBuffers.value=tabs.value.map(t=>({...clone(t.document),problem:clone(draft.value!.problem)}));exportKind.value=value==='project'?'project':'source';
+ await saveTail.catch(()=>{});exportCurrent.value=snapshot();exportBuffers.value=tabs.value.map(t=>(withBuildOptions({...clone(t.document),problem:clone(draft.value!.problem)})));exportKind.value=value==='project'?'project':'source';
 }
 function exportDone(file:string){exportKind.value=null;notice.value='已导出：'+file;}
 function showCompilation(c:Compilation){
@@ -332,14 +360,14 @@ function showCompilation(c:Compilation){
 }
 async function debug(){
  busy.value='debug';debugRunning.value=false;bottomTab.value='output';phase.value='编译中…';logs.value='';
- try{if(config.value!.saveMode==='auto'&&dirty.value)await saveNow();await api.debugStart(snapshot());}catch(e){busy.value=null;throw e;}
+ try{if(config.value!.saveMode==='auto'&&dirty.value)await saveAll();await api.debugStart(snapshot());}catch(e){busy.value=null;throw e;}
 }
 async function run(ids?:string[]){
  if(!draft.value!.problem.testCases.length){await debug();return;}
  const chosen=ids??selectedCases.value.filter(id=>draft.value!.problem.testCases.some(t=>t.id===id));if(!chosen.length){notice.value='请至少选择一个测试点';return;}
  runningCases.value=chosen;busy.value='judge';problemStates.value[draft.value!.problem.problemId]='运行中';for(const id of chosen)delete results.value[id];finished.value=false;phase.value='编译中…';logs.value='';bottomTab.value='output';
  try{
-  if(config.value!.saveMode==='auto'&&dirty.value)await saveNow();
+  if(config.value!.saveMode==='auto'&&dirty.value)await saveAll();
   const result=await api.judge(snapshot(),chosen);if(result.compilation)showCompilation(result.compilation);
   if(result.status==='error'){error.value=result.error||'评测任务失败';phase.value='任务错误';}
   else if(result.status==='cancelled')phase.value='已停止';
@@ -351,7 +379,7 @@ async function run(ids?:string[]){
 }
 async function stop(){phase.value='正在停止…';await api.cancel();}
 function addCase(){const tests=draft.value!.problem.testCases;let id=1;while(tests.some(t=>t.id===String(id)))id++;tests.push({id:String(id),input:'',expectedOutput:''});selectedCases.value.push(String(id));}
-function openSettings(){parameterScope.value='global';if(draft.value?.problem.labId)void api.projectBuildOptions(draft.value.problem.labId).then(v=>projectOptions.value=v).catch(e=>error.value=message(e));settings.value=clone(config.value!);settingsRoot.value=dataRoot.value;settingsMessage.value='';settingsOpen.value=true;}
+function openSettings(){settings.value=clone(config.value!);settingsRoot.value=dataRoot.value;settingsMessage.value='';settingsOpen.value=true;}
 async function saveSettings(){
  if(settingsSaving.value)return;settingsSaving.value=true;settingsMessage.value='';
  try{
@@ -359,23 +387,22 @@ async function saveSettings(){
   const languageChanged=!workspaceMode.value&&settings.value!.language!==draft.value!.language;
   const reloadNeeded=settingsRoot.value!==dataRoot.value||languageChanged;
   if(reloadNeeded&&!await beforeChange())return;
-  if(parameterScope.value==='project')await api.saveProjectBuildOptions(draft.value!.problem.labId,clone(projectOptions.value));
    const result=await api.saveConfig(clone(settings.value!),settingsRoot.value);
   config.value=result.config;dataRoot.value=result.dataRoot;compilerLabel.value=result.compilerLabel;projects.value=result.projects;
   if(languageChanged){await loadWorkspace(await api.loadDraft(config.value.currentLab,config.value.currentProblem,config.value.language,false));}
   else if(reloadNeeded)applyBootstrap(await api.reloadDocument());
-  else if(!wasAuto&&config.value.saveMode==='auto'&&dirty.value)await saveNow();
+  else if(!wasAuto&&config.value.saveMode==='auto'&&dirty.value)await saveAll();
   const resumingExport=!!exportKind.value;settingsOpen.value=false;if(resumingExport){await nextTick();await exportDialog.value?.resumeSettings();}queueChecks();if(!resumingExport)notice.value=oldRoot!==dataRoot.value?'数据目录：'+dataRoot.value:oldCompiler!==compilerLabel.value?compilerLabel.value:'设置已保存';
  }catch(e){settingsMessage.value=message(e);}finally{settingsSaving.value=false;}
 }
 async function detectInstalledCompilers(){
  if(compilerScanning.value)return;compilerScanning.value=true;
- try{detectedCompilers.value=await api.detectCompilers();selectedCompiler.value='';compilerChoiceOpen.value=true;await nextTick();compilerDialog.value?.focus();}
+ try{detectedCompilers.value=await api.detectCompilers();selectedCompiler.value='';useRecommended.value=true;compilerChoiceOpen.value=true;await nextTick();compilerDialog.value?.focus();}
  finally{compilerScanning.value=false;}
 }
 function useDetectedCompiler(){
  const chosen=detectedCompilers.value.find(c=>c.id===selectedCompiler.value);if(!chosen||!settings.value)return;
- settings.value.compiler=clone(chosen.compiler);compilerChoiceOpen.value=false;
+ const previous=clone(settings.value.compiler);settings.value.compiler=clone(chosen.compiler);if(!useRecommended.value){settings.value.compiler.cArgs=previous.cArgs;settings.value.compiler.cppArgs=previous.cppArgs;settings.value.compiler.linkArgs=previous.linkArgs;}compilerChoiceOpen.value=false;
 }
 function resized(axis:keyof LayoutConfig,event:SplitpanesResizedPayload){
  if(!config.value||!event.event||event.panes.length!==2)return;
@@ -398,7 +425,7 @@ function installShortcuts(){
  const bindings:Record<string,(event:KeyboardEvent)=>void>={};
  prefixes=Object.values(config.value?.shortcuts??{}).flat().filter(key=>key.includes(' ')).map(key=>parseKeybinding(key)[0]);
  for(const [id,keys] of Object.entries(config.value?.shortcuts??{}))for(const key of keys)bindings[key]=event=>{
-  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value||buildSettings.value||(event.target as Element)?.closest?.('.tree-inline-edit'))return;
+  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value||buildSettings.value||problemBuildOpen.value||(event.target as Element)?.closest?.('.tree-inline-edit'))return;
   const inTerminal=(event.target as Element)?.closest?.('.debug-terminal');
   if(id==='interrupt'){
    if(!inTerminal)return;event.preventDefault();event.stopPropagation();
@@ -417,12 +444,13 @@ function installShortcuts(){
  };
  keyHandler=createKeybindingsHandler(bindings,{ignore:event=>event.repeat||event.isComposing});
 }
-function handleShortcut(event:KeyboardEvent){if((navigator.platform.toLowerCase().includes('mac')?event.metaKey:event.ctrlKey)&&!event.altKey&&(event.code==='Digit0'||event.key==='0')){event.preventDefault();void action(()=>api.resetZoom());return;}if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value||exportKind.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
+function handleShortcut(event:KeyboardEvent){if((navigator.platform.toLowerCase().includes('mac')?event.metaKey:event.ctrlKey)&&!event.altKey&&(event.code==='Digit0'||event.key==='0')){event.preventDefault();void action(()=>api.resetZoom());return;}if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value||exportKind.value||buildSettings.value||problemBuildOpen.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
 const cacheMessage=ref(''),clearingCache=ref(false);
 async function clearCache(){
  clearingCache.value=true;cacheMessage.value='';
  try{const size=await api.clearCache();cacheMessage.value='已清理 '+(size/1024**2).toFixed(1)+' MB，下一次编译会重建缓存。';}catch(e){cacheMessage.value=message(e);}finally{clearingCache.value=false;}
 }
+watch(()=>!!buildSettings.value||problemBuildOpen.value,(open,old)=>{if(old&&!open)nextTick(()=>{projectMenu.value?.closeMenus();if(buildReturnFocus?.isConnected)buildReturnFocus.focus();else document.querySelector<HTMLButtonElement>('[aria-label="实验项目"]')?.focus();});});
 onMounted(async()=>{
  if(!api){error.value='请在 LabPad 桌面窗口中打开此页面';return;}
  disposers.push(api.onJudge(event=>{if(event.type==='compilation'){showCompilation(event.compilation);if(busy.value==='judge'&&event.compilation.status==='success')phase.value='运行测试点…';}else results.value[event.result.id]=event.result;}),
@@ -454,7 +482,7 @@ onBeforeUnmount(()=>{clearTimeout(viewTimer);clearTimeout(membershipTimer);clear
   <div v-if="!ready" class="loading"><h2>正在准备工作区</h2><p>加载配置、源码与本地编译器。</p></div>
   <template v-if="ready&&draft&&config">
    <section class="toolbar">
-    <div class="project-select"><label>实验项目<ProjectSelect :value="draft.problem.labId" :projects="projects" :disabled="blocked" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectLab(value)))" @delete="value=>action(()=>deleteLab(value))"/></label><template v-if="!workspaceMode"><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label></template><div class="run-actions"><button class="primary" :disabled="blocked||(!activeTab&&!workspaceMode)||(!!draft.problem.testCases.length&&!selectedCases.length)" :title="'编译并运行（'+shortcutLabel('run')+'）'" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
+    <div class="project-select"><label>实验项目<ProjectSelect ref="projectMenu" :suspended="!!buildSettings||problemBuildOpen" :value="draft.problem.labId" :projects="projects" :disabled="blocked" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectLab(value)))" @delete="value=>action(()=>deleteLab(value))" @build="value=>action(()=>openExperimentBuild(value))"/></label><template v-if="!workspaceMode"><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label></template><div class="run-actions"><button class="primary" :disabled="blocked||(!activeTab&&!workspaceMode)||(!!draft.problem.testCases.length&&!selectedCases.length)" :title="'编译并运行（'+shortcutLabel('run')+'）'" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
     <div class="toolbar-actions"><ActionMenu label="新建源码" @close-auto-focus="keepTreeEditFocus" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>workspaceMode?newSource($event):fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入测试点',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'},{label:'导出当前测试点',value:'currentTests',separator:true},{label:'导出项目测试点',value:'projectTests'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
    </section>
    <Splitpanes class="work-layout" horizontal :maximize-panes="false" @resized="resized('outputPercent',$event)"><Pane :size="100-config.layout.outputPercent" :min-size="35" :max-size="88"><Splitpanes class="workspace" :maximize-panes="false" @resized="resized('editorPercent',$event)">
@@ -494,16 +522,17 @@ onBeforeUnmount(()=>{clearTimeout(viewTimer);clearTimeout(membershipTimer);clear
      <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><div class="field-grid two"><label>界面缩放<ZoomSelect v-model="settings.zoomFactor" :theme="settings.theme"/></label><label>快捷键<button aria-label="设置快捷键…" @click="action(()=>api.openShortcuts())">设置快捷键…</button></label></div><p>导入的源码保存在数据目录；保存更新当前副本。</p></section>
      <section><h3>数据位置</h3><PathField v-model="settingsRoot" label="数据保存位置" kind="directory" @valid="pathValidity.data=$event"/><p>请选择已存在的文件夹。更换位置时复制现有资料，原目录保留。</p></section>
      <section><div class="settings-section-heading"><h3>编译器</h3><button v-if="settings.compiler.mode==='custom'" :disabled="compilerScanning||!!busy" @click="action(detectInstalledCompilers)">{{compilerScanning?'正在检测…':'自动检测'}}</button></div><p>内置 Zig 启动时静默预热，自动使用可用核心；缓存超过 2 GB 时自动回收。</p><div class="field-grid"><label>使用方式<select v-model="settings.compiler.mode" aria-label="编译器使用方式"><option value="builtin">内置 Zig</option><option value="custom">自定义编译器</option></select></label><label v-if="settings.compiler.mode==='custom'">编译器类型<select v-model="settings.compiler.kind" aria-label="编译器类型"><option value="zig">Zig</option><option value="gcc">GCC</option><option value="clang">Clang</option></select></label></div><div v-if="settings.compiler.mode==='custom'" class="compiler-paths"><PathField v-model="settings.compiler.cPath" label="C 编译器路径" kind="executable" @valid="pathValidity.c=$event"/><PathField v-model="settings.compiler.cppPath" label="C++ 编译器路径" kind="executable" :allow-empty="settings.compiler.kind==='zig'||settings.language==='c'" @valid="pathValidity.cpp=$event"/></div><div class="cache-controls"><button :disabled="!!busy||clearingCache" @click="clearCache">{{clearingCache?'正在清理…':'清理编译缓存'}}</button><span role="status">{{cacheMessage}}</span></div></section>
-     <section><h3>高级编译参数</h3><p>每行一个参数。源码和输出路径由程序追加。</p><label v-if="draft?.problem.labId">参数范围<select v-model="parameterScope" aria-label="参数范围"><option value="global">本机默认</option><option value="project">当前实验 · {{draft?.problem.labId}}</option></select></label><template v-if="parameterScope==='project'"><label class="checkbox-field"><input v-model="projectOptions.inheritDefaults" type="checkbox">继承本机默认参数</label><template v-if="workspaceMode"><p>项目标准、宏及参数由 LPMake 管理，构建设置与文件内容同步。</p><button @click="settingsOpen=false;action(openBuildSettings)">编辑项目构建设置…</button></template><div v-else-if="!projectOptions.inheritDefaults" class="field-grid"><label>C 参数<textarea v-model="projectCArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="projectCppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="projectLinkArgs" rows="5" spellcheck="false"></textarea></label></div></template><div v-else class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></section>
+     <section><details class="default-parameters"><summary>本机默认参数</summary><p>用于未自定义参数的题集，以及启用继承的项目。每行一个参数。</p><div class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></details></section>
      <section><h3>交互调试</h3><div class="field-grid two"><label>调试时限（毫秒，留空则手动停止）<input :value="settings.debugTimeLimitMs??''" @input="settings.debugTimeLimitMs=($event.target as HTMLInputElement).value===''?null:Number(($event.target as HTMLInputElement).value)" type="number" min="1"></label><label>终端显示缓冲（行）<input v-model.number="settings.terminalBufferLines" type="number" min="100" max="100000"></label></div></section>
     </fieldset>
     <div class="settings-footer"><div><button :disabled="settingsSaving" @click="settingsOpen=false">取消</button><button class="primary" :disabled="!!busy||settingsSaving||!validSettingsPaths" @click="saveSettings">{{settingsSaving?'保存中…':'保存设置'}}</button></div></div>
    </section>
   </div>
-  <div v-if="compilerChoiceOpen" class="modal-backdrop compiler-picker-backdrop"><section ref="compilerDialog" tabindex="-1" class="compiler-picker" role="dialog" aria-modal="true" aria-labelledby="compiler-picker-title" @keydown.esc.stop.prevent="compilerChoiceOpen=false"><h2 id="compiler-picker-title">自动检测编译器</h2><template v-if="detectedCompilers.length"><p>选择编译器后，自动填写类型、路径和默认参数；保存设置后生效。</p><div class="compiler-options"><label v-for="candidate in detectedCompilers" :key="candidate.id" class="compiler-option"><input v-model="selectedCompiler" type="radio" name="detected-compiler" :value="candidate.id" :aria-label="candidate.name+' '+candidate.compiler.cPath"><span><strong>{{candidate.name}}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong><span>{{candidate.version}}</span><code>{{candidate.compiler.cPath}}</code><small v-if="candidate.target">{{candidate.target}}</small></span></label></div></template><p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p><div class="compiler-picker-actions"><button @click="compilerChoiceOpen=false">{{detectedCompilers.length?'取消':'关闭'}}</button><button v-if="detectedCompilers.length" class="primary" :disabled="!selectedCompiler" @click="useDetectedCompiler">使用此编译器</button></div></section></div>
+  <div v-if="compilerChoiceOpen" class="modal-backdrop compiler-picker-backdrop"><section ref="compilerDialog" tabindex="-1" class="compiler-picker" role="dialog" aria-modal="true" aria-labelledby="compiler-picker-title" @keydown.esc.stop.prevent="compilerChoiceOpen=false"><h2 id="compiler-picker-title">自动检测编译器</h2><template v-if="detectedCompilers.length"><p>选择后填写类型和路径，保存设置后生效。</p><label class="checkbox-field"><input v-model="useRecommended" type="checkbox">同时使用推荐参数（更新本机默认参数）</label><div class="compiler-options"><label v-for="candidate in detectedCompilers" :key="candidate.id" class="compiler-option"><input v-model="selectedCompiler" type="radio" name="detected-compiler" :value="candidate.id" :aria-label="candidate.name+' '+candidate.compiler.cPath"><span><strong>{{candidate.name}}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong><span>{{candidate.version}}</span><code>{{candidate.compiler.cPath}}</code><small v-if="candidate.target">{{candidate.target}}</small></span></label></div></template><p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p><div class="compiler-picker-actions"><button @click="compilerChoiceOpen=false">{{detectedCompilers.length?'取消':'关闭'}}</button><button v-if="detectedCompilers.length" class="primary" :disabled="!selectedCompiler" @click="useDetectedCompiler">使用此编译器</button></div></section></div>
   <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label v-if="newKind==='lab'">项目类型<select v-model="newMode" aria-label="项目类型"><option value="problem-set">题集 · 单文件练习</option><option value="project">项目 · 一个程序</option></select></label><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
 
-   <BuildSettings v-if="buildSettings" :source="buildSettings.source" :revision="buildSettings.revision" @close="buildSettings=undefined" @apply="applyBuildSettings"/>
+   <BuildSettings v-if="buildSettings" :source="buildSettings.source" :revision="buildSettings.revision" :options-revision="buildSettings.optionsRevision" :inherit-defaults="buildSettings.inheritDefaults" :lab="draft!.problem.labId" :compiler-label="compilerLabel" :preview="previewBuild" :conflict="buildConflict" @close="buildSettings=undefined" @apply="applyBuildSettings"/>
+<ProblemBuildSettings v-if="problemBuildOpen" :lab="draft!.problem.labId" :options="projectOptions" :compiler-label="compilerLabel" :preview="previewProblemBuild" :save="saveProblemBuild" @close="problemBuildOpen=false"/>
 <ExportDialog v-if="exportKind&&exportCurrent&&config" ref="exportDialog" :workspace="workspaceMode" :kind="exportKind" :current="exportCurrent" :buffers="exportBuffers" :theme="config.theme" :student-id="config.studentId" :suspended="settingsOpen" @close="exportKind=null" @settings="openSettings" @done="exportDone"/>
  </div>
 </template>

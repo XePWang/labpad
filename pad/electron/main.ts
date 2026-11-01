@@ -1,3 +1,5 @@
+import {previewPlan} from '../core/build/plan';
+import {assertParameters} from '../shared/parameters';
 import {app,BrowserWindow,dialog,ipcMain,Menu,shell,nativeImage,nativeTheme,clipboard} from 'electron';
 import {cleanInactiveRuntime} from '../core/runtime';
 import {validateShortcuts} from '../shared/shortcuts';
@@ -72,7 +74,7 @@ async function validatePath(value:string,kind:PathKind,allowEmpty=false){
  }catch(e:any){return {valid:false,message:e.code==='ENOENT'?'路径不存在，请重新选择或输入':e.code==='EACCES'?'没有访问该路径的权限':'无法访问路径：'+e.message};}
 }
 async function requirePath(value:string,kind:PathKind){const result=await validatePath(value,kind);if(!result.valid)throw new Error(result.message);}
-async function inputIdentity(d:Draft,options:CompilerConfig){return d.workspace?JSON.stringify([await compiler.identity(options,'c'),await compiler.identity(options,'cpp')]):compiler.identity(options,d.language);}
+async function inputIdentity(d:Draft,options:CompilerConfig){return compiler.identityFor(d,options);}
 async function draftOptions(d:Draft){return d.file?structuredClone(config.compiler):effectiveCompiler(config.compiler,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);}
 async function buildInput(value:Draft){const d=structuredClone(validateDraft(value));if(await storage.workspace.isProject(d.problem.labId))d.workspace=await storage.workspace.snapshot(d.problem.labId,[...openBuffers,d]);return d;}
 async function workspaceBootstrap(){
@@ -90,7 +92,7 @@ async function persist(value:Draft):Promise<SaveResult>{
    let formatWarning:string|undefined;
    if(options.formatOnSave&&/\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(snapshot.file))try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+String(e);}
    await storage.workspace.save(snapshot);if(currentDocument?.documentId===snapshot.documentId&&JSON.stringify(currentDocument)===original){currentDocument=structuredClone(snapshot);documentDirty=false;}
-   return {path:await storage.workspace.path(snapshot.problem.labId,snapshot.file),source:snapshot.source,formatWarning};
+   return {path:await storage.workspace.path(snapshot.problem.labId,snapshot.file),source:snapshot.source,formatWarning,workspaceBuild:snapshot.file==='LPMake.txt'?snapshot.workspaceBuild:undefined};
   }
   let formatWarning:string|undefined;
   if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
@@ -132,7 +134,7 @@ async function bootstrap(){
 }
 function submissionServices(){const options=structuredClone(config.compiler);return {identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
 async function confirmUnsaved(){
- const result=await dialog.showMessageBox(win,{type:'question',title:'保存修改',message:'当前源码或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
+ const result=await dialog.showMessageBox(win,{type:'question',title:'保存修改',message:'源码、构建设置或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
  return (['save','discard','cancel'] as const)[result.response];
 }
 async function startDebug(value:Draft){
@@ -207,9 +209,14 @@ async function initialize(){
   }
   return storage.workspace.mutate(lab,action as 'newFile'|'newFolder'|'rename'|'delete',file,target,content);
  });
+ handle('build:preview',async(value:Draft,options?:ProjectBuildOptions)=>{
+  const d=await buildInput(value),base=d.workspace?structuredClone(config.compiler):options?effectiveCompiler(config.compiler,options):await draftOptions(d);
+  return previewPlan(d,base);
+ });
  handle('project:build:get',async(lab:string)=>await storage.workspace.isProject(lab)?{inheritDefaults:(await storage.workspace.read(lab)).inheritDefaults,cArgs:[],cppArgs:[],linkArgs:[]}:storage.buildOptions(lab));
  handle('project:build:save',async(lab:string,value:ProjectBuildOptions)=>{
   requireIdle();await saves;if(await storage.workspace.isProject(lab)){await storage.workspace.update(lab,{inheritDefaults:!!value.inheritDefaults});return;}
+  if(!value.inheritDefaults){assertParameters(value.cArgs,'C 参数');assertParameters(value.cppArgs,'C++ 参数');assertParameters(value.linkArgs,'链接参数');}
   await storage.saveBuildOptions(lab,value);
  });
  handle('project:delete',async(lab:string)=>{

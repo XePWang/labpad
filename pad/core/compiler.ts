@@ -1,3 +1,5 @@
+import {usedLanguages} from './build/plan';
+import {assertParameters} from '../shared/parameters';
 import {withDefaultStandard} from '../shared/defaults';
 import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
 import {CompilerCache} from './cache';
@@ -5,7 +7,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {runProcess} from './process';
 import {compilerEnvironment} from './toolchains';
-import type {CompilerConfig,Language,Compilation} from '../shared/types';
+import type {CompilerConfig,Language,Compilation,Draft} from '../shared/types';
 export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string;workDirectory?:string;isolation?:'bubblewrap'|'none'}
 export interface Prepared {resources?:Record<string,string>;compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
@@ -33,8 +35,9 @@ export class Compiler {
  async identity(config:CompilerConfig,language:Language):Promise<string>{
   try{const file=await realpath(this.resolve(config,language).program),info=await stat(file);return JSON.stringify([file,info.size,info.mtimeMs]);}catch{return 'unavailable';}
  }
- async info(config:CompilerConfig):Promise<string>{
-  const {program}=this.resolve(config,'c');
+ async identityFor(draft:Draft,config:CompilerConfig):Promise<string>{const languages=usedLanguages(draft);if(languages.length===1)return this.identity(config,languages[0]);return JSON.stringify(await Promise.all(languages.map(async language=>[language,await this.identity(config,language)])));}
+ async info(config:CompilerConfig,language:Language='c'):Promise<string>{
+  const {program}=this.resolve(config,language);
   const kind=config.mode==='builtin'?'zig':config.kind;
   const r=await runProcess(program,kind==='zig'?['version']:['--version'],{
    cwd:await this.session,timeLimitMs:10000,outputLimitBytes:32768,env:await this.environment(config),processHost:this.paths.processHost});
@@ -42,6 +45,7 @@ export class Compiler {
   return (config.mode==='builtin'?'内置 Zig ':'自定义 ')+(r.stdout.toString('utf8').split(/\r?\n/)[0]||kind);
  }
  async compile(source:string,language:Language,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
+  assertParameters(language==='c'?config.cArgs:config.cppArgs,language==='c'?'C 参数':'C++ 参数');assertParameters(config.linkArgs,'链接参数');
   const directory=await mkdtemp(path.join(await this.session,'run-'));
   const executable=path.join(directory,process.platform==='win32'?'program.exe':'program');
   const cleanup=()=>rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100});

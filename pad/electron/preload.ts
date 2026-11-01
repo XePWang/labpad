@@ -4,6 +4,7 @@ import type {Bridge} from '../shared/types';
 function listen(channel:string,callback:(value:any)=>void){const handler=(_event:unknown,value:unknown)=>callback(value);ipcRenderer.on(channel,handler);return()=>ipcRenderer.removeListener(channel,handler);}
 async function invoke(channel:string,...args:unknown[]){try{return await ipcRenderer.invoke(channel,...args);}catch(e){throw new Error(operationError(e));}}
 const api:Bridge={
+ buildPreview:(d,o)=>invoke('build:preview',d,o),
  resetZoom:()=>invoke('zoom:reset'),onZoom:c=>listen('zoom:changed',c),
  workspaceSources:(l,s)=>invoke('workspace:sources',l,s),workspaceFiles:l=>invoke('workspace:files',l),workspaceOpen:(l,f)=>invoke('workspace:open',l,f),workspaceFileAction:(l,a,f,t,c)=>invoke('workspace:file',l,a,f,t,c),workspaceView:(l,v)=>invoke('workspace:view',l,v),projectBuildOptions:l=>invoke('project:build:get',l),saveProjectBuildOptions:(l,v)=>invoke('project:build:save',l,v),deleteProject:l=>invoke('project:delete',l),
 

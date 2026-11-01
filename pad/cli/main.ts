@@ -1,3 +1,4 @@
+import {effectiveCompiler,type ProjectBuildOptions} from '../shared/workspace';
 import {directoryFiles} from './projects';
 import {archiveFiles} from '../core/project-archive';
 import {testPatch} from '../shared/test-import';
@@ -40,7 +41,7 @@ async function main(){
  }
  if(positionals[0]!=='judge'||(!values.source&&!values.project)||!values.tests)throw Error('请指定 --source 或 --project，并指定 --tests。');
  const raw=await readJSON(path.resolve(values.tests)) as Record<string,unknown>;
- let draft:Draft;
+ let draft:Draft,buildOptions:ProjectBuildOptions|undefined;
  if(values.project){
   const location=path.resolve(values.project),files=location.toLowerCase().endsWith('.zip')?await archiveFiles(await readFile(location)):await directoryFiles(location);delete files['labpad.project.json'];
   const labId=typeof raw.labId==='string'?raw.labId:'项目',rules=raw.mode==='project'?testPatch(raw.tests,labId,''):testPatch(raw,labId,'');
@@ -48,11 +49,11 @@ async function main(){
  }else{
   const file=path.resolve(values.source!),language=file.toLowerCase().endsWith('.cpp')?'cpp':'c';if(!/\.(c|cpp)$/i.test(file))throw Error('单文件仅支持 .c / .cpp');
   const problem=raw.kind==='labpad.project'?(()=>{
-   const pkg=parseLabPackage(raw),item=pkg.problems.find(p=>p.problemId===values.problem);if(!item)throw Error('请用 --problem 指定项目中的题号');return labDraft(pkg,item).problem;
+   const pkg=parseLabPackage(raw);buildOptions=pkg.buildOptions;const item=pkg.problems.find(p=>p.problemId===values.problem);if(!item)throw Error('请用 --problem 指定项目中的题号');return labDraft(pkg,item).problem;
   })():parseTestCases(raw,defaultProblem(typeof raw.labId==='string'?raw.labId:'',typeof raw.problemId==='string'?raw.problemId:''));
   draft={source:decodeText(await readFile(file)).text,language,problem};
  }
- const config=await compilerConfig({kind:(values.compiler??'gcc') as 'gcc'|'clang'|'zig',...(values.cc?{cPath:values.cc}:{}),...(values.cxx?{cppPath:values.cxx}:{})}),compiler=new Compiler(paths);
+ const machine=await compilerConfig({kind:(values.compiler??'gcc') as 'gcc'|'clang'|'zig',...(values.cc?{cPath:values.cc}:{}),...(values.cxx?{cppPath:values.cxx}:{})}),config=effectiveCompiler(machine,buildOptions),compiler=new Compiler(paths);
  try{
   const result=await judge(compiler,draft,config,abort.signal);
   if(values.json)console.log(JSON.stringify(result,null,2));

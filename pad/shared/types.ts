@@ -9,7 +9,7 @@ export interface DetectedCompiler{id:string;name:string;version:string;target:st
 export interface LayoutConfig{editorPercent:number;outputPercent:number}
 export interface EditorCursor{line:number;column:number;selectionChars:number;selectionLines:number;lines:number;focused:boolean}
 export interface Config{schemaVersion:1;classId:string;name:string;studentId:string;currentLab:string;currentProblem:string;language:Language;compiler:CompilerConfig;debugTimeLimitMs:number|null;terminalBufferLines:number;saveMode:'manual'|'auto';sourceFile:string|null;indentSize:1|2|4;theme:'light'|'dark';formatOnSave:boolean;layout:LayoutConfig;zoomFactor:number;shortcuts:Record<string,string[]>}
-export interface Draft{file?:string;workspace?:WorkspaceSnapshot;documentId?:string;source:string;language:Language;problem:Problem}
+export interface Draft{workspaceBuild?:{inheritDefaults:boolean};file?:string;workspace?:WorkspaceSnapshot;documentId?:string;source:string;language:Language;problem:Problem}
 export interface LoadedDraft extends Draft{sourceFile?:string;sourceEncoding?:string;warning?:string;name?:string}
 export interface Project{labId:string;problems:string[];mode?:'problem-set'|'project'}
 export interface ProcessResult{code:number|null;signal:string|null;stdout:Buffer;stderr:Buffer;elapsedMs:number;reason?:'timeout'|'output'|'cancelled';stderrTruncated:boolean}
@@ -17,7 +17,7 @@ export interface Compilation{status:'success'|'CE'|'cancelled';stdout:string;std
 export interface CaseResult{id:string;verdict?:Exclude<Verdict,'CE'>;status:'completed'|'cancelled'|'error';elapsedMs:number;stdout:string;stderr:string;exitCode:number|null;signal:string|null;message:string}
 export interface JudgeResult{status:'completed'|'cancelled'|'error';compilation?:Compilation;cases:CaseResult[];error?:string;compiler:string;comparison:Comparison;selectedCaseIds?:string[]}
 export type JudgeEvent={type:'compilation';compilation:Compilation}|{type:'case';index:number;result:CaseResult};
-export interface SaveResult{path:string;source:string;formatWarning?:string}
+export interface SaveResult{workspaceBuild?:{inheritDefaults:boolean};path:string;source:string;formatWarning?:string}
 export interface SettingsResult{config:Config;dataRoot:string;compilerLabel:string;projects:Project[]}
 export interface Bootstrap extends SettingsResult{draft:LoadedDraft;sourcePath:string|null;version:string;warning?:string;documents:LoadedDraft[];workspace?:{files:WorkspaceFile[];expanded:string[];sidebarWidth:number;sidebarCollapsed:boolean}}
 export interface DebugState{status:'compiling'|'running'|'exited'|'stopped'|'error';message?:string}
@@ -28,6 +28,7 @@ export interface ExportPreview{kind:'source'|'project';name:string;labId:string;
 export type TestState='未测'|'部分已测'|'通过'|'未通过'|'需重测'|'运行中';
 export interface Coverage{state:TestState;cases:CaseResult[]}
 export interface Bridge{
+ buildPreview(draft:Draft,options?:ProjectBuildOptions):Promise<import('../core/build/plan').BuildPreview>;
  resetZoom():Promise<void>;onZoom(callback:(value:number)=>void):()=>void;
  workspaceSources(lab:string,lpmake:string):Promise<string[]>;workspaceFiles(lab:string):Promise<WorkspaceFile[]>;workspaceOpen(lab:string,file:string):Promise<LoadedDraft>;
  workspaceFileAction(lab:string,action:'newFile'|'newFolder'|'rename'|'delete'|'import'|'reveal',file:string,target?:string,content?:string):Promise<WorkspaceFile[]>;

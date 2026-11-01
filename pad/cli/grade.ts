@@ -1,3 +1,5 @@
+import {usedLanguages} from '../core/build/plan';
+import {effectiveCompiler} from '../shared/workspace';
 import {withDefaultStandard} from '../shared/defaults';
 import {readFile,writeFile,mkdir,rename,rm,stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -17,15 +19,15 @@ import {runProcess} from '../core/process';
 import {sandboxCommand} from '../core/sandbox';
 import {readJSON,exists} from '../core/storage';
 import {parseLabPackage,parseTestCases,labDraft} from '../shared/project-format';
-import {defaultConfig} from '../shared/defaults';
-import type {Draft,CompilerConfig,JudgeResult,Problem} from '../shared/types';
+import {defaultConfig,defaultStandards} from '../shared/defaults';
+import type {Draft,CompilerConfig,JudgeResult,Problem,Language} from '../shared/types';
 import {readRoster,type Student} from './roster';
 import {collect,type Candidate, type Intake} from './collect';
 import {score100} from './score';
 export interface GradeConfig{schemaVersion:1;project:string;roster:string;hiddenTests?:Record<string,string>;weights:Record<string,number>;compiler?:Partial<CompilerConfig>;isolation?:'bubblewrap'|'none';allowStudentBuild?:boolean}
 interface Outcome{problemId:string;valid:boolean;empty:boolean;pending:boolean;status:string;passed:number;total:number;candidate?:Candidate;result?:JudgeResult}
 interface StudentGrade{student:Student;outcomes:Outcome[]}
-interface GradeState{schemaVersion:1;context:string;students:Record<string,StudentGrade>}
+interface GradeState{schemaVersion:1;context:string;compilerContexts?:Partial<Record<Language,string>>;students:Record<string,StudentGrade>}
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export async function executable(value:string){
  if(path.isAbsolute(value)||value.includes(path.sep))return path.resolve(value);
@@ -141,15 +143,31 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
   if(Object.keys(value.weights).some(id=>!pkg.problems.some(p=>p.problemId===id)))throw Error('weights 中存在项目未定义的题号');
   if(Object.keys(value.hiddenTests??{}).some(id=>!pkg.problems.some(p=>p.problemId===id)))throw Error('hiddenTests 中存在项目未定义的题号');
   score100(problems.map(p=>({weight:value.weights[p.problemId]??0,passed:0,total:p.testCases.length})));
-  const roster=await readRoster(path.resolve(lab,value.roster)),config=await compilerConfig(value.compiler),isolation=value.isolation??'bubblewrap';
+  const roster=await readRoster(path.resolve(lab,value.roster)),machine=await compilerConfig(value.compiler),config=workspace?machine:effectiveCompiler(machine,(pkg as any).buildOptions),isolation=value.isolation??'bubblewrap';
   if(!['bubblewrap','none'].includes(isolation))throw Error('isolation 应为 bubblewrap 或 none');
   await mkdir(path.join(lab,'build'),{recursive:true});compiler=new Compiler({...paths,workDirectory:path.join(lab,'build'),cacheDirectory:path.join(lab,'build','compiler-cache'),isolation});
-  const contextCompiler={...config,cArgs:withDefaultStandard(config.cArgs,'c'),cppArgs:withDefaultStandard(config.cppArgs,'cpp')};
- const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,contextCompiler,await compiler.identity(config,'c'),await compiler.identity(config,'cpp'),isolation]);
-  let state:GradeState={schemaVersion:1,context,students:{}};
+  const intake=workspace?await collectProjects(path.join(lab,'submit'),path.join(lab,'src'),roster,pkg.labId):await collect(path.join(lab,'submit'),path.join(lab,'src'),roster,problems.map(p=>p.problemId),pkg.labId);
+  const versions=await retainVersions(lab,pkg.labId,roster.map(s=>s.studentId),problems.map(p=>p.problemId),intake);
+  await writeFileAtomic(path.join(lab,'src','index.json'),JSON.stringify(versions,null,2)+'\n');
+  const languages=new Set<Language>();
+  for(const candidate of intake.candidates){
+   if(candidate.workspace){const files={...candidate.workspace.files};if(!value.allowStudentBuild)files['LPMake.txt']=workspace!.files.find(f=>f.path==='LPMake.txt')!.content;for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files,inheritDefaults:workspace!.build.inheritDefaults??true}}))languages.add(language);}
+   else languages.add(candidate.language);
+  }
+  if(!languages.size){if(workspace){for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files:Object.fromEntries(workspace.files.map(f=>[f.path,f.content])),inheritDefaults:workspace.build.inheritDefaults??true}}))languages.add(language);}else for(const p of pkg.problems)languages.add(p.language??'c');}
+  const inherit=!workspace||(workspace.build.inheritDefaults??true),compilerContexts:Partial<Record<Language,string>>={};
+  const compilerContext=async(language:Language)=>digest([language,await compiler!.identity(config,language),config.mode==='builtin'?'zig':config.kind,inherit?withDefaultStandard(language==='c'?config.cArgs:config.cppArgs,language):[defaultStandards[language]],inherit?config.linkArgs:[]]);
+  for(const language of languages)compilerContexts[language]=await compilerContext(language);
+  const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,isolation,'effective-compiler-context-v2']);
+  let state:GradeState={schemaVersion:1,context,compilerContexts,students:{}};
   if(options.studentId){
    if(!roster.some(s=>s.studentId===options.studentId))throw Error('该学号不在点名册中：'+options.studentId);
-   if(await exists(path.join(lab,'output','state.json'))){state=await readJSON(path.join(lab,'output','state.json')) as GradeState;if(state.context!==context)throw Error('项目、测试、名单或编译器已变化，请全量重测或使用新的实验目录。');}
+   if(await exists(path.join(lab,'output','state.json'))){
+    state=await readJSON(path.join(lab,'output','state.json')) as GradeState;
+    if(state.context!==context||!state.compilerContexts)throw Error('项目、测试、名单或评测规则已变化，请全量重测或使用新的实验目录。');
+    for(const [language,previous]of Object.entries(state.compilerContexts))if(previous!==await compilerContext(language as Language))throw Error('已使用的编译器或参数已变化，请全量重测或使用新的实验目录。');
+    state.compilerContexts={...state.compilerContexts,...compilerContexts};
+   }
   }
   if(isolation==='bubblewrap'){
    if(process.platform!=='linux')throw Error('隔离批测需要 Linux 与 Bubblewrap；可信夹具可显式设置 isolation: none。');
@@ -158,15 +176,12 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
    try{ready=await runProcess(cmd.program,cmd.args,{cwd:check,timeLimitMs:10000,outputLimitBytes:32768});}catch{throw Error('无法启动 Bubblewrap。请安装 bubblewrap 并允许用户命名空间，详见助教指南。');}
    if(ready.code!==0)throw Error('Bubblewrap 无法建立评测环境：'+ready.stderr.toString('utf8').trim());
   }
-  await compiler.info(config);
-  for(const language of ['c','cpp'] as const){
+  await compiler.info(config,[...languages][0]??'c');
+  for(const language of languages){
    const source=(language==='c'?['#include <stdio.h>','int main(void){return 0;}']:['#include <iostream>','int main(){std::cout << "";return 0;}']).join('\n');
-   const prepared=await compiler.compile(source,language,config,options.signal);
+   const prepared=await compiler.compile(source,language,inherit?config:{...config,cArgs:['-std=c17'],cppArgs:['-std=c++20'],linkArgs:[]},options.signal);
    try{if(prepared.compilation.status!=='success')throw Error((language==='c'?'C':'C++')+' 工具链自检失败，请检查编译器及参数：\n'+prepared.compilation.stderr);}finally{await prepared.cleanup();}
   }
-  const intake=workspace?await collectProjects(path.join(lab,'submit'),path.join(lab,'src'),roster,pkg.labId):await collect(path.join(lab,'submit'),path.join(lab,'src'),roster,problems.map(p=>p.problemId),pkg.labId);
-  const versions=await retainVersions(lab,pkg.labId,roster.map(s=>s.studentId),problems.map(p=>p.problemId),intake);
-  await writeFileAtomic(path.join(lab,'src','index.json'),JSON.stringify(versions,null,2)+'\n');
   const selected=options.studentId?roster.filter(s=>s.studentId===options.studentId):roster;
   for(const [index,student] of selected.entries()){
    options.signal?.throwIfAborted();options.progress?.('评测 '+(index+1)+' / '+selected.length);

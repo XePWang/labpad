@@ -1,3 +1,4 @@
+import {assertParameters} from './parameters';
 import {validateComparison} from './comparison';
 import {validateShortcuts} from './shortcuts';
 import type {Config,Draft,Problem,LayoutConfig} from './types';
@@ -32,6 +33,7 @@ export function validateProblem(value:unknown):Problem {
 export function validateDraft(value:unknown):Draft {
  const d=value as Draft;
  if(!d||typeof d.source!=='string'||!['c','cpp'].includes(d.language))throw new Error('源码数据无效');
+ if(d.workspaceBuild&&typeof d.workspaceBuild.inheritDefaults!=='boolean')throw new Error('项目继承选项应为布尔值');
  validateProblem(d.problem);return d;
 }
 export function validateLayout(value:unknown):LayoutConfig{
@@ -54,6 +56,7 @@ export function validateConfig(value:unknown):Config {
  typeof b.cPath!=='string'||typeof b.cppPath!=='string'||
  ![b.cArgs,b.cppArgs,b.linkArgs].every(a=>Array.isArray(a)&&a.every(s=>typeof s==='string')))
  throw new Error('编译器设置无效；每行填写一个参数');
+ for(const [label,args]of [['C 参数',b.cArgs],['C++ 参数',b.cppArgs],['链接参数',b.linkArgs]] as const)assertParameters(args,label);
  if(c.debugTimeLimitMs!==null&&(!Number.isSafeInteger(c.debugTimeLimitMs)||c.debugTimeLimitMs<=0))
  throw new Error('调试时限应留空或填写正整数（毫秒）');
  if(!Number.isSafeInteger(c.terminalBufferLines)||c.terminalBufferLines<100||c.terminalBufferLines>100000)
