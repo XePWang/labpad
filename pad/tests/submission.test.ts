@@ -28,7 +28,7 @@ test('project JSON accepts C/C++ presets, source lines and defaults while reject
  const io=parseTestCases(JSON.parse(await readFile(path.join(root,'examples/sum.io.json'),'utf8')),defaultProblem('实验2','warmup 2-1'));assert.equal(io.testCases[0].input,'1 2\n');
  const p=parseLabPackage(packageValue());assert.equal(p.labId,'实验2');assert.equal(p.problems[0].language,'c');assert.match(p.problems[0].source,/\n/);assert.equal(p.problems[1].language,'cpp');assert.equal(p.problems[0].comparison.type,'wcmp');
  assert.equal(parseLabPackage({schemaVersion:1,kind:'labpad.project',labId:'空题',problems:[{problemId:'1'}]}).problems[0].source,defaultSource('c'));
- for(const value of [null,{...packageValue(),schemaVersion:2},{...packageValue(),problems:[]},{...packageValue(),labId:'../x'},
+ for(const value of [null,{...packageValue(),schemaVersion:3},{...packageValue(),problems:[]},{...packageValue(),labId:'../x'},
   {...packageValue(),problems:[{problemId:'A'},{problemId:'a'}]}, {...packageValue(),problems:[{problemId:'../a'}]},
   {...packageValue(),problems:[{problemId:'a',language:'python'}]}, {...packageValue(),problems:[{problemId:'a',source:['two\nlines']}]},
   {...packageValue(),problems:[{problemId:'a',comparison:{type:'floatTokens',absoluteTolerance:-1}}]}])assert.throws(()=>parseLabPackage(value));
@@ -36,7 +36,7 @@ test('project JSON accepts C/C++ presets, source lines and defaults while reject
 test('standard I/O import replaces only cases and explicit rules, preserving current project, problem and title',()=>{
  const current=defaultProblem('实验2','Lab 2-1');current.title='当前题';current.comparison={type:'floatTokens',absoluteTolerance:.01};current.timeLimitMs=2345;
  const old={...defaultProblem('其他项目','其他题'),testCases:[{id:'1',input:'1',expectedOutput:'2'}]};
- const legacy=parseTestCases(old,current);assert.equal(legacy.labId,'实验2');assert.equal(legacy.problemId,'Lab 2-1');assert.equal(legacy.title,'当前题');
+ assert.throws(()=>parseTestCases(old,current),/项目名称不符/);const legacy=parseTestCases({...old,labId:current.labId,problemId:current.problemId},current);assert.equal(legacy.labId,'实验2');assert.equal(legacy.problemId,'Lab 2-1');assert.equal(legacy.title,'当前题');
  const value=parseTestCases({kind:'labpad.testCases',schemaVersion:1,testCases:old.testCases},current);
  assert.deepEqual(value.comparison,current.comparison);assert.equal(value.timeLimitMs,2345);assert.deepEqual(current.testCases,[]);
  assert.throws(()=>parseTestCases(packageValue(),current),/导入实验项目/);

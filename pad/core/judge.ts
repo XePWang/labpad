@@ -1,6 +1,7 @@
 import {writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {sandboxCommand} from './sandbox';
+import {compileDraft,copyResources} from './build';
 import {Compiler} from './compiler';
 import {runProcess} from './process';
 import {strictText} from '../shared/comparison';
@@ -13,7 +14,7 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
  if(!draft.problem.testCases.length)return {...result,status:'error',error:'请先新增或导入测试点'};
  let prepared:Awaited<ReturnType<Compiler['compile']>>|undefined;
  try{
-  prepared=await compiler.compile(draft.source,draft.language,config,signal);
+  prepared=await compileDraft(compiler,draft,config,signal);
   result.compilation=prepared.compilation;result.compiler=prepared.compilation.command[0];
   onEvent?.({type:'compilation',compilation:prepared.compilation});
   if(prepared.compilation.status==='cancelled'){result.status='cancelled';return result;}
@@ -21,7 +22,7 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
   for(const [index,test] of draft.problem.testCases.entries()){
    if(ids&&!ids.includes(test.id))continue;
    if(signal?.aborted){result.status='cancelled';break;}
-   const cwd=path.join(prepared.directory,'case-'+index);await mkdir(cwd);
+   const cwd=path.join(prepared.directory,'case-'+index);await mkdir(cwd);await copyResources(prepared.resources,cwd);
    const command=compiler.paths.isolation==='bubblewrap'?sandboxCommand(prepared.executable,cwd):{program:prepared.executable,args:[]};
    const r=await runProcess(command.program,command.args,{cwd,input:Buffer.from(test.input,'utf8'),
     timeLimitMs:draft.problem.timeLimitMs,outputLimitBytes:draft.problem.outputLimitBytes,

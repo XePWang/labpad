@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 2,
+  "kind": "labpad.project",
+  "mode": "project",
+  "labId": "多文件示例",
+  "build": {
+    "system": "lpmake",
+    "file": "LPMake.txt",
+    "inheritDefaults": true
+  },
+  "tests": {
+    "timeLimitMs": 1000,
+    "outputLimitBytes": 65536,
+    "comparison": {
+      "type": "wcmp"
+    },
+    "testCases": [
+      {
+        "id": "1",
+        "input": "1 2\n",
+        "expectedOutput": "3\n"
+      },
+      {
+        "id": "2",
+        "input": "0 0\n",
+        "expectedOutput": "0\n"
+      },
+      {
+        "id": "3",
+        "input": "-1 3\n",
+        "expectedOutput": "2\n"
+      },
+      {
+        "id": "4",
+        "input": "-4 -6\n",
+        "expectedOutput": "-10\n"
+      },
+      {
+        "id": "5",
+        "input": "100000 200000\n",
+        "expectedOutput": "300000\n"
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "LPMake.txt",
+      "content": "# src 中新建的 C 文件自动参与构建\ntarget(\"sum\")\nset_standard(\"c11\")\nadd_includedirs(\"include\")\nadd_files(\"src/*.c\")\n"
+    },
+    {
+      "path": "src/main.c",
+      "content": "#include <stdio.h>\n#include \"sum.h\"\nint main(void) {\n    int a, b;\n    if (scanf(\"%d%d\", &a, &b) != 2) return 1;\n    printf(\"%d\\n\", sum(a, b));\n    return 0;\n}\n"
+    },
+    {
+      "path": "src/sum.c",
+      "content": "#include \"sum.h\"\nint sum(int a, int b) { return a + b; }\n"
+    },
+    {
+      "path": "include/sum.h",
+      "content": "#ifndef SUM_H\n#define SUM_H\nint sum(int a, int b);\n#endif\n"
+    }
+  ]
+}

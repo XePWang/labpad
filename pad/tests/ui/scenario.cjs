@@ -10,7 +10,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
  const restore=await clipboardGuard('LabPad-workspace-clipboard');
  const launch=()=>electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data}});
  let app=await launch(),page;
- const button=name=>page.getByRole('button',{name,exact:true}),input=name=>page.getByRole('textbox',{name,exact:true}),select=name=>name==='题号'?require('./selectors.cjs').topic(page):page.getByRole('combobox',{name,exact:true});
+ const button=name=>page.getByRole('button',{name,exact:true}),input=name=>page.getByRole('textbox',{name,exact:true}),select=name=>name==='题号'?require('./selectors.cjs').topic(page):name==='实验项目'?require('./selectors.cjs').project(page):name==='界面缩放'?require('./selectors.cjs').zoom(page):page.getByRole('combobox',{name,exact:true});
  const state=()=>page.evaluate(()=>window.labpad.bootstrap()),editor=()=>page.locator('.cm-content');
  const edit=source=>editor().fill(source);
  const equal=(source,label)=>until(async()=>(await state()).draft.source===source,label);
@@ -88,7 +88,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
   pass('real C++ Unicode output and GBK / UTF-16 imports compile as UTF-8 while originals retain exact bytes');
   const flood='#include <stdio.h>\nint main(void){for(int i=0;i<12000;i++)printf("行%d 你好\\n",i);puts("END-中文");return 0;}\n';await edit(flood);await page.evaluate(()=>window.__output='');await page.keyboard.press('F9');await output('END-中文');await idle();
   assert.equal((await page.evaluate(()=>window.__output.match(/你好/g)?.length)),12000);pass('large terminal output drains without truncation or Unicode replacement');
-  await edit('#include <stdio.h>\nint main(void){puts("等待输入");fflush(stdout);for(;;){}return 0;}\n');await page.keyboard.press('F9');await output('等待输入');await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t.includes('停止')),'Ctrl C interrupts');pass('terminal Ctrl+C stops process tree');
+  await edit('#include <stdio.h>\nint main(void){puts("等待输入");fflush(stdout);for(;;){}return 0;}\n');await page.keyboard.press('F9');await output('等待输入');await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'Ctrl C interrupts');await idle();pass('terminal Ctrl+C stops process tree');
   await edit('invalid syntax');await page.keyboard.press('F9');await idle();assert.match(await button('输出').getAttribute('class'),/active/);
   await edit(code('3.0'));await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('3.00');await save();
   const rules=path.join(data,'projects','实验2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(rules,'utf8'));problem.testCases.push({id:'float',input:'',expectedOutput:'3.00',comparison:{type:'floatTokens',absoluteTolerance:0}});await fs.writeFile(rules,JSON.stringify(problem));

@@ -1,5 +1,6 @@
 const path=require('node:path'),fs=require('node:fs/promises'),{_electron}=require('playwright');
 const entries=[
+ ['dev8','dev8-scenario.cjs','runDev8Scenario'],
  ['compiler','compiler-scenario.cjs','runCompilerScenario'],['workspace','scenario.cjs','runScenario'],['editor','editor-scenario.cjs','runEditorScenario'],['layout','layout-scenario.cjs','runLayoutScenario'],['project','project-scenario.cjs','runProjectScenario'],['resources','resources-scenario.cjs','runResourcesScenario'],['source','source-scenario.cjs','runSourceScenario']
 ];
 (async()=>{

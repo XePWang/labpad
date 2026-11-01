@@ -2,10 +2,11 @@
 import {computed,onMounted,ref} from 'vue';
 import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDescription} from 'reka-ui';
 import type {Draft,ExportProblem,ExportPreview} from '../../shared/types';
-const props=defineProps<{kind:'source'|'project';current:Draft;buffers:Draft[];theme:string;studentId:string;suspended:boolean}>();
+const props=defineProps<{kind:'source'|'project';current:Draft;buffers:Draft[];theme:string;studentId:string;suspended:boolean;workspace?:boolean}>();
 const emit=defineEmits<{(e:'close'):void;(e:'settings'):void;(e:'done',path:string):void}>();
+const includeConfig=ref(!!props.workspace);
 const groups=ref<ExportProblem[]>([]),selected=ref<string[]>([]),step=ref<'select'|'warning'>('select'),preview=ref<ExportPreview>(),loading=ref(true),error=ref('');
-const drafts=computed(()=>props.kind==='source'?[props.current]:groups.value.flatMap(g=>g.versions.filter(v=>selected.value.includes(v.documentId!))));
+const drafts=computed(()=>props.kind==='source'||props.workspace?[props.current]:groups.value.flatMap(g=>g.versions.filter(v=>selected.value.includes(v.documentId!))));
 const topics=computed(()=>new Set(drafts.value.map(d=>d.problem.problemId)).size);
 const missingIdentity=computed(()=>preview.value?.warnings.some(w=>w.startsWith('未填写身份信息')));
 function checked(group:ExportProblem){const count=group.versions.filter(v=>selected.value.includes(v.documentId!)).length;return count===group.versions.length&&count>0;}
@@ -24,13 +25,14 @@ async function write(){
 async function next(){
  if(!drafts.value.length)return;loading.value=true;error.value='';
  try{
-  preview.value=await window.labpad.exportPreview(props.kind,JSON.parse(JSON.stringify(drafts.value)));
+  preview.value=await window.labpad.exportPreview(props.kind,JSON.parse(JSON.stringify(drafts.value)),includeConfig.value);
   if(preview.value.warnings.length){step.value='warning';loading.value=false;}else await write();
  }catch(e){error.value=e instanceof Error?e.message:String(e);loading.value=false;}
 }
 function all(on:boolean){selected.value=on?groups.value.flatMap(g=>g.versions.map(v=>v.documentId!)):[];}
 onMounted(async()=>{
  try{
+  if(props.workspace){loading.value=false;return;}
   if(props.kind==='project'){groups.value=await window.labpad.exportChoices(JSON.parse(JSON.stringify(props.buffers)));all(true);loading.value=false;}
   else await next();
  }catch(e){error.value=e instanceof Error?e.message:String(e);loading.value=false;}
@@ -41,14 +43,14 @@ defineExpose({resumeSettings:next,cancelSettings:()=>{step.value='warning';}});
  <DialogRoot :open="!suspended" @update:open="!$event&&!loading&&emit('close')"><DialogPortal><DialogOverlay class="export-overlay"/>
   <DialogContent class="export-dialog" :data-theme="theme" @escape-key-down="loading&&$event.preventDefault()" @interact-outside="$event.preventDefault()">
    <DialogTitle>{{kind==='project'?'导出实验项目':'导出源码'}}</DialogTitle>
-   <DialogDescription>{{step==='select'?'勾选本次提交的题号和源码版本。':'确认这些提醒后，选择保存位置。'}}</DialogDescription>
+   <DialogDescription>{{step==='select'?(workspace?'导出整个工作区，保留文件名与目录结构。':'勾选本次提交的题号和源码版本。'):'确认这些提醒后，选择保存位置。'}}</DialogDescription>
    <p v-if="error" class="field-error" role="alert">{{error}}</p><p v-if="loading" role="status">正在准备导出…</p>
    <template v-if="step==='select'&&kind==='project'">
-    <div class="export-summary"><span>{{topics}} 题 · {{drafts.length}} 份源码</span><div><button :disabled="loading" @click="all(true)">全选</button><button :disabled="loading" @click="all(false)">取消全选</button></div></div>
-    <div class="export-list"><details v-for="group in groups" :key="group.problemId" open>
+    <p v-if="workspace">包含项目内源码、头文件、LPMake 及数据文件；编译缓存不会加入。</p><div v-if="!workspace" class="export-summary"><span>{{topics}} 题 · {{drafts.length}} 份源码</span><div><button :disabled="loading" @click="all(true)">全选</button><button :disabled="loading" @click="all(false)">取消全选</button></div></div>
+    <div v-if="!workspace" class="export-list"><details v-for="group in groups" :key="group.problemId" open>
      <summary><input type="checkbox" :aria-label="'导出题号 '+group.problemId" :checked="checked(group)||mixed(group)" :indeterminate.prop="mixed(group)" :disabled="loading||!group.versions.length" @click.stop @change="selectGroup(group,$event)"><strong>{{group.problemId}}</strong><small>{{group.versions.length?group.versions.filter(v=>selected.includes(v.documentId!)).length+' / '+group.versions.length+' 份':'暂无源码'}}</small></summary>
      <label v-for="v in group.versions" :key="v.documentId" class="export-version"><input v-model="selected" :value="v.documentId" type="checkbox" :aria-label="'导出版本 '+group.problemId+' '+v.name" :disabled="loading"><span><span>{{v.name}} <small>{{v.language==='cpp'?'C++':'C'}} · {{new Date(v.modifiedAt).toLocaleString('zh-CN',{hour12:false})}}</small></span><code v-if="selected.includes(v.documentId!)">导出为 {{filename(v.documentId!)}}</code></span></label>
-    </details></div>
+    </details></div><label class="checkbox-field"><input v-model="includeConfig" type="checkbox" aria-label="附带 LabPad 项目配置">附带 LabPad 项目配置（测试点与项目设置）</label>
    </template>
    <template v-else-if="preview"><ul class="export-warnings"><li v-for="warning in preview.warnings" :key="warning">{{warning}}</li></ul><p>{{preview.files.length}} 份源码 · {{preview.name}}</p><button v-if="missingIdentity" :disabled="loading" @click="emit('settings')">前往设置</button></template>
    <div class="export-actions"><button :disabled="loading" @click="emit('close')">取消导出</button><button v-if="step==='warning'&&kind==='project'" :disabled="loading" @click="step='select'">返回选择</button><button v-if="step==='select'" class="primary" :disabled="loading||!drafts.length" @click="next">下一步</button><button v-else class="primary" :disabled="loading||!preview" @click="write">仍然导出</button></div>

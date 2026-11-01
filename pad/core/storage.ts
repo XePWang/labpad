@@ -1,3 +1,4 @@
+import {WorkspaceStore} from './workspace';
 import {mkdir,readFile,writeFile,rename,access,readdir,cp,stat,mkdtemp,rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import path from 'node:path';
@@ -36,7 +37,8 @@ export function exportName(draft:Draft,studentId:string){
 }
 export class Storage{
  private tail:Promise<unknown>=Promise.resolve();
- constructor(readonly root:string){}
+ readonly workspace:WorkspaceStore;
+ constructor(readonly root:string){this.workspace=new WorkspaceStore(root);}
  private enqueue<T>(task:()=>Promise<T>){const next=this.tail.then(task,task);this.tail=next.catch(()=>{});return next;}
  private async atomic(file:string,content:string){await writeFileAtomic(file,content,{encoding:'utf8'});}
  async init():Promise<Config>{
@@ -125,6 +127,7 @@ export class Storage{
  }
  recordCheck(draft:Draft,record:CheckRecord){
   const d=structuredClone(validateDraft(draft));
+  if(d.workspace)return this.workspace.update(d.problem.labId,{check:structuredClone(record)});
   return this.enqueue(async()=>{
    const meta=await this.readState(d.problem.labId,d.problem.problemId),state=this.stateFor(meta,d.problem.problemId,d.language);
    state.starters[d.language]??=defaultSource(d.language);state.checks[d.language]=structuredClone(record);
@@ -246,6 +249,7 @@ export class Storage{
   const result:Project[]=[];
   for(const item of await readdir(base,{withFileTypes:true})){
    if(!item.isDirectory())continue;try{filePart(item.name,'项目');}catch{continue;}
+   if(await this.workspace.isProject(item.name)){result.push({labId:item.name,mode:'project',problems:[]});continue;}
    const problems:string[]=[];
    for(const file of await readdir(path.join(base,item.name),{withFileTypes:true})){
     if(!file.isFile()||!file.name.endsWith('.json'))continue;
@@ -256,6 +260,38 @@ export class Storage{
    result.push({labId:item.name,problems});
   }
   return result.sort((a,b)=>a.labId.localeCompare(b.labId,undefined,{numeric:true}));
+ }
+ async updateProjectTests(labId:string,problems:Problem[]){
+  filePart(labId,'项目名称');const snapshots=problems.map(p=>structuredClone(validateProblem(p)));
+  if(snapshots.some(p=>p.labId!==labId||!p.problemId)||new Set(snapshots.map(p=>p.problemId)).size!==snapshots.length)throw new Error('更新目标无效');
+  return this.enqueue(async()=>{
+   const directory=path.join(this.root,'projects',labId),stage=await mkdtemp(path.join(this.root,'.tests-')),backup=stage+'-old';
+   let moved=false;
+   try{
+    await cp(directory,stage,{recursive:true});
+    for(const problem of snapshots){
+     const file=path.join(stage,filePart(problem.problemId,'题号')+'.json');
+     const previous=validateProblem(await readJSON(file));
+     if(previous.labId!==labId||previous.problemId!==problem.problemId)throw new Error('题号不符：'+problem.problemId);
+     await this.atomic(file,JSON.stringify(problem,null,2)+'\n');
+    }
+    await rename(directory,backup);moved=true;
+    try{await rename(stage,directory);}catch(e){await rename(backup,directory);moved=false;throw e;}
+    moved=false;await rm(backup,{recursive:true,force:true});
+   }finally{if(!moved)await rm(stage,{recursive:true,force:true});}
+  });
+ }
+ async buildOptions(labId:string){
+  filePart(labId,'项目名称');const meta=await this.readState(labId,'_');
+  return meta.buildOptions??{inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]};
+ }
+ async saveBuildOptions(labId:string,value:import('../shared/workspace').ProjectBuildOptions){
+  filePart(labId,'项目名称');if(!value||typeof value.inheritDefaults!=='boolean'||![value.cArgs,value.cppArgs,value.linkArgs].every(a=>Array.isArray(a)&&a.every(s=>typeof s==='string')))throw new Error('项目编译参数无效');
+  return this.enqueue(async()=>{const meta=await this.readState(labId,'_');meta.buildOptions=structuredClone(value);await this.writeState(labId,'_',meta);});
+ }
+ async deleteLab(labId:string){
+  filePart(labId,'项目名称');await this.flush();const root=path.join(this.root,'projects',labId),tombstone=path.join(this.root,'.deleted-'+randomUUID());
+  await rename(root,tombstone);try{await rm(tombstone,{recursive:true,force:true});}catch(e){await rename(tombstone,root);throw e;}
  }
  async nextLabName(name:string){
   filePart(name,'项目名称');const names=new Set((await this.projects()).map(p=>p.labId.normalize('NFC').toLowerCase()));let value=name,index=2;
@@ -268,12 +304,20 @@ export class Storage{
    const names=await readdir(base);if(names.some(name=>name.normalize('NFC').toLowerCase()===id.normalize('NFC').toLowerCase()))throw new Error('项目已存在，请重新导入并选择副本');
    const destination=path.join(base,id),temporary=await mkdtemp(path.join(this.root,'.import-'));
    try{
-    const meta:LabState={schemaVersion:1,labId:id,order:lab.problems.map(p=>p.problemId),problems:{}};
+    const meta:LabState={...(lab.buildOptions?{buildOptions:lab.buildOptions}:{}),schemaVersion:1,labId:id,order:lab.problems.map(p=>p.problemId),problems:{}};
     for(const item of lab.problems){
      const draft=labDraft(lab,item,id),prefix=path.join(temporary,item.problemId);
      await writeFile(prefix+(item.language==='c'?'.c':'.cpp'),item.source.replace(/^\uFEFF/,''),'utf8');
      await writeFile(prefix+'.json',JSON.stringify(draft.problem,null,2)+'\n','utf8');
-     meta.problems={...meta.problems,[item.problemId]:{language:item.language,starters:{[item.language]:item.source},checks:{},sources:{}}};
+     meta.problems={...meta.problems,[item.problemId]:{language:item.language,starters:{[item.language]:item.source,...item.templates},checks:{},sources:{}}};
+     if(item.versions?.length){
+      const documents:SourceDocument[]=[];for(const [n,v] of item.versions.entries()){
+       const file=item.problemId+(n?'.v'+(n+1):'')+(v.language==='c'?'.c':'.cpp');await writeFile(path.join(temporary,file),v.source,'utf8');
+       documents.push({id:randomUUID(),file,language:v.language,encoding:'UTF-8',starter:item.templates?.[v.language]??item.source});
+      }
+      meta.problems[item.problemId].documents=documents;meta.problems[item.problemId].activeDocumentId=documents[0].id;
+     }
+
     }
     await writeFile(path.join(temporary,'.labpad'),JSON.stringify(meta,null,2)+'\n','utf8');
     await rename(temporary,destination);return {labId:id,problemId:lab.problems[0].problemId,language:lab.problems[0].language};
@@ -298,7 +342,7 @@ export class Storage{
   if(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)))throw new Error('数据目录不能放在当前 projects 目录内部');
   for(const name of names)if(await exists(path.join(this.root,name)))await cp(path.join(this.root,name),path.join(target,name),{recursive:true,force:false,errorOnExist:true});
  }
- async flush(){await this.tail;}
+ async flush(){await this.tail;await this.workspace.flush();}
 }
 
 export async function importPairs(files:string[],labId:string,problemId:string):Promise<Problem>{

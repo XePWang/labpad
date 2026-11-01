@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 2,
+  "kind": "labpad.project",
+  "mode": "problem-set",
+  "labId": "双模板示例",
+  "problems": [
+    {
+      "problemId": "求和练习",
+      "language": "c",
+      "templates": {
+        "c": [
+          "#include <stdio.h>",
+          "",
+          "int main(void) {",
+          "    // 读取两个整数，输出它们的和。",
+          "    return 0;",
+          "}"
+        ],
+        "cpp": [
+          "#include <iostream>",
+          "",
+          "int main() {",
+          "    // 读取两个整数，输出它们的和。",
+          "    return 0;",
+          "}"
+        ]
+      },
+      "testCases": [
+        {
+          "id": "1",
+          "input": "1 2\n",
+          "expectedOutput": "3\n"
+        }
+      ]
+    }
+  ]
+}

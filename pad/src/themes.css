@@ -75,3 +75,5 @@ html,body{height:100%;overflow:clip}.app-shell{overflow:clip}
 @media(forced-colors:active){.case-card[data-status]{border:2px solid CanvasText}.problem-option[data-highlighted]{outline:2px solid Highlight}}
 
 .app-shell[data-theme] .case-card[data-status=running]{background:var(--running-bg);border-color:var(--running)}
+
+.app-shell[data-theme] .build-excluded{color:var(--warning)}

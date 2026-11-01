@@ -6,7 +6,7 @@ const emit=defineEmits<{(e:'select',value:string):void}>();
 </script>
 <template>
  <SelectRoot :model-value="value||'@none'" :disabled="disabled" @update:model-value="emit('select',String($event)==='@none'?'':String($event))">
-  <SelectTrigger class="problem-trigger" :data-value="value" aria-label="题号"><SelectValue/><span aria-hidden="true">⌄</span></SelectTrigger>
+  <SelectTrigger class="problem-trigger" :data-value="value" aria-label="题号"><SelectValue/><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="m3 5 4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></SelectTrigger>
   <SelectPortal><SelectContent class="problem-options" :data-theme="theme" position="popper" :side-offset="5" :collision-padding="10"><SelectViewport>
    <SelectItem value="@none" class="problem-option"><SelectItemText>&lt;无&gt;</SelectItemText></SelectItem>
    <SelectItem v-for="problem in problems" :key="problem" :value="problem" class="problem-option"><SelectItemText>{{problem}}</SelectItemText><small :data-state="states[problem]||'未测'">{{states[problem]||'未测'}}</small><SelectItemIndicator>✓</SelectItemIndicator></SelectItem>

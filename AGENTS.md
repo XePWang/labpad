@@ -7,3 +7,5 @@ Use the existing TypeScript core for both desktop and CLI. Preserve complete sou
 For changes to menus, shortcuts, JSON, CLI or export behavior, update README and the applicable versioned student, TA and maintainer guides under doc/<version>/. Keep screenshots, version and verification date aligned with the delivered build. Report actual platform execution separately from cross-build and simulated checks.
 
 Release attachments are desktop/CLI archives and SHA256SUMS.txt. Keep course project JSON in examples for separate course distribution.
+
+When authoring new course problem-set packages, provide both templates.c and templates.cpp. Keep the legacy source field readable and preserve language-specific templates during export and reconstruction.

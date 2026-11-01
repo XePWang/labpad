@@ -6,7 +6,7 @@ import {runProcess} from './process';
 import {compilerEnvironment} from './toolchains';
 import type {CompilerConfig,Language,Compilation} from '../shared/types';
 export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string;workDirectory?:string;isolation?:'bubblewrap'|'none'}
-export interface Prepared {compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
+export interface Prepared {resources?:Record<string,string>;compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
  readonly session:Promise<string>;
  readonly cache:CompilerCache;

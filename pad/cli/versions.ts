@@ -1,3 +1,4 @@
+import {directoryFiles,snapshotHash} from './projects';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -19,6 +20,7 @@ export async function retainVersions(lab:string,labId:string,students:string[],p
   const file=path.resolve(lab,saved.file),relative=path.relative(path.join(lab,'src'),file);
   if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('源码索引路径超出 src：'+saved.file);
   try{
+   if(saved.mode==='project'){const files=await directoryFiles(file);if(snapshotHash(files)!==saved.hash)throw new Error('项目快照与记录不一致');active.set(saved.key,{...saved,source:'',workspace:{files,inheritDefaults:true}});continue;}
    const source=decodeText(await readFile(file)).text,hash=createHash('sha256').update(source,'utf8').digest('hex');
    if(hash!==saved.hash)throw Error('内容与记录不一致');
    active.set(saved.key,{...saved,source});
@@ -28,7 +30,7 @@ export async function retainVersions(lab:string,labId:string,students:string[],p
  }
  for(const candidate of intake.candidates){
   const previous=history.get(candidate.key),version={...candidate,labId,ordinal:previous?.ordinal??++ordinal};
-  const {source,...metadata}=version;history.set(version.key,metadata);active.set(version.key,version);
+  const {source,workspace,...metadata}=version;history.set(version.key,metadata);active.set(version.key,version);
  }
  intake.candidates=[...active.values()].sort((a,b)=>(a.ordinal??0)-(b.ordinal??0)||a.key.localeCompare(b.key));
  return [...history.values()].sort((a,b)=>(a.ordinal??0)-(b.ordinal??0)||a.key.localeCompare(b.key));

@@ -6,6 +6,10 @@ import {parse} from 'csv-parse/sync';
 import lockfile from 'proper-lockfile';
 import writeFileAtomic from 'write-file-atomic';
 import {retainVersions} from './versions';
+import {parseWorkspacePackage} from '../shared/workspace';
+import {parse as parseMake} from '../shared/lpmake';
+import {collectProjects} from './projects';
+import {compileDraft} from '../core/build';
 import {Compiler,type RuntimePaths} from '../core/compiler';
 import {judge} from '../core/judge';
 import {runProcess} from '../core/process';
@@ -17,7 +21,7 @@ import type {Draft,CompilerConfig,JudgeResult,Problem} from '../shared/types';
 import {readRoster,type Student} from './roster';
 import {collect,type Candidate, type Intake} from './collect';
 import {score100} from './score';
-export interface GradeConfig{schemaVersion:1;project:string;roster:string;hiddenTests?:Record<string,string>;weights:Record<string,number>;compiler?:Partial<CompilerConfig>;isolation?:'bubblewrap'|'none'}
+export interface GradeConfig{schemaVersion:1;project:string;roster:string;hiddenTests?:Record<string,string>;weights:Record<string,number>;compiler?:Partial<CompilerConfig>;isolation?:'bubblewrap'|'none';allowStudentBuild?:boolean}
 interface Outcome{problemId:string;valid:boolean;empty:boolean;pending:boolean;status:string;passed:number;total:number;candidate?:Candidate;result?:JudgeResult}
 interface StudentGrade{student:Student;outcomes:Outcome[]}
 interface GradeState{schemaVersion:1;context:string;students:Record<string,StudentGrade>}
@@ -37,7 +41,7 @@ export async function compilerConfig(value?:Partial<CompilerConfig>):Promise<Com
  return config;
 }
 function issueApplies(intake:Intake,id:string,problemId:string){return intake.issues.some(x=>x.pending&&(!x.students.length||x.students.includes(id))&&(!x.problemId||x.problemId===problemId));}
-async function gradeStudent(student:Student,problems:Problem[],intake:Intake,compiler:Compiler,config:CompilerConfig,signal?:AbortSignal):Promise<StudentGrade>{
+async function gradeStudent(student:Student,problems:Problem[],intake:Intake,compiler:Compiler,config:CompilerConfig,signal?:AbortSignal,workspaceConfig?:{lpmake:string;inheritDefaults:boolean;allowStudentBuild:boolean}):Promise<StudentGrade>{
  const outcomes:Outcome[]=[];
  for(const problem of problems){
   signal?.throwIfAborted();const versions=intake.candidates.filter(v=>v.studentId===student.studentId&&v.problemId===problem.problemId);
@@ -45,8 +49,21 @@ async function gradeStudent(student:Student,problems:Problem[],intake:Intake,com
   for(const candidate of versions){
    signal?.throwIfAborted();
    let result:JudgeResult;
-   if(problem.testCases.length)result=await judge(compiler,{source:candidate.source,language:candidate.language,problem},config,signal);
-   else{const prepared=await compiler.compile(candidate.source,candidate.language,config,signal);try{result={status:prepared.compilation.status==='cancelled'?'cancelled':'completed',compiler:prepared.compilation.command[0],comparison:problem.comparison,compilation:prepared.compilation,cases:[]};}finally{await prepared.cleanup();}}
+   const draft:Draft={source:candidate.source,language:candidate.language,problem};let configurationError:string|undefined;
+   try{if(candidate.workspace){
+    const files={...candidate.workspace.files};files['LPMake.txt']=workspaceConfig?.allowStudentBuild?files['LPMake.txt']:workspaceConfig!.lpmake;
+    if(!files['LPMake.txt'])throw new Error('项目缺少 LPMake.txt');const spec=parseMake(files['LPMake.txt']).spec;
+    if(workspaceConfig?.allowStudentBuild){
+     const allowed=/^(?:-W(?:all|extra|error|pedantic|no-[A-Za-z0-9_-]+)|-std=(?:c|gnu)(?:\+\+)?[0-9]+|-O[0-3s]|-g[0-3]?|-pthread|-pipe|-pedantic(?:-errors)?|-fno-omit-frame-pointer)$/;
+     for(const flag of [...spec.cflags,...spec.cxxflags])if(!allowed.test(flag))throw new Error('学生LPMake包含不允许的编译参数：'+flag);
+     for(const flag of spec.ldflags)if(!['-pthread','-s','-static'].includes(flag))throw new Error('学生LPMake包含不允许的链接参数：'+flag);
+     if(spec.links.some(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)))throw new Error('学生LPMake包含无效库名');
+    }
+    draft.workspace={files,inheritDefaults:workspaceConfig?.inheritDefaults??true};
+   }}catch(e){configurationError=e instanceof Error?e.message:String(e);}
+   if(configurationError)result={status:'completed',compiler:'',comparison:problem.comparison,cases:[],compilation:{status:'CE',stdout:'',stderr:configurationError,command:[],elapsedMs:0}};
+   else if(problem.testCases.length)result=await judge(compiler,draft,config,signal);
+   else{const prepared=await compileDraft(compiler,draft,config,signal);try{result={status:prepared.compilation.status==='cancelled'?'cancelled':'completed',compiler:prepared.compilation.command[0],comparison:problem.comparison,compilation:prepared.compilation,cases:[]};}finally{await prepared.cleanup();}}
    if(result.status==='cancelled'){signal?.throwIfAborted();throw Error('评测已取消');}
    if(result.status==='error'){taskError=true;continue;}
    const passed=result.cases.filter(c=>c.status==='completed'&&c.verdict==='AC').length;
@@ -105,7 +122,8 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
  try{
   const value=await readJSON(configFile) as GradeConfig;
   if(value.schemaVersion!==1||typeof value.project!=='string'||typeof value.roster!=='string'||!value.weights||typeof value.weights!=='object')throw Error('grade.json 需要 schemaVersion: 1、project、roster 和 weights');
-  const pkg=parseLabPackage(await readJSON(path.resolve(lab,value.project))),problems:Problem[]=[];
+  const raw=await readJSON(path.resolve(lab,value.project)) as any,workspace=raw?.mode==='project'?parseWorkspacePackage(raw):undefined;
+  const pkg=workspace?{schemaVersion:1 as const,kind:'labpad.project' as const,labId:workspace.labId,problems:[{...workspace.tests,problemId:'main',language:'c' as const,source:''}]}:parseLabPackage(raw),problems:Problem[]=[];
   for(const item of pkg.problems){
    const original=labDraft(pkg,item).problem,problem=structuredClone(original);
    problem.testCases=original.testCases.map(t=>({...t,id:'public:'+t.id,comparison:t.comparison??original.comparison}));
@@ -125,7 +143,7 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
   const roster=await readRoster(path.resolve(lab,value.roster)),config=await compilerConfig(value.compiler),isolation=value.isolation??'bubblewrap';
   if(!['bubblewrap','none'].includes(isolation))throw Error('isolation 应为 bubblewrap 或 none');
   await mkdir(path.join(lab,'build'),{recursive:true});compiler=new Compiler({...paths,workDirectory:path.join(lab,'build'),cacheDirectory:path.join(lab,'build','compiler-cache'),isolation});
-  const context=digest([problems,value.weights,roster,config,await compiler.identity(config,'c'),await compiler.identity(config,'cpp'),isolation]);
+  const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,config,await compiler.identity(config,'c'),await compiler.identity(config,'cpp'),isolation]);
   let state:GradeState={schemaVersion:1,context,students:{}};
   if(options.studentId){
    if(!roster.some(s=>s.studentId===options.studentId))throw Error('该学号不在点名册中：'+options.studentId);
@@ -144,18 +162,18 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
    const prepared=await compiler.compile(source,language,config,options.signal);
    try{if(prepared.compilation.status!=='success')throw Error((language==='c'?'C':'C++')+' 工具链自检失败，请检查编译器及参数：\n'+prepared.compilation.stderr);}finally{await prepared.cleanup();}
   }
-  const intake=await collect(path.join(lab,'submit'),path.join(lab,'src'),roster,problems.map(p=>p.problemId),pkg.labId);
+  const intake=workspace?await collectProjects(path.join(lab,'submit'),path.join(lab,'src'),roster,pkg.labId):await collect(path.join(lab,'submit'),path.join(lab,'src'),roster,problems.map(p=>p.problemId),pkg.labId);
   const versions=await retainVersions(lab,pkg.labId,roster.map(s=>s.studentId),problems.map(p=>p.problemId),intake);
   await writeFileAtomic(path.join(lab,'src','index.json'),JSON.stringify(versions,null,2)+'\n');
   const selected=options.studentId?roster.filter(s=>s.studentId===options.studentId):roster;
   for(const [index,student] of selected.entries()){
    options.signal?.throwIfAborted();options.progress?.('评测 '+(index+1)+' / '+selected.length);
-   state.students[student.studentId]=await gradeStudent(student,problems,intake,compiler,config,options.signal);
+   state.students[student.studentId]=await gradeStudent(student,problems,intake,compiler,config,options.signal,workspace?{lpmake:workspace.files.find(f=>f.path==='LPMake.txt')!.content,inheritDefaults:workspace.build.inheritDefaults??true,allowStudentBuild:value.allowStudentBuild===true}:undefined);
   }
   options.signal?.throwIfAborted();
   const report=rows(state,roster,problems,value.weights);
   // Sources are kept in src; avoid repeating them in the intermediate report.
-  const persisted=JSON.parse(JSON.stringify(state, (key,v)=>key==='source'?undefined:v)) as GradeState;
+  const persisted=JSON.parse(JSON.stringify(state, (key,v)=>key==='source'||key==='workspace'?undefined:v)) as GradeState;
   await replaceOutput(lab,persisted,report.summary,report.cases,intake.issues);
   options.progress?.('已写入 '+path.join(lab,'output','summary.csv')+' 和 cases.csv');
   return {summary:report.summary,cases:report.cases,state:persisted,issues:intake.issues};

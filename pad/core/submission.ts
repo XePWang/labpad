@@ -1,3 +1,5 @@
+import {workspacePath,workspacePackage} from '../shared/workspace';
+import {rulesOf} from '../shared/test-import';
 import {createHash} from 'node:crypto';
 import {zipSync,strToU8} from 'fflate';
 import {defaultSource} from '../shared/defaults';
@@ -9,7 +11,7 @@ export type Submission=ExportPreview;
 export interface SubmissionServices{identity(language:Language):Promise<string>;format(source:string,language:Language):Promise<string>}
 export function fingerprint(draft:Draft,compiler:CompilerConfig,identity:string){
  const p=draft.problem;
- return createHash('sha256').update(JSON.stringify([draft.language,draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
+ return createHash('sha256').update(JSON.stringify([draft.workspace?'workspace':draft.language,draft.workspace??draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
   p.comparison,p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),compiler,identity])).digest('hex');
 }
 export function checkRecord(draft:Draft,hash:string,result?:JudgeResult,previous?:CheckRecord):CheckRecord{
@@ -23,6 +25,7 @@ export function checkRecord(draft:Draft,hash:string,result?:JudgeResult,previous
  return {fingerprint:hash,passed,total,status,checkedAt:new Date().toISOString(),compilationStatus:result?.compilation?.status,cases:ordered};
 }
 export async function storedCheck(storage:Storage,draft:Draft){
+ if(draft.workspace)return (await storage.workspace.read(draft.problem.labId)).check;
  const state=await storage.projectState(draft.problem.labId,draft.problem.problemId,draft.language);
  return draft.documentId?state.documents?.find(v=>v.id===draft.documentId)?.check:state.checks[draft.language];
 }
@@ -36,11 +39,11 @@ export async function coverage(storage:Storage,draft:Draft,config:Config,identit
  const cases=record.cases??[];
  return {state:cases.some(c=>c.verdict&&c.verdict!=='AC')||record.status==='error'?'未通过':cases.length<total?'部分已测':'未通过',cases};
 }
-function identityWarning(config:Config){
+export function identityWarning(config:Config){
  const missing=[['班号',config.classId],['姓名',config.name],['学号',config.studentId]].filter(([,value])=>!value.trim()).map(([label])=>label);
  return missing.length?'未填写身份信息：'+missing.join('、')+'。':'';
 }
-function submissionFolder(config:Config,labId:string){
+export function submissionFolder(config:Config,labId:string){
  const values=[config.classId.trim()||'未填班号',config.name.trim()||'未填姓名',config.studentId.trim()||'未填学号',labId];
  values.forEach((value,i)=>filePart(value,['班号','姓名','学号','项目名'][i]));return values.join('_');
 }
@@ -66,7 +69,7 @@ export async function exportChoices(storage:Storage,current:Draft,buffers:Draft[
  const overlays=new Map(buffers.filter(d=>d.problem.labId===labId).map(d=>[d.documentId,d]));
  return Promise.all(project.problems.map(async problemId=>({problemId,versions:(await storage.allDocuments(labId,problemId,'c')).map(d=>({...d,...(overlays.get(d.documentId)??{}),modifiedAt:d.modifiedAt}))})));
 }
-export async function prepareProject(storage:Storage,value:Draft,config:Config,services:SubmissionServices,chosen?:Draft[]):Promise<Submission>{
+export async function prepareProject(storage:Storage,value:Draft,config:Config,services:SubmissionServices,chosen?:Draft[],includeConfig=false):Promise<Submission>{
  const current=structuredClone(validateDraft(value)),labId=filePart(current.problem.labId,'实验项目');
  let drafts:Draft[];
  if(chosen)drafts=chosen.map(d=>structuredClone(validateDraft(d)));
@@ -86,10 +89,12 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
   if(d.problem.labId!==labId||!d.problem.problemId||!known.includes(d.problem.problemId))throw new Error('所选源码不属于当前实验项目');
   const key=d.documentId??d.problem.problemId+':'+d.language;if(unique.has(key))throw new Error('同一源码版本不能重复导出');unique.add(key);
  }
+ const templates:Record<string,import('../shared/templates').SourceTemplates>={},mapping:Record<string,{file:string;language:Language}[]>={};
  const files:Submission['files']=[],unedited:string[]=[],unpassed:string[]=[],warnings:string[]=[],counts=new Map<string,number>(),names=new Set<string>();
  const identities=new Map<Language,string>();
  for(const draft of drafts){
   const id=draft.problem.problemId,state=await storage.projectState(labId,id,draft.language),version=state.documents?.find(v=>v.id===draft.documentId),starter=version?.starter??state.starters[draft.language]??defaultSource(draft.language);
+  templates[id]=state.starters;
   const multi=drafts.filter(d=>d.problem.problemId===id).length>1,label=multi?id+' / '+(version?.file??draft.documentId):id;
   let same=draft.source.replace(/\r\n/g,'\n').trim()===starter.replace(/\r\n/g,'\n').trim();
   if(!same){try{same=(await services.format(draft.source,draft.language)).trim()===(await services.format(starter,draft.language)).trim();}catch{}}
@@ -99,17 +104,40 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
   const n=(counts.get(id)??0)+1;counts.set(id,n);
   const name=exportName(draft,config.studentId).replace(/\.(c|cpp)$/,(ext)=> (n>1?'_v'+n:'')+ext),key=name.normalize('NFC').toLowerCase();
   if(names.has(key))throw new Error('导出文件名冲突：'+name+'。请调整题号或所选版本。');names.add(key);
-  files.push({name,source:draft.source});
+  files.push({name,source:draft.source});(mapping[id]??=[]).push({file:name,language:draft.language});
  }
  if(unedited.length)warnings.unshift('未编辑源码：'+unedited.join('、')+'。');
  if(unpassed.length)warnings.push('尚未全部通过：'+unpassed.join('、')+'。');
  if(!current.problem.problemId)warnings.push('当前代码尚未分配题号，不会加入实验项目。');
  const missing=identityWarning(config);if(missing)warnings.push(missing);
+ if(includeConfig){const ids=[...new Set(drafts.map(d=>d.problem.problemId))];files.push({name:'labpad.project.json',source:JSON.stringify({schemaVersion:2,kind:'labpad.project',mode:'problem-set',labId,buildOptions:await storage.buildOptions(labId),problems:ids.map(id=>{const d=drafts.find(d=>d.problem.problemId===id)!;return {problemId:id,title:d.problem.title,language:d.language,templates:templates[id],...rulesOf(d.problem),sourceFile:mapping[id][0].file,versions:mapping[id]};})},null,2)+'\n'});}
  return {kind:'project',name:submissionFolder(config,labId)+'.zip',labId,files,warnings};
 }
 export function submissionZip(submission:Submission):Uint8Array{
  const folder=submission.name.replace(/\.zip$/i,''),files:Record<string,Uint8Array>={};
  filePart(folder,'提交文件夹');
- for(const file of submission.files){filePart(file.name,'源码文件名');const name=folder+'/'+file.name;if(Object.hasOwn(files,name))throw new Error('重复导出文件：'+file.name);files[name]=strToU8(file.source.replace(/^\uFEFF/,''));}
+ for(const file of submission.files){if(file.name!=='labpad.project.json')workspacePath(file.name);const name=folder+'/'+file.name;if(Object.hasOwn(files,name))throw new Error('重复导出文件：'+file.name);files[name]=strToU8(file.source.replace(/^\uFEFF/,''));}
  return zipSync(files,{level:6});
+}
+
+export async function prepareWorkspaceProject(storage:Storage,current:Draft,config:Config,buffers:Draft[],includeConfig=true,services?:SubmissionServices):Promise<Submission>{
+ const labId=filePart(current.problem.labId,'项目名称'),snapshot=await storage.workspace.snapshot(labId,buffers),missing=identityWarning(config),warnings:string[]=[];
+ const state=await storage.workspace.read(labId),record=state.check;
+ if(state.starters){
+  const sources=Object.keys(snapshot.files).filter(f=>/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f));let unchanged=sources.length===Object.keys(state.starters).length;
+  for(const name of sources){const original=state.starters[name];if(original===undefined){unchanged=false;break;}let left=snapshot.files[name],right=original;
+   if(services&&left.trim()!==right.trim())try{const language=/\.(cpp|cc|cxx|hpp|hh|hxx)$/i.test(name)?'cpp':'c';left=await services.format(left,language);right=await services.format(right,language);}catch{}
+   if(left.replace(/\r\n/g,'\n').trim()!==right.replace(/\r\n/g,'\n').trim()){unchanged=false;break;}
+  }
+  if(unchanged)warnings.push('项目源码尚未编辑：'+labId+'。');
+ }
+ if(!current.problem.testCases.length||!record||record.status!=='passed')warnings.push('尚未全部通过：'+labId+'。请在导出前重新测试。');
+ if(missing)warnings.push(missing);
+ const files=Object.entries(snapshot.files).map(([name,source])=>({name,source}));
+ if(!files.some(f=>f.name==='LPMake.txt'))throw new Error('项目缺少 LPMake.txt');
+ if(includeConfig){
+  const pkg:any=workspacePackage(labId,snapshot,current.problem,state.templates);pkg.files=pkg.files.map((f:any)=>({path:f.path}));
+  files.push({name:'labpad.project.json',source:JSON.stringify(pkg,null,2)+'\n'});
+ }
+ return {kind:'project',labId,name:submissionFolder(config,labId)+'.zip',files,warnings};
 }

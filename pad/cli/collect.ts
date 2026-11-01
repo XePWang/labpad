@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {fromBuffer,type Entry} from 'yauzl';
 import {decodeText,writeSource} from '../core/storage';
 import type {Student} from './roster';
-export interface Candidate{key:string;labId?:string;ordinal?:number;studentId:string;problemId:string;language:'c'|'cpp';source:string;hash:string;origin:string;file:string}
+export interface Candidate{mode?:'project';workspace?:import('../shared/workspace').WorkspaceSnapshot;key:string;labId?:string;ordinal?:number;studentId:string;problemId:string;language:'c'|'cpp';source:string;hash:string;origin:string;file:string}
 export interface IntakeIssue{origin:string;message:string;students:string[];problemId?:string;pending:boolean}
 export interface Intake{candidates:Candidate[];issues:IntakeIssue[];empty:{studentId:string;problemId:string}[]}
 const hash=(v:string|Buffer)=>createHash('sha256').update(v).digest('hex');

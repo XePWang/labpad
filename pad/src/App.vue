@@ -2,6 +2,12 @@
 import {computed,onMounted,onBeforeUnmount,ref,watch,nextTick} from 'vue';
 import {Splitpanes,Pane,type SplitpanesResizedPayload} from 'splitpanes';
 import 'splitpanes/dist/splitpanes.css';
+import FileTree from './components/FileTree.vue';
+import ProjectSelect from './components/ProjectSelect.vue';
+import ZoomSelect from './components/ZoomSelect.vue';
+import BuildSettings from './components/BuildSettings.vue';
+import {parse,editArgument} from '../shared/lpmake';
+import type {WorkspaceFile,ProjectBuildOptions} from '../shared/workspace';
 import CodeEditor from './components/CodeEditor.vue';
 import DebugTerminal from './components/DebugTerminal.vue';
 import OutputDiff from './components/OutputDiff.vue';
@@ -10,6 +16,7 @@ import SourceTabs from './components/SourceTabs.vue';
 import ProblemSelect from './components/ProblemSelect.vue';
 import ResultHelp from './components/ResultHelp.vue';
 import ExportDialog from './components/ExportDialog.vue';
+import {formatShortcut} from '../shared/shortcut-display';
 import {operationError} from '../shared/errors';
 import {createKeybindingsHandler,parseKeybinding,matchKeybindingPress} from 'tinykeys';
 import ActionMenu from './components/ActionMenu.vue';
@@ -30,12 +37,14 @@ const cursor=ref<EditorCursor>({line:1,column:1,selectionChars:0,selectionLines:
 let hintTimer:ReturnType<typeof setInterval>|undefined,noticeTimer:ReturnType<typeof setTimeout>|undefined,layoutTail:Promise<unknown>=Promise.resolve();
 const footerPulse=ref('');let pulseTimer:ReturnType<typeof setTimeout>|undefined;
 function flashFooter(text:string){clearTimeout(pulseTimer);footerPulse.value=text;pulseTimer=setTimeout(()=>{footerPulse.value='';},4000);}
+const currentPlatform=navigator.platform,keyLabel=(key:string)=>formatShortcut(key,currentPlatform);
+function shortcutLabel(id:string){return (config.value?.shortcuts[id]??[]).map(keyLabel).join(' / ');}
 const tips=computed(()=>[
- config.value?.saveMode==='auto'?'自动保存已开启，写完稍停即可保存。':'Ctrl+S 保存当前源码；导入副本也会保存在这里。',
+ config.value?.saveMode==='auto'?'自动保存已开启，写完稍停即可保存。':shortcutLabel('save')+' 保存当前源码；导入副本也会保存在这里。',
  '空格小点只负责指路，导出的仍是普通空格。',
  '选中多行后按 Tab / Shift+Tab，整块调整缩进。',
  '没有测试点时，编译通过就会进入调试页。',
- 'Shift+Alt+F 整理代码；Ctrl+Z 可整次撤销。',
+ shortcutLabel('format')+' 整理代码；'+keyLabel('$mod+KeyZ')+' 可整次撤销。',
  '测试输入、预期输出和比较规则随题目 JSON 保存。',
  '别急，先让一个小例子跑通。',
  '多测一个边界值，心里就多一点底。',
@@ -49,8 +58,8 @@ const tips=computed(()=>[
  '一个小测试，也能照亮一大段代码。',
  '选中几行按 Tab，大家一起挪一挪。',
  'Shift+Tab 往回走，缩进也有回头路。',
- 'Ctrl+F 找一找，变量名不用靠眼力。',
- 'Ctrl+Z 撤销、Ctrl+Shift+Z 重做，放心整理代码。',
+ keyLabel('$mod+KeyF')+' 找一找，变量名不用靠眼力。',
+ keyLabel('$mod+KeyZ')+' 撤销、'+keyLabel('$mod+Shift+KeyZ')+' 重做，放心整理代码。',
  '输入跑完会关闭 stdin，读到 EOF 就可以收工。',
  '输出多了少了？点开 Diff 看看差在哪。',
  draft.value?.language==='cpp'?'一个 cout，也能帮思路探探路。':'一个 printf，也能帮思路探探路。',
@@ -64,12 +73,80 @@ const tabs=ref<SourceTab[]>([]),activeId=ref('');let savedRules='';
 const rulesDirty=ref(false),activeTab=computed(()=>tabs.value.find(t=>t.id===activeId.value));
 const documentEpoch=ref(''),formatting=ref(false);
 const compilerChoiceOpen=ref(false),compilerScanning=ref(false),detectedCompilers=ref<DetectedCompiler[]>([]),selectedCompiler=ref(''),compilerDialog=ref<HTMLElement>();
+const workspaceMode=computed(()=>projects.value.find(p=>p.labId===draft.value?.problem.labId)?.mode==='project');
+const includedSources=ref<string[]|null>(null),membershipMessage=ref('');let membershipTimer:ReturnType<typeof setTimeout>|undefined;
+const fileEntries=ref<WorkspaceFile[]>([]),expanded=ref<string[]>([]),sidebarWidth=ref(190),sidebarCollapsed=ref(false),newMode=ref<'problem-set'|'project'>('problem-set');
+const fileDialog=ref<{action:string;file:string;name:string;language:'c'|'cpp';template?:boolean;lpmake?:string}>(),fileMessage=ref(''),fileSaving=ref(false),syncReferences=ref(true);
+const buildSettings=ref<{source:string;revision:number}>(),buildDocument=ref('');
+const projectOptions=ref<ProjectBuildOptions>({inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]}),parameterScope=ref<'global'|'project'>('global');
+const projectCArgs=computed({get:()=>projectOptions.value.cArgs.join('\n'),set:v=>projectOptions.value.cArgs=v.split(/\r?\n/).filter(Boolean)});
+const projectCppArgs=computed({get:()=>projectOptions.value.cppArgs.join('\n'),set:v=>projectOptions.value.cppArgs=v.split(/\r?\n/).filter(Boolean)});
+const projectLinkArgs=computed({get:()=>projectOptions.value.linkArgs.join('\n'),set:v=>projectOptions.value.linkArgs=v.split(/\r?\n/).filter(Boolean)});
+const inactiveSource=computed(()=>workspaceMode.value&&draft.value?.file&&/\.(c|cpp|cc|cxx)$/i.test(draft.value.file)&&includedSources.value!==null&&!includedSources.value.includes(draft.value.file));
+const canFormat=computed(()=>!workspaceMode.value||!!draft.value?.file&&/\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(draft.value.file));
+let viewTimer:ReturnType<typeof setTimeout>|undefined;
+async function refreshFiles(){if(workspaceMode.value)fileEntries.value=await api.workspaceFiles(draft.value!.problem.labId);}
+async function openFile(file:string){const found=tabs.value.find(t=>t.document.file===file);if(found){activateTab(found.id);return;}addDocument(await api.workspaceOpen(draft.value!.problem.labId,file));}
+function editTab(id:string,text:string){
+ const tab=tabs.value.find(t=>t.id===id);if(!tab)return;
+ if(id===activeId.value){editor.value?.applyText(text);}else{tab.document.source=text;tab.revision++;tab.dirty=text!==tab.savedSource;tab.status=tab.dirty?'未保存':'已保存';revision++;invalidate();recordState();}
+}
+async function treeAction(value:string,file:string){
+ if(value==='collapse'){sidebarCollapsed.value=true;return;}if(value==='collapseAll'){expanded.value=[];return;}
+ if(value==='build'){await openBuildSettings();return;}
+ if(value==='reveal'){await api.workspaceFileAction(draft.value!.problem.labId,'reveal',file);return;}
+ if(value==='delete'){
+  const files=await api.workspaceFileAction(draft.value!.problem.labId,'delete',file);fileEntries.value=files;
+  const existing=new Set(files.filter(f=>!f.directory).map(f=>f.path));
+  const removed=tabs.value.filter(t=>t.document.file&&!existing.has(t.document.file));tabs.value=tabs.value.filter(t=>!removed.includes(t));
+  if(removed.some(t=>t.id===activeId.value)){activeId.value='';if(tabs.value[0])activateTab(tabs.value[0].id);}
+  invalidate();recordState();return;
+ }
+ fileMessage.value='';syncReferences.value=true;
+ let lpmake:string|undefined;if(value==='rename')lpmake=tabs.value.find(t=>t.document.file==='LPMake.txt')?.document.source??(await api.workspaceOpen(draft.value!.problem.labId,'LPMake.txt')).source;
+ fileDialog.value={action:value,file,name:value==='rename'?file:(file?file+'/':'')+(value==='newFolder'?'新文件夹':'new.c'),language:'c',lpmake};
+}
+async function applyFileAction(){
+ if(!fileDialog.value||fileSaving.value)return;fileSaving.value=true;fileMessage.value='';
+ try{
+  const form=clone(fileDialog.value),lab=draft.value!.problem.labId;let changedMake=form.lpmake;
+  if(form.action==='rename'&&syncReferences.value&&changedMake){
+   const calls=parse(changedMake).calls,counts=new Map<string,number>();
+   for(const call of calls){const index=counts.get(call.name)??0;counts.set(call.name,index+1);
+    if(!['add_files','remove_files','add_includedirs','add_linkdirs'].includes(call.name))continue;
+    for(const [n,arg] of call.args.entries())if(arg.value===form.file||arg.value.startsWith(form.file+'/'))changedMake=editArgument(changedMake,call.name,index,n,form.name+arg.value.slice(form.file.length));
+   }
+  }
+  fileEntries.value=await api.workspaceFileAction(lab,form.action as 'newFile'|'newFolder'|'rename',form.action==='rename'?form.file:form.name,form.action==='rename'?form.name:undefined,form.action==='newFile'&&!form.template?'':undefined);
+  if(form.action==='rename'){
+   for(const tab of tabs.value)if(tab.document.file===form.file||tab.document.file?.startsWith(form.file+'/')){
+    const file=form.name+tab.document.file.slice(form.file.length),loaded=await api.workspaceOpen(lab,file),oldId=tab.id;
+    tab.document={...loaded,source:tab.document.source};tab.id=loaded.documentId!;if(activeId.value===oldId){activeId.value=tab.id;documentEpoch.value=tab.id;pauseSave=true;draft.value={...clone(tab.document),problem:clone(draft.value!.problem)};sourcePath.value=loaded.sourceFile??null;pauseSave=false;}
+   }
+   if(changedMake!==form.lpmake){await openFile('LPMake.txt');editTab(activeId.value,changedMake!);}
+  }else if(form.action==='newFile')await openFile(form.name);
+  if(form.name.includes('/'))expanded.value=[...new Set([...expanded.value,form.name.slice(0,form.name.lastIndexOf('/'))])];
+  fileDialog.value=undefined;invalidate();recordState();
+ }catch(e){fileMessage.value=message(e);}finally{fileSaving.value=false;}
+}
+async function openBuildSettings(){await openFile('LPMake.txt');const tab=activeTab.value!;buildDocument.value=tab.id;buildSettings.value={source:tab.document.source,revision:tab.revision};}
+function applyBuildSettings(text:string,version:number){
+ const tab=tabs.value.find(t=>t.id===buildDocument.value);if(!tab||tab.revision!==version){error.value='LPMake已变化，请重新打开构建设置。';return;}
+ editTab(tab.id,text);buildSettings.value=undefined;
+}
+async function deleteLab(lab:string){
+ if(!await api.deleteProject(lab))return;const current=draft.value!.problem.labId===lab;projects.value=await api.projects();if(current)applyBootstrap(await api.bootstrap());notice.value='已删除项目：'+lab;
+}
 const newKind=ref<'lab'|'problem'|null>(null),newName=ref(''),newMessage=ref(''),newSaving=ref(false);
 let pauseSave=true,revision=0,saveTail:Promise<unknown>=Promise.resolve(),saveTimer:ReturnType<typeof setTimeout>|undefined;
 const disposers:(()=>void)[]=[];
 const snapshot=()=>clone(draft.value!);
 const passed=computed(()=>Object.values(results.value).filter(c=>c.verdict==='AC').length);
 const problems=computed(()=>projects.value.find(p=>p.labId===draft.value?.problem.labId)?.problems??[]);
+function tabName(document:LoadedDraft){
+ const file=document.file;if(!file)return document.name||document.sourceFile?.split(/[\\/]/).pop()||'空项目.c';
+ const parts=file.split('/');for(let n=1;n<=parts.length;n++){const suffix=parts.slice(-n).join('/');if(!tabs.value.some(t=>t.document.file!==file&&t.document.file?.split('/').slice(-n).join('/')===suffix))return suffix;}return file;
+}
 const filename=computed(()=>sourcePath.value?.split(/[\\/]/).pop()||(draft.value?.problem.problemId||'空项目')+(draft.value?.language==='cpp'?'.cpp':'.c'));
 const validSettingsPaths=computed(()=>pathValidity.value.data&&(settings.value?.compiler.mode!=='custom'||(pathValidity.value.c&&pathValidity.value.cpp)));
 const cArgs=computed({get:()=>settings.value?.compiler.cArgs.join('\n')??'',set:v=>{if(settings.value)settings.value.compiler.cArgs=v.split(/\r?\n/).filter(Boolean);}});
@@ -140,7 +217,7 @@ function replaceDraft(value:LoadedDraft,file:string|null=null,documents:LoadedDr
  selectedCases.value=value.problem.testCases.map(t=>t.id);closedIds.value=[];browsingTabs.value=true;
  if(value.warning)error.value=value.warning;results.value={};diffOpen.value={};finished.value=false;saveStatus.value='已保存';phase.value='准备就绪';pauseSave=false;recordState();queueChecks();
 }
-async function loadWorkspace(value:LoadedDraft){replaceDraft(value,null,await api.openDocuments(value.problem.labId,value.problem.problemId,value.language));}
+async function loadWorkspace(value:LoadedDraft){if(value.file){applyBootstrap(await api.bootstrap());return;}replaceDraft(value,null,await api.openDocuments(value.problem.labId,value.problem.problemId,value.language));}
 function activateTab(id:string,focus=true){
  if(blocked.value||id===activeId.value)return;const tab=tabs.value.find(t=>t.id===id);if(!tab)return;
  clearTimeout(saveTimer);pauseSave=true;const problem=clone(draft.value!.problem);activeId.value=id;draft.value={...clone(tab.document),problem};sourcePath.value=tab.document.sourceFile??null;documentEpoch.value=id;
@@ -166,7 +243,8 @@ async function tabAction(value:string,id=activeId.value){
  if(targets.some(t=>t.dirty)||(closesAll&&rulesDirty.value)){
   const choice=config.value!.saveMode==='auto'?'save':await api.confirmUnsaved();if(choice==='cancel')return;
   if(choice==='save')for(const t of targets.filter(t=>t.dirty||rulesDirty.value))await enqueueSave({...clone(t.document),problem:clone(draft.value!.problem)},t.revision);
-  else if(closesAll&&rulesDirty.value){const original=await api.loadDraft(draft.value!.problem.labId,draft.value!.problem.problemId,draft.value!.language);pauseSave=true;draft.value!.problem=original.problem;savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
+  else if(closesAll&&workspaceMode.value){const original=await api.workspaceOpen(draft.value!.problem.labId,tab.document.file!);pauseSave=true;draft.value=clone(original);savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
+   else if(closesAll&&rulesDirty.value){const original=await api.loadDraft(draft.value!.problem.labId,draft.value!.problem.problemId,draft.value!.language);pauseSave=true;draft.value!.problem=original.problem;savedRules=JSON.stringify(original.problem);rulesDirty.value=false;pauseSave=false;}
  }
  closedIds.value=[...targets.map(t=>t.id).reverse(),...closedIds.value].slice(0,100);
  const ids=new Set(targets.map(t=>t.id));tabs.value=tabs.value.filter(t=>!ids.has(t.id));
@@ -194,22 +272,23 @@ async function createItem(){
  if(newSaving.value)return;newSaving.value=true;newMessage.value='';
  try{
   if(!await beforeChange())return;recordState();
-  const value=newKind.value==='lab'?await api.createLab(newName.value):await api.createProblem(draft.value!.problem.labId,newName.value,draft.value!.language);
+  const value=newKind.value==='lab'?await api.createLab(newName.value,newMode.value):await api.createProblem(draft.value!.problem.labId,newName.value,draft.value!.language);
   projects.value=await api.projects();await loadWorkspace(value);newKind.value=null;
  }catch(e){newMessage.value=message(e);}finally{newSaving.value=false;}
 }
 function applyBootstrap(state:Awaited<ReturnType<typeof api.bootstrap>>){
  config.value=state.config;projects.value=state.projects;version.value=state.version;dataRoot.value=state.dataRoot;compilerLabel.value=state.compilerLabel;
- replaceDraft(state.draft,state.sourcePath,state.documents);ready.value=true;if(state.warning)error.value=state.warning;
+ fileEntries.value=state.workspace?.files??[];expanded.value=state.workspace?.expanded??[];sidebarWidth.value=state.workspace?.sidebarWidth??190;sidebarCollapsed.value=state.workspace?.sidebarCollapsed??false;
+  replaceDraft(state.draft,state.sourcePath,state.documents);ready.value=true;if(state.warning)error.value=state.warning;
 }
 async function reload(){if(await beforeChange())applyBootstrap(await api.reloadDocument());}
 async function newSource(value:string){
- if(value!=='c'&&value!=='cpp')return;
+ if(value!=='c'&&value!=='cpp')return;if(workspaceMode.value){fileMessage.value='';fileDialog.value={action:'newFile',file:'src',name:'src/new.'+(value==='c'?'c':'cpp'),language:value,template:true};return;}
  const created=await api.newVersion({...snapshot(),documentId:undefined,language:value},true);
  addDocument(created);phase.value='准备就绪';flashFooter('已新建 · '+created.sourceFile);
 }
 async function importSourceFile(){
- const value=await api.importSource();if(!value)return;addDocument(value.document);
+ const value=await api.importSource();if(!value)return;const previous=tabs.value.find(t=>t.id===value.document.documentId);if(previous&&workspaceMode.value&&!value.reused){previous.document=clone(value.document);previous.savedSource=value.source;previous.dirty=false;previous.status='已保存';if(activeId.value===previous.id){pauseSave=true;draft.value=clone(value.document);editor.value?.applyText(value.source);pauseSave=false;}}else addDocument(value.document);await refreshFiles();
  notice.value='已导入 '+value.path+' · '+value.encoding;
 }
 async function importIO(){
@@ -223,7 +302,7 @@ async function importIO(){
  notice.value='已导入 '+problem.testCases.length+' 个测试点';
 }
 async function formatCode(){
- if(formatting.value||blocked.value)return;
+ if(formatting.value||blocked.value||!canFormat.value)return;
  browsingTabs.value=false;formatting.value=true;const id=revision,size=config.value!.indentSize,language=draft.value!.language;
  try{
   const formatted=await api.formatCode(draft.value!.source,language,size);
@@ -231,17 +310,24 @@ async function formatCode(){
   editor.value?.applyText(formatted);editor.value?.focus();
  }finally{formatting.value=false;}
 }
-async function importProject(){if(!await beforeChange())return;const result=await api.importProject();if(result){applyBootstrap(result);notice.value='已导入项目：'+result.draft.problem.labId;}}
+async function importProject(){
+ const result=await api.importProject();if(!result)return;
+ if(result.updatedProblems){
+  const problem=result.updatedProblems.find(p=>p.labId===draft.value!.problem.labId&&p.problemId===draft.value!.problem.problemId);
+  if(problem){pauseSave=true;draft.value!.problem=clone(problem);savedRules=JSON.stringify(problem);rulesDirty.value=false;revision++;pauseSave=false;selectedCases.value=problem.testCases.map(t=>t.id);recordState();invalidate();}
+  projects.value=result.projects;queueChecks();notice.value='项目测试点已更新，源码保留。';
+ }else{applyBootstrap(result);notice.value='已导入项目：'+result.draft.problem.labId;}
+}
 async function chooseImport(value:string){await fileAction(value==='source'?importSourceFile:value==='project'?importProject:importIO);}
 async function chooseExport(value:string){
- if(blocked.value)return;if(value==='source'&&!activeTab.value)throw new Error('请先新建或导入源码');
+ if(blocked.value)return;if(value==='currentTests'||value==='projectTests'){const file=await api.exportTests(value==='currentTests'?'current':'project',clone(draft.value!.problem));if(file)notice.value='已导出：'+file;return;}if(value==='source'&&!activeTab.value)throw new Error('请先新建或导入源码');
  if(value==='project'&&!draft.value!.problem.labId)throw new Error('请先选择实验项目');
  await saveTail.catch(()=>{});exportCurrent.value=snapshot();exportBuffers.value=tabs.value.map(t=>({...clone(t.document),problem:clone(draft.value!.problem)}));exportKind.value=value==='project'?'project':'source';
 }
 function exportDone(file:string){exportKind.value=null;notice.value='已导出：'+file;}
 function showCompilation(c:Compilation){
  compilationFailed.value=c.status==='CE';
- logs.value='编译命令\n'+c.command.map(s=>/\s/.test(s)?JSON.stringify(s):s).join(' ')+'\n\n'
+ logs.value='编译命令\n'+(c.commands??[c.command]).map(command=>command.map(s=>/\s/.test(s)?JSON.stringify(s):s).join(' ')).join('\n')+'\n\n'
  +(c.stdout?'stdout\n'+c.stdout+'\n':'')+(c.stderr?'stderr\n'+c.stderr+'\n':'')+'\n编译状态：'+c.status+' · '+c.elapsedMs+' ms\n';
 }
 async function debug(){
@@ -265,15 +351,16 @@ async function run(ids?:string[]){
 }
 async function stop(){phase.value='正在停止…';await api.cancel();}
 function addCase(){const tests=draft.value!.problem.testCases;let id=1;while(tests.some(t=>t.id===String(id)))id++;tests.push({id:String(id),input:'',expectedOutput:''});selectedCases.value.push(String(id));}
-function openSettings(){settings.value=clone(config.value!);settingsRoot.value=dataRoot.value;settingsMessage.value='';settingsOpen.value=true;}
+function openSettings(){parameterScope.value='global';if(draft.value?.problem.labId)void api.projectBuildOptions(draft.value.problem.labId).then(v=>projectOptions.value=v).catch(e=>error.value=message(e));settings.value=clone(config.value!);settingsRoot.value=dataRoot.value;settingsMessage.value='';settingsOpen.value=true;}
 async function saveSettings(){
  if(settingsSaving.value)return;settingsSaving.value=true;settingsMessage.value='';
  try{
   const wasAuto=config.value!.saveMode==='auto',oldRoot=dataRoot.value,oldCompiler=compilerLabel.value;
-  const languageChanged=settings.value!.language!==draft.value!.language;
+  const languageChanged=!workspaceMode.value&&settings.value!.language!==draft.value!.language;
   const reloadNeeded=settingsRoot.value!==dataRoot.value||languageChanged;
   if(reloadNeeded&&!await beforeChange())return;
-  const result=await api.saveConfig(clone(settings.value!),settingsRoot.value);
+  if(parameterScope.value==='project')await api.saveProjectBuildOptions(draft.value!.problem.labId,clone(projectOptions.value));
+   const result=await api.saveConfig(clone(settings.value!),settingsRoot.value);
   config.value=result.config;dataRoot.value=result.dataRoot;compilerLabel.value=result.compilerLabel;projects.value=result.projects;
   if(languageChanged){await loadWorkspace(await api.loadDraft(config.value.currentLab,config.value.currentProblem,config.value.language,false));}
   else if(reloadNeeded)applyBootstrap(await api.reloadDocument());
@@ -311,14 +398,14 @@ function installShortcuts(){
  const bindings:Record<string,(event:KeyboardEvent)=>void>={};
  prefixes=Object.values(config.value?.shortcuts??{}).flat().filter(key=>key.includes(' ')).map(key=>parseKeybinding(key)[0]);
  for(const [id,keys] of Object.entries(config.value?.shortcuts??{}))for(const key of keys)bindings[key]=event=>{
-  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value)return;
+  if(event.repeat||fileBusy.value||settingsOpen.value||newKind.value||compilerChoiceOpen.value||exportKind.value||fileDialog.value||buildSettings.value)return;
   const inTerminal=(event.target as Element)?.closest?.('.debug-terminal');
   if(id==='interrupt'){
    if(!inTerminal)return;event.preventDefault();event.stopPropagation();
    const text=terminal.value?.selection();if(text)void action(()=>api.copyText(text));else if(debugRunning.value)void action(stop);return;
   }
   if(['run','format','close','closeSaved','closeAll','next','previous'].includes(id)&&blocked.value)return;
-  if(!tabs.value.length&&!['saveAll','newSource','importSource','settings','reopen'].includes(id))return;event.preventDefault();event.stopPropagation();
+  if(!tabs.value.length&&!workspaceMode.value&&!['saveAll','newSource','importSource','settings','reopen'].includes(id))return;event.preventDefault();event.stopPropagation();
   const operations:Record<string,()=>Promise<unknown>|void>={
    run,save:saveNow,saveAll,format:formatCode,close:()=>tabAction('close'),closeSaved:()=>tabAction('saved'),closeAll:()=>tabAction('all'),
    next:()=>activateTab(tabs.value[(tabs.value.findIndex(t=>t.id===activeId.value)+1)%tabs.value.length].id),
@@ -330,7 +417,7 @@ function installShortcuts(){
  };
  keyHandler=createKeybindingsHandler(bindings,{ignore:event=>event.repeat||event.isComposing});
 }
-function handleShortcut(event:KeyboardEvent){if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value||exportKind.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
+function handleShortcut(event:KeyboardEvent){if((navigator.platform.toLowerCase().includes('mac')?event.metaKey:event.ctrlKey)&&!event.altKey&&(event.code==='Digit0'||event.key==='0')){event.preventDefault();void action(()=>api.resetZoom());return;}if(event.isComposing||event.repeat||settingsOpen.value||newKind.value||compilerChoiceOpen.value||fileBusy.value||exportKind.value)return;const prefix=prefixes.some(press=>matchKeybindingPress(event,press));keyHandler(event);if(prefix){event.preventDefault();event.stopPropagation();}}
 const cacheMessage=ref(''),clearingCache=ref(false);
 async function clearCache(){
  clearingCache.value=true;cacheMessage.value='';
@@ -339,7 +426,7 @@ async function clearCache(){
 onMounted(async()=>{
  if(!api){error.value='请在 LabPad 桌面窗口中打开此页面';return;}
  disposers.push(api.onJudge(event=>{if(event.type==='compilation'){showCompilation(event.compilation);if(busy.value==='judge'&&event.compilation.status==='success')phase.value='运行测试点…';}else results.value[event.result.id]=event.result;}),
- api.onDebugData((data,ack)=>terminal.value?.write(data,ack)),api.onDebugState(handleDebugState));
+ api.onDebugData((data,ack)=>terminal.value?.write(data,ack)),api.onDebugState(handleDebugState),api.onZoom(value=>{if(config.value)config.value.zoomFactor=value;if(settings.value)settings.value.zoomFactor=value;}));
  disposers.push(api.onShortcuts(value=>{if(config.value)config.value.shortcuts=value;installShortcuts();}));
  window.addEventListener('keydown',handleShortcut,true);hintTimer=setInterval(()=>hintIndex.value++,9000);
  await action(async()=>{
@@ -349,25 +436,35 @@ onMounted(async()=>{
 watch(()=>draft.value?.problem.testCases.map(t=>t.id).join('\u0001'),()=>{const ids=draft.value?.problem.testCases.map(t=>t.id)??[];selectedCases.value=selectedCases.value.filter(id=>ids.includes(id));});
 watch(settingsOpen,(open,old)=>{if(old&&!open&&exportKind.value&&!settingsSaving.value)exportDialog.value?.cancelSettings();if(open&&exportKind.value)nextTick(()=>document.querySelector<HTMLInputElement>('[aria-label="班号"]')?.focus());});
 watch(notice,value=>{clearTimeout(noticeTimer);if(value)noticeTimer=setTimeout(()=>{notice.value='';},4000);});
-onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTimeout(pulseTimer);clearTimeout(saveTimer);clearTimeout(checkTimer);disposers.forEach(d=>d());window.removeEventListener('keydown',handleShortcut,true);});
+watch(()=>JSON.stringify([workspaceMode.value,draft.value?.problem.labId,fileEntries.value.map(f=>f.path),tabs.value.find(t=>t.document.file==='LPMake.txt')?.document.source]),()=>{
+ clearTimeout(membershipTimer);includedSources.value=null;if(!workspaceMode.value)return;
+ const lab=draft.value!.problem.labId,make=tabs.value.find(t=>t.document.file==='LPMake.txt')?.document.source;
+ membershipTimer=setTimeout(()=>void (async()=>{try{const text=make??(await api.workspaceOpen(lab,'LPMake.txt')).source,sources=await api.workspaceSources(lab,text);if(draft.value?.problem.labId===lab){includedSources.value=sources;membershipMessage.value='';}}catch(e){membershipMessage.value=message(e);}})(),250);
+},{immediate:true});
+watch(()=>JSON.stringify([workspaceMode.value,draft.value?.problem.labId,tabs.value.map(t=>t.document.file),activeTab.value?.document.file,expanded.value,sidebarCollapsed.value,sidebarWidth.value]),()=>{
+ clearTimeout(viewTimer);if(!workspaceMode.value)return;
+ viewTimer=setTimeout(()=>{void api.workspaceView(draft.value!.problem.labId,{openFiles:tabs.value.flatMap(t=>t.document.file?[t.document.file]:[]),activeFile:activeTab.value?.document.file,expanded:clone(expanded.value),sidebarWidth:sidebarWidth.value,sidebarCollapsed:sidebarCollapsed.value}).catch(e=>error.value=message(e));},250);
+});
+onBeforeUnmount(()=>{clearTimeout(viewTimer);clearTimeout(membershipTimer);clearInterval(hintTimer);clearTimeout(noticeTimer);clearTimeout(pulseTimer);clearTimeout(saveTimer);clearTimeout(checkTimer);disposers.forEach(d=>d());window.removeEventListener('keydown',handleShortcut,true);});
 </script>
 <template>
  <div class="app-shell" :data-theme="config?.theme||'dark'">
-  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span></div><span class="version">v{{version||'0.1.0-dev.7'}}</span></header>
+  <header class="brandbar"><div class="brand"><span class="brand-mark">L<span>↗</span></span><strong>LabPad</strong><span class="dev-tag">DEV</span></div><span class="version">v{{version||'0.1.0-dev.8'}}</span></header>
   <div v-if="error" class="alert error" role="alert"><span>{{error}}</span><button @click="error=''">关闭</button></div>
   <div v-if="!ready" class="loading"><h2>正在准备工作区</h2><p>加载配置、源码与本地编译器。</p></div>
   <template v-if="ready&&draft&&config">
    <section class="toolbar">
-    <div class="project-select"><label>实验项目<select aria-label="实验项目" :value="draft.problem.labId" :disabled="blocked" @change="selectionAction($event,true)"><option value="">&lt;无&gt;</option><option v-for="p in projects" :key="p.labId" :value="p.labId">{{p.labId}}</option><option value="@new:lab">＋ 新建项目…</option></select></label><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label><div class="run-actions"><button class="primary" :disabled="blocked||!activeTab||(!!draft.problem.testCases.length&&!selectedCases.length)" title="编译并运行（F9 / Ctrl+Enter）" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
-    <div class="toolbar-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
+    <div class="project-select"><label>实验项目<ProjectSelect :value="draft.problem.labId" :projects="projects" :disabled="blocked" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectLab(value)))" @delete="value=>action(()=>deleteLab(value))"/></label><template v-if="!workspaceMode"><span class="path-divider">/</span><label>题号<ProblemSelect :value="draft.problem.problemId" :problems="problems" :states="problemStates" :disabled="blocked" :can-create="!!draft.problem.labId" :theme="config.theme" @select="value=>action(()=>fileAction(()=>selectProblem(value)))"/></label></template><div class="run-actions"><button class="primary" :disabled="blocked||(!activeTab&&!workspaceMode)||(!!draft.problem.testCases.length&&!selectedCases.length)" :title="'编译并运行（'+shortcutLabel('run')+'）'" @click="action(run)">▶ {{draft.problem.testCases.length?(selectedCases.length===draft.problem.testCases.length?'编译并运行测试点':'编译并运行已选点'):'编译并运行'}}</button><button class="stop" :disabled="!busy" @click="action(stop)">■ 停止</button><span class="phase"><i :class="{pulse:!!busy}"></i>{{phase}}</span></div></div>
+    <div class="toolbar-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><ActionMenu label="导入" :items="[{label:'导入源码',value:'source'},{label:'导入标准 I/O',value:'io'},{label:'导入实验项目',value:'project'}]" :disabled="blocked" @select="action(()=>chooseImport($event))"/><ActionMenu label="保存" :items="[{label:'保存当前',value:'current'},{label:'保存全部',value:'all'}]" :disabled="fileBusy||(!tabs.length&&!rulesDirty)" @select="action(()=>chooseSave($event))"/><ActionMenu label="导出" :items="[{label:'导出源码',value:'source'},{label:'导出实验项目',value:'project'},{label:'导出当前测试点',value:'currentTests',separator:true},{label:'导出项目测试点',value:'projectTests'}]" :disabled="blocked" @select="action(()=>chooseExport($event))"/><span class="toolbar-separator"></span><button class="settings-button" :disabled="fileBusy" @click="openSettings">⚙ 设置</button></div>
    </section>
    <Splitpanes class="work-layout" horizontal :maximize-panes="false" @resized="resized('outputPercent',$event)"><Pane :size="100-config.layout.outputPercent" :min-size="35" :max-size="88"><Splitpanes class="workspace" :maximize-panes="false" @resized="resized('editorPercent',$event)">
     <Pane class="editor-pane" :size="config.layout.editorPercent" :min-size="20" :max-size="80">
-    <SourceTabs v-if="tabs.length" :format-visible="cursor.focused&&!browsingTabs" :formatting="formatting" @browse="browsingTabs=true" @format="action(formatCode)" :tabs="tabs.map(t=>({id:t.id,name:t.document.name||t.document.sourceFile?.split(/[\\/]/).pop()||'空项目.c',path:t.document.sourceFile||'',dirty:t.dirty,status:t.id===activeId?saveStatus:t.status}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab($event)" @action="(value,id)=>action(()=>tabAction(value,id))"/>
-    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="blocked" @cursor="reportCursor" @pointerdown="browsingTabs=false" @keydown.capture="browsingTabs=false"/>
+    <div class="editor-workspace"><FileTree v-if="workspaceMode&&!sidebarCollapsed" :style="{width:sidebarWidth+'px'}" :files="fileEntries" :expanded="expanded" :active="draft.file||''" :disabled="blocked" :theme="config.theme" @open="file=>action(()=>openFile(file))" @expand="expanded=$event" @resize="sidebarWidth=$event" @action="(value,file)=>action(()=>treeAction(value,file))"/><div class="editor-content"><button v-if="workspaceMode&&sidebarCollapsed" class="sidebar-toggle" @click="sidebarCollapsed=false">显示文件 ›</button>
+<SourceTabs v-if="tabs.length" :workspace="workspaceMode" :can-format="canFormat" :format-visible="cursor.focused&&!browsingTabs" :formatting="formatting" @browse="browsingTabs=true" @format="action(formatCode)" :tabs="tabs.map(t=>({id:t.id,name:tabName(t.document),path:t.document.sourceFile||'',dirty:t.dirty,status:t.id===activeId?saveStatus:t.status}))" :active="activeId" :theme="config.theme" :disabled="blocked" @activate="activateTab($event)" @action="(value,id)=>action(()=>tabAction(value,id))"/>
+    <CodeEditor v-if="tabs.length" ref="editor" v-model="draft.source" :file="draft.file" :document-id="documentEpoch" :open-ids="tabs.map(t=>t.id)" :indent-size="config.indentSize" :theme="config.theme" :disabled="fileBusy||!!exportKind" @cursor="reportCursor" @pointerdown="browsingTabs=false" @keydown.capture="browsingTabs=false"/>
     <div v-else class="editor-empty"><strong>代码在这里等你</strong><p>新建一份源码，或导入已有文件，继续编写。</p><div class="empty-editor-actions"><ActionMenu label="新建源码" :items="[{label:'C 源码（.c）',value:'c'},{label:'C++ 源码（.cpp）',value:'cpp'}]" :disabled="blocked" @select="action(()=>fileAction(()=>newSource($event)))"/><button :disabled="blocked" @click="action(recentSource)">最近源码</button></div></div>
-    <div class="editor-status"><span>{{draft.language==='c'?'C':'C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存'}}</span></div>
-   </Pane>
+    <div class="editor-status"><span v-if="inactiveSource" class="build-excluded" title="检查 LPMake 的 add_files 与 remove_files">当前源码未参与构建</span><span v-else-if="workspaceMode&&membershipMessage" class="build-excluded" :title="membershipMessage">请检查 LPMake</span><span v-else>{{draft.language==='c'?'C':'C++'}} · 空格：{{config.indentSize}}</span><span>{{config.saveMode==='auto'?'自动保存':'手动保存'}}</span></div>
+   </div></div></Pane>
     <Pane class="cases-pane" :size="100-config.layout.editorPercent" :min-size="20" :max-size="80"><div class="pane-heading"><div>测试点 <span class="counter">{{draft.problem.testCases.length}}</span><span v-if="finished" class="passed-count">{{passed}} / {{draft.problem.testCases.length}} 通过</span></div><div class="small-actions"><ResultHelp :theme="config.theme"/><button v-if="failedIds.length" :disabled="blocked" @click="locateFailed">定位未通过</button><button v-if="failedIds.length" :disabled="blocked" @click="action(()=>run(failedIds))">重测未通过</button><button :disabled="blocked" title="比较规则与时限保存在此 JSON 中" @click="action(()=>api.showProblemFile(snapshot()))">题目文件</button><button :disabled="blocked" title="重新读取已保存的源码与题目规则" @click="action(()=>fileAction(reload))">重新加载</button><button :disabled="blocked" @click="addCase">＋ 新增</button></div></div>
      <div v-if="draft.problem.testCases.length" class="case-selection"><label><input type="checkbox" aria-label="选择全部测试点" :checked="selectedCases.length===draft.problem.testCases.length" :indeterminate.prop="!!selectedCases.length&&selectedCases.length<draft.problem.testCases.length" :disabled="blocked" @change="selectedCases=($event.target as HTMLInputElement).checked?draft.problem.testCases.map(t=>t.id):[]">已选 {{selectedCases.length}} / {{draft.problem.testCases.length}}</label></div><div class="cases-list"><div v-if="!draft.problem.testCases.length" class="empty-state"><h3>直接运行，或添加测试点</h3><p>没有测试点时，编译成功后进入下方调试页。<br>需要比较输出时，导入标准 I/O 或新增测试点。</p><button :disabled="blocked" @click="addCase">＋ 新增测试点</button></div>
       <article v-for="(test,index) in draft.problem.testCases" :key="test.id" class="case-card" :id="'test-case-'+index" :data-status="results[test.id]?.verdict?.toLowerCase()||(busy==='judge'&&runningCases.includes(test.id)?'running':'neutral')">
@@ -394,17 +491,19 @@ onBeforeUnmount(()=>{clearInterval(hintTimer);clearTimeout(noticeTimer);clearTim
     <div v-if="settingsMessage" class="settings-message" role="alert">{{settingsMessage}}</div>
     <fieldset class="settings-scroll" :disabled="settingsSaving">
      <section><h3>个人信息</h3><p>填写学号后，导出的文件名会自动加上学号。留空也可以导出。</p><div class="field-grid"><label>班号<input v-model="settings.classId" aria-label="班号" placeholder="例如 9527"></label><label>姓名<input v-model="settings.name" aria-label="姓名" placeholder="例如 马冬梅"></label><label>学号<input v-model="settings.studentId" aria-label="学号" placeholder="例如 7355608"></label></div></section>
-     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><div class="field-grid two"><label>界面缩放<select v-model.number="settings.zoomFactor" aria-label="界面缩放"><option v-for="scale in [0.75,0.8,0.9,1,1.1,1.25,1.5,1.75,2]" :key="scale" :value="scale">{{Math.round(scale*100)}}%</option></select></label><label>快捷键<button aria-label="设置快捷键…" @click="action(()=>api.openShortcuts())">设置快捷键…</button></label></div><p>导入的源码保存在数据目录；保存更新当前副本。</p></section>
+     <section><h3>编辑与保存</h3><div class="field-grid two"><label>保存方式<select v-model="settings.saveMode" aria-label="保存方式"><option value="manual">手动保存（默认）</option><option value="auto">自动保存</option></select></label><label>源码语言<select v-model="settings.language" aria-label="源码语言"><option value="c">C（.c）</option><option value="cpp">C++（.cpp）</option></select></label><label>Tab / 缩进空格数<select v-model.number="settings.indentSize" aria-label="Tab / 缩进空格数"><option :value="1">1 个空格</option><option :value="2">2 个空格</option><option :value="4">4 个空格（默认）</option></select></label><label>主题<select v-model="settings.theme" aria-label="主题"><option value="dark">暗色 · VS Code</option><option value="light">亮色 · VS Code</option></select></label></div><label class="checkbox-field"><input v-model="settings.formatOnSave" type="checkbox" aria-label="保存时自动格式化">保存时自动格式化（clang-format）</label><div class="field-grid two"><label>界面缩放<ZoomSelect v-model="settings.zoomFactor" :theme="settings.theme"/></label><label>快捷键<button aria-label="设置快捷键…" @click="action(()=>api.openShortcuts())">设置快捷键…</button></label></div><p>导入的源码保存在数据目录；保存更新当前副本。</p></section>
      <section><h3>数据位置</h3><PathField v-model="settingsRoot" label="数据保存位置" kind="directory" @valid="pathValidity.data=$event"/><p>请选择已存在的文件夹。更换位置时复制现有资料，原目录保留。</p></section>
      <section><div class="settings-section-heading"><h3>编译器</h3><button v-if="settings.compiler.mode==='custom'" :disabled="compilerScanning||!!busy" @click="action(detectInstalledCompilers)">{{compilerScanning?'正在检测…':'自动检测'}}</button></div><p>内置 Zig 启动时静默预热，自动使用可用核心；缓存超过 2 GB 时自动回收。</p><div class="field-grid"><label>使用方式<select v-model="settings.compiler.mode" aria-label="编译器使用方式"><option value="builtin">内置 Zig</option><option value="custom">自定义编译器</option></select></label><label v-if="settings.compiler.mode==='custom'">编译器类型<select v-model="settings.compiler.kind" aria-label="编译器类型"><option value="zig">Zig</option><option value="gcc">GCC</option><option value="clang">Clang</option></select></label></div><div v-if="settings.compiler.mode==='custom'" class="compiler-paths"><PathField v-model="settings.compiler.cPath" label="C 编译器路径" kind="executable" @valid="pathValidity.c=$event"/><PathField v-model="settings.compiler.cppPath" label="C++ 编译器路径" kind="executable" :allow-empty="settings.compiler.kind==='zig'||settings.language==='c'" @valid="pathValidity.cpp=$event"/></div><div class="cache-controls"><button :disabled="!!busy||clearingCache" @click="clearCache">{{clearingCache?'正在清理…':'清理编译缓存'}}</button><span role="status">{{cacheMessage}}</span></div></section>
-     <section><h3>高级编译参数</h3><p>每行一个参数。源码和输出路径由程序追加。</p><div class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></section>
+     <section><h3>高级编译参数</h3><p>每行一个参数。源码和输出路径由程序追加。</p><label v-if="draft?.problem.labId">参数范围<select v-model="parameterScope" aria-label="参数范围"><option value="global">本机默认</option><option value="project">当前实验 · {{draft?.problem.labId}}</option></select></label><template v-if="parameterScope==='project'"><label class="checkbox-field"><input v-model="projectOptions.inheritDefaults" type="checkbox">继承本机默认参数</label><template v-if="workspaceMode"><p>项目标准、宏及参数由 LPMake 管理，构建设置与文件内容同步。</p><button @click="settingsOpen=false;action(openBuildSettings)">编辑项目构建设置…</button></template><div v-else-if="!projectOptions.inheritDefaults" class="field-grid"><label>C 参数<textarea v-model="projectCArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="projectCppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="projectLinkArgs" rows="5" spellcheck="false"></textarea></label></div></template><div v-else class="field-grid"><label>C 参数<textarea v-model="cArgs" rows="5" spellcheck="false"></textarea></label><label>C++ 参数<textarea v-model="cppArgs" rows="5" spellcheck="false"></textarea></label><label>链接参数<textarea v-model="linkArgs" rows="5" spellcheck="false"></textarea></label></div></section>
      <section><h3>交互调试</h3><div class="field-grid two"><label>调试时限（毫秒，留空则手动停止）<input :value="settings.debugTimeLimitMs??''" @input="settings.debugTimeLimitMs=($event.target as HTMLInputElement).value===''?null:Number(($event.target as HTMLInputElement).value)" type="number" min="1"></label><label>终端显示缓冲（行）<input v-model.number="settings.terminalBufferLines" type="number" min="100" max="100000"></label></div></section>
     </fieldset>
     <div class="settings-footer"><div><button :disabled="settingsSaving" @click="settingsOpen=false">取消</button><button class="primary" :disabled="!!busy||settingsSaving||!validSettingsPaths" @click="saveSettings">{{settingsSaving?'保存中…':'保存设置'}}</button></div></div>
    </section>
   </div>
   <div v-if="compilerChoiceOpen" class="modal-backdrop compiler-picker-backdrop"><section ref="compilerDialog" tabindex="-1" class="compiler-picker" role="dialog" aria-modal="true" aria-labelledby="compiler-picker-title" @keydown.esc.stop.prevent="compilerChoiceOpen=false"><h2 id="compiler-picker-title">自动检测编译器</h2><template v-if="detectedCompilers.length"><p>选择编译器后，自动填写类型、路径和默认参数；保存设置后生效。</p><div class="compiler-options"><label v-for="candidate in detectedCompilers" :key="candidate.id" class="compiler-option"><input v-model="selectedCompiler" type="radio" name="detected-compiler" :value="candidate.id" :aria-label="candidate.name+' '+candidate.compiler.cPath"><span><strong>{{candidate.name}}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong><span>{{candidate.version}}</span><code>{{candidate.compiler.cPath}}</code><small v-if="candidate.target">{{candidate.target}}</small></span></label></div></template><p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p><div class="compiler-picker-actions"><button @click="compilerChoiceOpen=false">{{detectedCompilers.length?'取消':'关闭'}}</button><button v-if="detectedCompilers.length" class="primary" :disabled="!selectedCompiler" @click="useDetectedCompiler">使用此编译器</button></div></section></div>
-  <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
-  <ExportDialog v-if="exportKind&&exportCurrent&&config" ref="exportDialog" :kind="exportKind" :current="exportCurrent" :buffers="exportBuffers" :theme="config.theme" :student-id="config.studentId" :suspended="settingsOpen" @close="exportKind=null" @settings="openSettings" @done="exportDone"/>
+  <div v-if="newKind" class="modal-backdrop"><section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title"><h2 id="create-title">{{newKind==='lab'?'新建项目':'新建题号'}}</h2><label v-if="newKind==='lab'">项目类型<select v-model="newMode" aria-label="项目类型"><option value="problem-set">题目集 · 单文件练习</option><option value="project">多文件项目 · 一个程序</option></select></label><label>{{newKind==='lab'?'项目名称':'题号'}}<input v-model="newName" :aria-label="newKind==='lab'?'项目名称':'新题号'" :placeholder="newKind==='lab'?'例如 实验2':'例如 Lab 2-1'" :disabled="newSaving" @keydown.enter="createItem" autofocus></label><p v-if="newMessage" class="field-error" role="alert">{{newMessage}}</p><div class="create-actions"><button :disabled="newSaving" @click="newKind=null">取消</button><button class="primary" :disabled="newSaving||!newName.trim()" @click="createItem">新建</button></div></section></div>
+  <div v-if="fileDialog" class="modal-backdrop" @keydown.esc.stop.prevent="!fileSaving&&(fileDialog=undefined)"><section class="create-dialog" role="dialog" aria-modal="true" aria-label="项目文件"><h2>{{fileDialog.action==='rename'?'重命名':fileDialog.action==='newFolder'?'新建文件夹':'新建项目文件'}}</h2><label>项目内路径<input v-model="fileDialog.name" aria-label="项目内路径" :disabled="fileSaving" @keydown.enter="applyFileAction"></label><p>使用 / 分隔文件夹，例如 src/stack.c 或 include/stack.h。</p><label v-if="fileDialog.action==='rename'" class="checkbox-field"><input v-model="syncReferences" type="checkbox">同步 LPMake 中对应的显式路径引用</label><p v-if="fileMessage" class="field-error" role="alert">{{fileMessage}}</p><div class="create-actions"><button :disabled="fileSaving" @click="fileDialog=undefined">取消</button><button class="primary" :disabled="fileSaving||!fileDialog.name" @click="applyFileAction">确定</button></div></section></div>
+   <BuildSettings v-if="buildSettings" :source="buildSettings.source" :revision="buildSettings.revision" @close="buildSettings=undefined" @apply="applyBuildSettings"/>
+<ExportDialog v-if="exportKind&&exportCurrent&&config" ref="exportDialog" :workspace="workspaceMode" :kind="exportKind" :current="exportCurrent" :buffers="exportBuffers" :theme="config.theme" :student-id="config.studentId" :suspended="settingsOpen" @close="exportKind=null" @settings="openSettings" @done="exportDone"/>
  </div>
 </template>

@@ -2,37 +2,39 @@
 
 LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项目、编写代码、比较测试输出，再导出源码或实验 ZIP。助教可用同一判题内核在命令行批量测试提交文件。
 
-当前版本：**0.1.0-dev.7（预发布）**。[下载](https://github.com/XePWang/labpad/releases/tag/v0.1.0-dev.7) · [全部版本](https://github.com/XePWang/labpad/releases)
+当前版本：**0.1.0-dev.8（预发布）**。[下载](https://github.com/XePWang/labpad/releases/tag/v0.1.0-dev.8) · [全部版本](https://github.com/XePWang/labpad/releases)
 
-支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig 和离线格式化器，完整解压后启动即可。macOS 的签名及实机核验范围见[版本验证记录](doc/0.1.0-dev.7/verification.md)。
+支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig 和离线格式化器，完整解压后启动即可。macOS 的签名及实机核验范围见[版本验证记录](doc/0.1.0-dev.8/verification.md)。
 
 ## 文档与快速开始
 
 | 使用者 | 文档 |
 | --- | --- |
-| 同学 | [学生指南](doc/0.1.0-dev.7/student-guide.md)：下载安装、编写自测、源码版本、导出上传与 FAQ |
-| 助教 | [助教指南](doc/0.1.0-dev.7/ta-guide.md)：项目 JSON、比较规则、批测、CSV 与补交 |
-| 维护者 | [技术说明](doc/0.1.0-dev.7/maintainer-guide.md)：模块、存储、进程、构建与验证 |
+| 同学 | [学生指南](doc/0.1.0-dev.8/student-guide.md)：下载安装、编写自测、源码版本、导出上传与 FAQ |
+| 助教 | [助教指南](doc/0.1.0-dev.8/ta-guide.md)：项目 JSON、比较规则、批测、CSV 与补交 |
+| 维护者 | [技术说明](doc/0.1.0-dev.8/maintainer-guide.md)：模块、存储、进程、构建与验证 |
 
 1. 下载对应桌面包，完整解压并启动 LabPad。
 2. 在“设置”中填写班号、姓名、学号。
 3. “导入 → 导入实验项目”，选择课程 JSON。
-4. 选择题号，编写代码，按 F9 或 Ctrl+Enter 自测。
-5. “导出 → 导出实验项目”，勾选题号及版本，检查提醒，生成 ZIP 后上传课程平台。
+4. 题目集选择题号，多文件项目使用文件树；编写后按 F9 或 Ctrl+Enter 自测。
+5. “导出 → 导出实验项目”，选择提交内容及是否附带配置，检查提醒，生成 ZIP 后上传课程平台。
 
-![LabPad 编辑与测试界面](doc/0.1.0-dev.7/images/workspace-dark.png)
+![LabPad 编辑与测试界面](doc/0.1.0-dev.8/images/dev8-workspace-dark.png)
+
+完整构建语法及工程示例见 [LPMake 使用手册](doc/0.1.0-dev.8/lpmake-guide.md)。
 
 ## 编辑、调试与保存
 
 - CodeMirror 6 提供 C/C++ 语法、上下文缩进、查找替换和独立撤销历史。空格显示为淡色小点，Tab 可设为 1 / 2 / 4 空格。
-- 一条标签栏管理同题多版本，格式化按钮按编辑状态显示；关闭全部标签后保留“新建源码 / 最近源码”。
+- 题目集用标签管理同题多版本，多文件项目用标签管理实际文件；格式化按钮按编辑状态显示。文件树可折叠、调整宽度，LPMake 与构建表单共享文本。
 - 手动保存默认开启；保存时默认使用离线 WASM clang-format，可在设置中调整。
-- 源码统一导入为数据目录中的副本，保存当前 / 全部更新副本。切题打开最近五份，旧版本仍保留。
+- 源码统一导入为数据目录中的副本，保存当前 / 全部更新副本。题目集切题打开最近五份，旧版本仍保留；多文件项目一次构建全部匹配源文件，支持未保存源码、头文件与 LPMake 快照。
 - 测试点可全部、部分、单点运行，也可定位及重测未通过项；颜色和简明说明帮助识别 AC、WA、CE、TLE、RE、OLE。
 - “输出”保留原始编译与运行信息；“调试”提供独立的 > 输入行、中文输入、EOF 和停止操作。
-- 编辑区与测试点、输出区之间可拖动调整；亮暗主题、界面缩放、快捷键和自定义编译器均可设置。
+- 编辑区与测试点、输出区之间可拖动调整；亮暗主题、25%–400% 的 16 档缩放、快捷键和自定义编译器均可设置。
 
-数据默认保存在程序旁的 labpad 文件夹。设置中可选择已存在的空文件夹来迁移数据，并浏览编译器路径。Zig 启动时静默预热，缓存超过 2 GiB 自动回收，也可手动清理。
+数据默认保存在程序旁的 labpad 文件夹。设置中可选择已存在的空文件夹来迁移数据，并浏览编译器路径。Zig 启动时静默预热；多文件直接调用 zig cc/c++，与 GCC/Clang 共用有界并行编译及单次链接。缓存超过 2 GiB 自动回收，也可手动清理。首次编译仍可能准备不同模式或标准库。
 
 Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Option+F 替换；运行仍为 F9 / Control+Enter。Command+H、Command+Q 保留系统行为，详细默认键位及实测状态见指南。
 
@@ -63,7 +65,18 @@ Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Opti
 }
 ~~~
 
-题号按 problems 顺序显示，每题可选择 c/cpp。source 支持完整字符串或逐行数组，省略时使用默认模板；title 默认等于题号。时限默认 1000 ms，输出上限默认 65536 字节，测试点默认空数组。同名项目可取消或建立副本。
+题号按 problems 顺序显示，每题可选择 c/cpp。后续实验可通过 templates.c / templates.cpp 同时提供两套源码模板，初始语言由 language 决定；[双模板示例](examples/dual-templates.project.json)。source 支持完整字符串或逐行数组，省略时选用当前语言模板，未提供则使用默认模板；title 默认等于题号。时限默认 1000 ms，输出上限默认 65536 字节，测试点默认空数组。同名项目可建立副本，或只更新测试点及明确指定的规则；源码、模板和未保存编辑保留。
+
+多文件项目使用 schemaVersion: 2、mode: "project"，工作区级 tests 和 files 数组；默认构建文件为 LPMake.txt。完整示例见 [multi-file.project.json](examples/multi-file.project.json)。题目集 v1 保持兼容，v2 可显式写 mode: "problem-set"。
+
+~~~text
+target("app")
+set_standard("c11")
+add_includedirs("include")
+add_files("src/*.c")
+~~~
+
+支持 C/C++ 混合、按语言设置标准、Glob、宏、库和原始参数。set_language 可明确覆盖扩展名语言；默认 debug，全量有界并行编译，Zig 复用原生缓存。命令和参数顺序见维护者指南。
 
 课程示例提供编写起点与公开样例。Lab 1-2 使用固定虚构参数 x=12、y=8，修改个人参数后应同步修改预期输出；金字塔使用严格文本；回文素数配置 5000 ms。实验3的游泳接力、牛顿迭代各有 10 个自动测试点，食物搭配以一个完整测试核对全部七种解；猜数字游戏提供 10 项手动调试检查。选做牛顿迭代题在标签与数字之间保留空格，绝对、相对容差均为 1e-5，迭代计数约定见助教指南。输入回显不属于程序输出。详细格式见助教指南。
 
@@ -82,7 +95,7 @@ Mac 默认使用 Command+S 保存、Command+Option+S 保存全部、Command+Opti
 }
 ~~~
 
-testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes 可省略，省略时保留当前设置。题目 JSON 不包含学生源码，源码与版本元数据分别持久化。
+可选择覆盖或追加测试点。覆盖时 comparison、timeLimitMs、outputLimitBytes 缺省则保留当前值；追加保留原点规则，将导入默认比较方式落实到新点，并预览重复编号改名。时限与输出上限可单独选择是否采用导入值。文件携带项目名或题号时，必须与当前目标一致。题目 JSON 不包含学生源码，源码与版本元数据分别持久化。
 
 ### 比较规则
 
@@ -115,7 +128,9 @@ testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes �
 
 ## 导出
 
-“导出源码”生成当前 .c/.cpp。“导出实验项目”先展示题号与版本两层复选框，默认全选；取消题号取消本题全部版本，取消一个版本只减少该文件，部分选择显示半选。只有勾选版本参与预检和 ZIP。
+“导出当前测试点 / 项目测试点”分别生成 labpad.testCases / labpad.projectTests，可通过原导入入口恢复测试集合。
+
+“导出源码”生成当前文件。“导出实验项目”先展示题号与版本两层复选框，默认全选；取消题号取消本题全部版本，取消一个版本只减少该文件，部分选择显示半选。只有勾选版本参与预检和 ZIP。
 
 未编辑、未全部通过及身份缺项会提醒；身份缺项可点击“前往设置”，保存后保留选择继续导出。同题多版本使用原名、_v2、_v3 后缀，列表预览最终文件名：
 
@@ -127,6 +142,8 @@ testCases 替换当前测试点；comparison、timeLimitMs、outputLimitBytes �
    └─ 7355608_Lab 2-2.c
 ~~~
 
+多文件项目 ZIP 保留相对目录、文件名和 LPMake；只命名外层 ZIP 及其同名文件夹，保存窗口改名会同步到包内文件夹。“附带 LabPad 项目配置”在题目集默认不选、多文件项目默认选；附带配置的 ZIP 可重新导入，恢复本次源码、版本与测试规则。项目下拉项右键可删除项目，经二次确认后移除该项目的托管数据。
+
 空项目导出为“学号_空项目.c/.cpp”；未填写学号则为“空项目.c/.cpp”。上传由使用者在课程平台完成。
 
 ## 命令行批测
@@ -135,15 +152,30 @@ CLI Linux x64 包需要 Node.js 22+、GCC/G++ 或 Zig；直接复用桌面 Judge
 
 ~~~sh
 labpad judge --source solution.c --tests problem.io.json --compiler gcc
+labpad judge --project ./workspace --tests project.json --compiler gcc
 labpad grade lab2
 labpad grade lab2 --student 7355608
 ~~~
 
-按“学号 × 实验 × 题号”完整测试所有版本，择最高分，同分按稳定来源顺序选择。summary.csv 按名单顺序输出有效文件、逐题通过数与百分制得分；cases.csv 输出采用版本的逐点结果。单人重测保留其他行与已有评语；评语由使用者在外部整理。
+题目集按“学号 × 实验 × 题号”，多文件项目按“学号 × 实验 × 整份工程”完整测试所有版本，择最高分，同分按稳定来源顺序选择。summary.csv 按名单顺序输出有效文件、逐题通过数与百分制得分；cases.csv 输出采用版本的逐点结果。单人重测保留其他行与已有评语；评语由使用者在外部整理。
+
+多文件收件接受完整目录或 ZIP，默认使用教师 LPMake 及测试，不拼接不同提交的文件。
 
 Linux 批测默认使用 Bubblewrap；安装与环境预检、CSV 字段和可信夹具的直接运行方式见助教指南。
 
 ## 版本更新
+
+### 0.1.0-dev.8
+
+- 新增多文件项目、可折叠文件树、实际文件标签及 LPMake；题目集保持单文件多版本逻辑。
+- LPMake 使用 Lezer 语法/CST，支持 14 条声明、注释保留、补全和与编辑缓冲同步的构建表单。
+- Zig 直接调用 zig cc/c++，与 GCC/Clang 共用有界并行编译和一次链接；支持混合语言、未保存快照、受控缓存及确定顺序诊断。
+- 导入 I/O 支持覆盖/追加，项目支持就地更新测试点；新增当前/项目测试点导出。
+- 项目 ZIP 可附带配置并重建，工程目录及 LPMake 保留；项目参数独立于本机默认值。
+- 题目集和多文件项目支持分别下发 C/C++ 源码模板；文件树新增一键折叠全部、嵌套目录及 F2 / Delete 操作。
+- 快捷键栏按 Windows、Linux、Mac 显示实际按键，录制、编辑及界面提示保持一致。
+- 项目下拉支持右键删除与明确二次确认；统一箭头，缩放扩充至 25%–400%，Ctrl/Cmd+0 恢复 100%。
+- CLI 新增单项目及完整目录/ZIP 批测，教师规则锁定，完整候选择优；同步更新三份指南。平台证据见[dev.8 验证记录](doc/0.1.0-dev.8/verification.md)。
 
 ### 0.1.0-dev.7
 

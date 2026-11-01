@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {nextTick,watch,ref} from 'vue';
 import {ContextMenuRoot,ContextMenuTrigger,ContextMenuPortal,ContextMenuContent,ContextMenuItem,ContextMenuSeparator} from 'reka-ui';
-const props=defineProps<{tabs:{id:string;name:string;path:string;dirty:boolean;status:string}[];active:string;disabled:boolean;theme:string;formatVisible:boolean;formatting:boolean}>();
+const props=defineProps<{tabs:{id:string;name:string;path:string;dirty:boolean;status:string}[];active:string;disabled:boolean;theme:string;formatVisible:boolean;formatting:boolean;workspace?:boolean;canFormat?:boolean}>();
 const emit=defineEmits<{(e:'activate',id:string):void;(e:'action',value:string,id:string):void;(e:'browse'):void;(e:'format'):void}>();
 const row=ref<HTMLElement>();
 watch(()=>props.active,()=>nextTick(()=>row.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest',inline:'nearest'})));
@@ -11,11 +11,11 @@ const items=[['close','关闭'],['others','关闭其他'],['right','关闭右侧
  <div class="source-strip"><div ref="row" class="source-tabs" role="tablist" aria-label="源码标签" @pointerenter="emit('browse')" @focusin="emit('browse')">
   <ContextMenuRoot v-for="tab in tabs" :key="tab.id">
    <ContextMenuTrigger as-child :disabled="disabled"><div class="source-tab" :class="{active:tab.id===active}" :title="tab.path" role="tab" :aria-selected="tab.id===active" :tabindex="tab.id===active?0:-1" @click="!disabled&&emit('activate',tab.id)" @keydown.enter.prevent="!disabled&&emit('activate',tab.id)" @keydown.space.prevent="!disabled&&emit('activate',tab.id)" @keydown.right.prevent="!disabled&&emit('activate',tabs[(tabs.findIndex(t=>t.id===active)+1)%tabs.length].id)" @keydown.left.prevent="!disabled&&emit('activate',tabs[(tabs.findIndex(t=>t.id===active)-1+tabs.length)%tabs.length].id)">
-    <span class="file-icon">{{tab.name.endsWith('.cpp')?'C++':'C'}}</span><span>{{tab.name}}</span><span v-if="tab.dirty" class="tab-dirty" aria-label="未保存">●</span><span v-if="tab.id===active" class="sr-only save-status" aria-live="polite">{{tab.status}}</span><button :aria-label="'关闭 '+tab.name" :disabled="disabled" @click.stop="emit('action','close',tab.id)">×</button>
+    <span class="file-icon">{{tab.name==='LPMake.txt'?'⚙':tab.name.endsWith('.cpp')?'C++':'C'}}</span><span>{{tab.name}}</span><span v-if="tab.dirty" class="tab-dirty" aria-label="未保存">●</span><span v-if="tab.id===active" class="sr-only save-status" aria-live="polite">{{tab.status}}</span><button :aria-label="'关闭 '+tab.name" :disabled="disabled" @click.stop="emit('action','close',tab.id)">×</button>
    </div></ContextMenuTrigger>
-   <ContextMenuPortal><ContextMenuContent class="tab-context" :data-theme="theme" :collision-padding="8"><template v-for="([id,label],i) in items" :key="id"><ContextMenuSeparator v-if="i===5||i===6" class="tab-menu-separator"/><ContextMenuItem class="tab-menu-item" :disabled="disabled" @select="emit('action',id,tab.id)">{{label}}</ContextMenuItem></template></ContextMenuContent></ContextMenuPortal>
+   <ContextMenuPortal><ContextMenuContent class="tab-context" :data-theme="theme" :collision-padding="8"><template v-for="([id,label],i) in items.filter(([id])=>!workspace||id!=='version')" :key="id"><ContextMenuSeparator v-if="i===5||i===6" class="tab-menu-separator"/><ContextMenuItem class="tab-menu-item" :disabled="disabled" @select="emit('action',id,tab.id)">{{label}}</ContextMenuItem></template></ContextMenuContent></ContextMenuPortal>
   </ContextMenuRoot>
- </div><div class="tab-format" :class="{visible:formatVisible}"><button class="format-button" :disabled="disabled||formatting" @click="emit('format')">{{formatting?'格式化中…':'格式化代码'}}</button></div></div>
+ </div><div v-if="canFormat!==false" class="tab-format" :class="{visible:formatVisible}"><button class="format-button" :disabled="disabled||formatting" @click="emit('format')">{{formatting?'格式化中…':'格式化代码'}}</button></div></div>
 </template>
 <style>
 .source-strip{display:flex;align-items:stretch;flex-shrink:0;min-height:36px;background:var(--panel);border-bottom:1px solid var(--border)}.source-tabs{flex:1;min-width:0;display:flex;flex-shrink:0;overflow-x:auto;min-height:36px;max-width:100%;border-bottom:1px solid var(--line,#333);background:var(--panel,#252526);scrollbar-width:thin}

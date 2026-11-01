@@ -29,7 +29,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
 
   // Open/close child windows repeatedly; record a user-defined key.
   for(let cycle=0;cycle<4;cycle++){
-   await page.getByRole('button',{name:/设置/}).click();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();
+   await page.getByRole('button',{name:/设置/}).click();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();assert.ok(!(await popup.locator('body').innerText()).includes('$mod'));assert.equal(await popup.getByRole('textbox',{name:'保存当前 快捷键',exact:true}).inputValue(),process.platform==='darwin'?'⌘S':'Ctrl+S');
    if(!cycle){await popup.getByRole('button',{name:'录制',exact:true}).first().click();await popup.keyboard.press('F7');await until(()=>popup.getByRole('textbox',{name:'编译并运行 快捷键',exact:true}).inputValue().then(t=>t==='F7'),'recorded shortcut');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'record saved');}
    await popup.close();await button('取消').click();await until(()=>app.windows().length===1,'child disposed');
   }
@@ -56,7 +56,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   await page.getByRole('button',{name:/设置/}).click();await page.getByRole('textbox',{name:'数据保存位置',exact:true}).fill(relocated);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
   assert.equal((await state()).dataRoot,await fs.realpath(relocated));assert.ok((await state()).sourcePath.startsWith(relocated));assert.ok((await fs.readdir(relocated)).some(n=>n.startsWith('空项目.v')));assert.ok((await fs.readdir(data)).some(n=>n.startsWith('空项目.v')));
   for(const factor of ['2','0.75','1']){
-   await page.getByRole('button',{name:/设置/}).click();await page.getByRole('combobox',{name:'界面缩放',exact:true}).selectOption(factor);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
+   await page.getByRole('button',{name:/设置/}).click();await require('./selectors.cjs').zoom(page).selectOption(factor);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()),Number(factor));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   }
   await fs.writeFile(path.join(evidence,'resource-checks.json'),JSON.stringify({platform:process.platform,privateKB:samples,cycles:8},null,2));console.log('PASS source versions relocate with originals preserved and 75% / 200% scale fits without page overflow');
