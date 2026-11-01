@@ -16,6 +16,10 @@ export function fingerprint(draft:Draft,compiler:CompilerConfig,identity:string)
  return createHash('sha256').update(JSON.stringify([draft.workspace?'workspace':draft.language,files??draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
   p.comparison,p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),options,identity])).digest('hex');
 }
+export function compilationFingerprint(draft:Draft,compiler:CompilerConfig,identity:string){
+ const d={...draft,problem:{...draft.problem,timeLimitMs:1,outputLimitBytes:1,comparison:{type:'wcmp' as const},testCases:[]}};
+ return createHash('sha256').update(fingerprint(d,compiler,identity)).update(draft.workspace?'':draft.documentId??'').digest('hex');
+}
 export function checkRecord(draft:Draft,hash:string,result?:JudgeResult,previous?:CheckRecord):CheckRecord{
  const total=draft.problem.testCases.length,selected=new Set(result?.selectedCaseIds??draft.problem.testCases.map(t=>t.id));
  const old=previous?.fingerprint===hash?previous.cases??[]:[];
@@ -124,7 +128,6 @@ export function submissionZip(submission:Submission):Uint8Array{
 
 export async function prepareWorkspaceProject(storage:Storage,current:Draft,config:Config,buffers:Draft[],includeConfig=true,services?:SubmissionServices):Promise<Submission>{
  const labId=filePart(current.problem.labId,'项目名称'),snapshot=await storage.workspace.snapshot(labId,buffers),missing=identityWarning(config),warnings:string[]=[];
- if(current.workspaceBuild)snapshot.inheritDefaults=current.workspaceBuild.inheritDefaults;
  const state=await storage.workspace.read(labId),record=state.check;
  if(state.starters){
   const sources=Object.keys(snapshot.files).filter(f=>/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f));let unchanged=sources.length===Object.keys(state.starters).length;
@@ -139,7 +142,6 @@ export async function prepareWorkspaceProject(storage:Storage,current:Draft,conf
  const files=Object.entries(snapshot.files).map(([name,source])=>({name,source}));
  if(!files.some(f=>f.name==='LPMake.txt'))throw new ConfigError('',0,'The project is missing LPMake.txt.','Include LPMake.txt in the project root.');
  if(includeConfig){
-  if(snapshot.inheritDefaults)warnings.push('项目启用了参数继承，导入后会使用该设备的本机默认参数。');
   const pkg:any=workspacePackage(labId,snapshot,current.problem,state.templates);pkg.files=pkg.files.map((f:any)=>({path:f.path}));
   files.push({name:'labpad.project.json',source:JSON.stringify(pkg,null,2)+'\n'});
  }

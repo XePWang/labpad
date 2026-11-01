@@ -1,6 +1,8 @@
+import {independentMake} from './build/plan';
+import {ConfigError} from '../shared/lpmake';
 import {mkdir,readFile,readdir,lstat,rename,rm,writeFile,mkdtemp} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import writeFileAtomic from 'write-file-atomic';
 import {workspacePath,workspaceTemplate,parseWorkspacePackage,uniquePaths,type WorkspaceState,type WorkspaceFile,type WorkspaceSnapshot} from '../shared/workspace';
-import {defaultProblem,defaultSource} from '../shared/defaults';import {filePart,validateProblem} from '../shared/validate';import type {LoadedDraft,Draft,Language,Problem} from '../shared/types';
+import {defaultProblem,defaultSource,defaultConfig} from '../shared/defaults';import {filePart,validateProblem} from '../shared/validate';import type {LoadedDraft,Draft,Language,Problem} from '../shared/types';
 import {decodeText,readJSON,exists,writeSource} from './storage';
 export class WorkspaceStore{
  private tail:Promise<unknown>=Promise.resolve();
@@ -10,11 +12,35 @@ export class WorkspaceStore{
  async isProject(lab:string){return !!lab&&await exists(this.metadata(lab));}
  private enqueue<T>(fn:()=>Promise<T>){const task=this.tail.then(fn,fn);this.tail=task.catch(()=>{});return task;}
  async read(lab:string):Promise<WorkspaceState>{
-  await this.tail;const value=await readJSON(this.metadata(lab)) as WorkspaceState;
-  if(value?.schemaVersion!==2||value.mode!=='project'||value.labId!==lab||typeof value.inheritDefaults!=='boolean')throw new Error('项目状态格式无效');
+  await this.tail;let value=await readJSON(this.metadata(lab)) as WorkspaceState;
+  if(value&&Object.hasOwn(value,'inheritDefaults')){await this.migrate(lab);value=await readJSON(this.metadata(lab)) as WorkspaceState;}
+  if(value?.schemaVersion!==2||value.mode!=='project'||value.labId!==lab||(value.inheritDefaults!==undefined&&typeof value.inheritDefaults!=='boolean'))throw new Error('项目状态格式无效');
   validateProblem(value.tests);if(value.tests.labId!==lab||value.tests.problemId!=='')throw new Error('工作区测试目标不符');return value;
  }
  private async write(lab:string,state:WorkspaceState){await writeFileAtomic(this.metadata(lab),JSON.stringify(state,null,2)+'\n');}
+ private async legacyDefaults(){
+  const file=path.join(this.dataRoot,'config.json'),config=await exists(file)?await readJSON(file) as ReturnType<typeof defaultConfig>:defaultConfig();
+  return {c:config.compiler.cArgs,cpp:config.compiler.cppArgs,link:config.compiler.linkArgs};
+ }
+ private async commitSource(lab:string,target:string,source:string,state:WorkspaceState){
+  const oldSource=await readFile(target),oldMetadata=await readFile(this.metadata(lab));
+  try{if(!oldSource.equals(Buffer.from(source,'utf8')))await writeSource(target,source);await this.write(lab,state);}
+  catch(error){
+   const restore=async(file:string,original:Buffer)=>{const current=await readFile(file).catch(()=>undefined);if(!current?.equals(original))await writeFileAtomic(file,original);};
+   const restored=await Promise.allSettled([restore(target,oldSource),restore(this.metadata(lab),oldMetadata)]);
+   if(restored.some(r=>r.status==='rejected'))throw new AggregateError([error,...restored.filter(r=>r.status==='rejected').map(r=>(r as PromiseRejectedResult).reason)],'保存失败，恢复原文件时也发生错误；编辑草稿仍保留。');
+   throw error;
+  }
+ }
+ private async migrate(lab:string){
+  return this.enqueue(async()=>{
+   const state=await readJSON(this.metadata(lab)) as WorkspaceState;if(!Object.hasOwn(state,'inheritDefaults'))return;
+   const target=await this.path(lab,'LPMake.txt'),text=decodeText(await readFile(target)).text;
+   let source=text;
+   if(state.inheritDefaults)try{source=independentMake(text,await this.legacyDefaults());}catch(error){if(error instanceof ConfigError)return;throw error;}
+   delete state.inheritDefaults;await this.commitSource(lab,target,source,state);
+  });
+ }
  async path(lab:string,file:string,allowMissing=false){
   const root=this.root(lab),parts=workspacePath(file).split('/');let current=root;
   for(let i=0;i<parts.length;i++){current=path.join(current,parts[i]);try{if((await lstat(current)).isSymbolicLink())throw new Error('项目文件不支持符号链接：'+file);}catch(e:any){if(e.code==='ENOENT'&&allowMissing)break;throw e;}}
@@ -35,16 +61,17 @@ export class WorkspaceStore{
   const temporary=await mkdtemp(path.join(this.dataRoot,'.workspace-'));
   try{
    const files=pkg?Object.fromEntries(pkg.files.map(f=>[f.path,f.content])):workspaceTemplate(language);
+   if(pkg?.build.inheritDefaults===true)files['LPMake.txt']=independentMake(files['LPMake.txt'],await this.legacyDefaults());
    for(const [file,content] of Object.entries(files)){const target=path.join(temporary,workspacePath(file));await mkdir(path.dirname(target),{recursive:true});await writeFile(target,content,'utf8');}
    const first=Object.keys(files).find(f=>/\.(c|cpp|cc|cxx)$/i.test(f))??'LPMake.txt';
-   const state:WorkspaceState={schemaVersion:2,mode:'project',labId:lab,tests:{...(pkg?.tests??defaultProblem(lab,'')),labId:lab,problemId:''},inheritDefaults:pkg?.build.inheritDefaults??true,templates:pkg?.templates,starters:Object.fromEntries(Object.entries(files).filter(([f])=>/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f))),activeFile:first,openFiles:[first],expanded:['src','include'],sidebarWidth:190,sidebarCollapsed:false};
+   const state:WorkspaceState={schemaVersion:2,mode:'project',labId:lab,tests:{...(pkg?.tests??defaultProblem(lab,'')),labId:lab,problemId:''},templates:pkg?.templates,starters:Object.fromEntries(Object.entries(files).filter(([f])=>/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f))),activeFile:first,openFiles:[first],expanded:[],sidebarWidth:190,sidebarCollapsed:false};
    await writeFile(path.join(temporary,'.labpad-project.json'),JSON.stringify(state,null,2)+'\n');await rename(temporary,root);
   }catch(e){await rm(temporary,{recursive:true,force:true});throw e;}
   return this.open(lab,(await this.read(lab)).activeFile!);
  }
  async open(lab:string,file:string):Promise<LoadedDraft>{
   const state=await this.read(lab),target=await this.path(lab,file),decoded=decodeText(await readFile(target));
-  return {workspaceBuild:{inheritDefaults:state.inheritDefaults},file,documentId:'file:'+file,name:file,sourceFile:target,sourceEncoding:decoded.encoding,source:decoded.text,language:/\.(cpp|cc|cxx|hpp|hh)$/i.test(file)?'cpp':'c',problem:state.tests};
+  return {file,documentId:'file:'+file,name:file,sourceFile:target,sourceEncoding:decoded.encoding,source:decoded.text,language:/\.(cpp|cc|cxx|hpp|hh)$/i.test(file)?'cpp':'c',problem:state.tests};
  }
  async documents(lab:string){
   const state=await this.read(lab),files=await this.list(lab),paths=new Set(files.filter(f=>!f.directory).map(f=>f.path));
@@ -55,22 +82,17 @@ export class WorkspaceStore{
   const state=await this.read(lab),entries=await this.list(lab),files:Record<string,string>={};
   for(const item of entries)if(!item.directory)files[item.path]=decodeText(await readFile(await this.path(lab,item.path))).text;
   for(const d of buffers)if(d.problem.labId===lab&&d.file){workspacePath(d.file);if(!Object.hasOwn(files,d.file))throw new Error('编辑文件已不存在：'+d.file);files[d.file]=d.source;}
-  const overlay=[...buffers].reverse().find(d=>d.problem.labId===lab&&typeof d.workspaceBuild?.inheritDefaults==='boolean');
-  return {files,inheritDefaults:overlay?.workspaceBuild?.inheritDefaults??state.inheritDefaults};
+  return {files,...(state.inheritDefaults===true?{inheritDefaults:true}:{})};
  }
  async save(draft:Draft){
   if(!draft.file)throw new Error('请选择项目文件');const lab=draft.problem.labId,target=await this.path(lab,draft.file);
   return this.enqueue(async()=>{
-   const oldSource=await readFile(target),oldMetadata=await readFile(this.metadata(lab)),state=JSON.parse(oldMetadata.toString('utf8')) as WorkspaceState;
-   state.tests=structuredClone(validateProblem(draft.problem));
-   if(draft.file==='LPMake.txt'&&draft.workspaceBuild)state.inheritDefaults=draft.workspaceBuild.inheritDefaults;
-   try{await writeSource(target,draft.source);await this.write(lab,state);}
-   catch(error){
-    const restore=async(file:string,original:Buffer)=>{const current=await readFile(file).catch(()=>undefined);if(!current?.equals(original))await writeFileAtomic(file,original);};
-    const restored=await Promise.allSettled([restore(target,oldSource),restore(this.metadata(lab),oldMetadata)]);
-    if(restored.some(r=>r.status==='rejected'))throw new AggregateError([error,...restored.filter(r=>r.status==='rejected').map(r=>(r as PromiseRejectedResult).reason)],'保存失败，恢复原文件时也发生错误；编辑草稿仍保留。');
-    throw error;
+   const state=await readJSON(this.metadata(lab)) as WorkspaceState;state.tests=structuredClone(validateProblem(draft.problem));
+   let source=draft.source;
+   if(draft.file==='LPMake.txt'&&Object.hasOwn(state,'inheritDefaults')){
+    if(state.inheritDefaults)source=independentMake(source,await this.legacyDefaults());delete state.inheritDefaults;
    }
+   await this.commitSource(lab,target,source,state);return source;
   });
  }
  async update(lab:string,values:Partial<WorkspaceState>){

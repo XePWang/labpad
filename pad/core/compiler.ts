@@ -1,4 +1,5 @@
-import {usedLanguages} from './build/plan';
+import {usedLanguages,standaloneSource,type CompilerContext} from './build/plan';
+import {parse} from '../shared/lpmake';
 import {assertParameters} from '../shared/parameters';
 import {withDefaultStandard} from '../shared/defaults';
 import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
@@ -11,6 +12,7 @@ import type {CompilerConfig,Language,Compilation,Draft} from '../shared/types';
 export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string;workDirectory?:string;isolation?:'bubblewrap'|'none'}
 export interface Prepared {resources?:Record<string,string>;compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
+ private readonly targets=new Map<string,Promise<string>>();
  readonly session:Promise<string>;
  readonly cache:CompilerCache;
  constructor(readonly paths:RuntimePaths){
@@ -43,6 +45,18 @@ export class Compiler {
    cwd:await this.session,timeLimitMs:10000,outputLimitBytes:32768,env:await this.environment(config),processHost:this.paths.processHost});
   if(r.reason||r.code!==0)throw new Error('无法读取编译器版本：'+r.stderr.toString('utf8'));
   return (config.mode==='builtin'?'内置 Zig ':'自定义 ')+(r.stdout.toString('utf8').split(/\r?\n/)[0]||kind);
+ }
+ async forDraft(draft:Draft,config:CompilerConfig):Promise<CompilerContext>{
+  if(!draft.workspace)return config;
+  let spec:ReturnType<typeof parse>['spec'];try{spec=parse(standaloneSource(draft,config)).spec;}catch{return config;}
+  if(!spec.links.includes('m'))return config;
+  let explicit:string|undefined;for(let i=0;i<spec.ldflags.length;i++){const value=spec.ldflags[i];if(value==='-target'||value==='--target')explicit=spec.ldflags[++i];else if(value.startsWith('--target=')||value.startsWith('-target='))explicit=value.slice(value.indexOf('=')+1);}
+  if(explicit)return {...config,linkTarget:explicit};
+  const language=usedLanguages(draft).includes('cpp')?'cpp':'c',key=await this.identity(config,language);
+  if(!this.targets.has(key))this.targets.set(key,(async()=>{
+   try{const driver=this.resolve(config,language),result=await runProcess(driver.program,[...driver.prefix,'-dumpmachine'],{cwd:await this.session,timeLimitMs:5000,outputLimitBytes:4096,env:await this.environment(config),processHost:this.paths.processHost});return result.code===0?result.stdout.toString('utf8').trim():'';}catch{return '';}
+  })());
+  return {...config,linkTarget:explicit??await this.targets.get(key)};
  }
  async compile(source:string,language:Language,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
   assertParameters(language==='c'?config.cArgs:config.cppArgs,language==='c'?'C 参数':'C++ 参数');assertParameters(config.linkArgs,'链接参数');

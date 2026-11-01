@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DialogActions from './DialogActions';
 import {computed,onMounted,ref} from 'vue';
 import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDescription} from 'reka-ui';
 import type {Draft,ExportProblem,ExportPreview} from '../../shared/types';
@@ -41,7 +42,7 @@ defineExpose({resumeSettings:next,cancelSettings:()=>{step.value='warning';}});
 </script>
 <template>
  <DialogRoot :open="!suspended" @update:open="!$event&&!loading&&emit('close')"><DialogPortal><DialogOverlay class="export-overlay"/>
-  <DialogContent class="export-dialog" :data-theme="theme" @escape-key-down="loading&&$event.preventDefault()" @interact-outside="$event.preventDefault()">
+  <DialogContent class="export-dialog" :data-theme="theme" @keydown.esc.stop.prevent="!loading&&emit('close')" @interact-outside="$event.preventDefault()">
    <DialogTitle>{{kind==='project'?'导出实验项目':'导出源码'}}</DialogTitle>
    <DialogDescription>{{step==='select'?(workspace?'导出整个工作区，保留文件名与目录结构。':'勾选本次提交的题号和源码版本。'):'确认这些提醒后，选择保存位置。'}}</DialogDescription>
    <p v-if="error" class="field-error" role="alert">{{error}}</p><p v-if="loading" role="status">正在准备导出…</p>
@@ -53,7 +54,7 @@ defineExpose({resumeSettings:next,cancelSettings:()=>{step.value='warning';}});
     </details></div><label class="checkbox-field"><input v-model="includeConfig" type="checkbox" aria-label="附带 LabPad 项目配置">附带 LabPad 项目配置（测试点与项目设置）</label>
    </template>
    <template v-else-if="preview"><ul class="export-warnings"><li v-for="warning in preview.warnings" :key="warning">{{warning}}</li></ul><p>{{preview.files.length}} 份源码 · {{preview.name}}</p><button v-if="missingIdentity" :disabled="loading" @click="emit('settings')">前往设置</button></template>
-   <div class="export-actions"><button :disabled="loading" @click="emit('close')">取消导出</button><button v-if="step==='warning'&&kind==='project'" :disabled="loading" @click="step='select'">返回选择</button><button v-if="step==='select'" class="primary" :disabled="loading||!drafts.length" @click="next">下一步</button><button v-else class="primary" :disabled="loading||!preview" @click="write">仍然导出</button></div>
+   <DialogActions class="export-actions"><button :disabled="loading" @click="emit('close')">取消导出</button><button v-if="step==='warning'&&kind==='project'" :disabled="loading" @click="step='select'">返回选择</button><button v-if="step==='select'" class="primary" :disabled="loading||!drafts.length" @click="next">下一步</button><button v-else class="primary" :disabled="loading||!preview" @click="write">仍然导出</button></DialogActions>
   </DialogContent>
  </DialogPortal></DialogRoot>
 </template>

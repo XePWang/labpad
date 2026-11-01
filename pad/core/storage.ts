@@ -54,6 +54,20 @@ export class Storage{
   const snapshot=structuredClone(validateConfig(config));
   return this.enqueue(()=>this.atomic(path.join(this.root,'config.json'),JSON.stringify(snapshot,null,2)+'\n'));
  }
+ async saveSettings(config:Config,project?:{lab:string;options:import('../shared/workspace').ProjectBuildOptions}){
+  const snapshot=structuredClone(validateConfig(config));if(project){filePart(project.lab,'项目名称');if(typeof project.options.inheritDefaults!=='boolean')throw new Error('参数来源无效');validateConfig({...snapshot,compiler:{...snapshot.compiler,cArgs:project.options.cArgs,cppArgs:project.options.cppArgs,linkArgs:project.options.linkArgs}});}
+  return this.enqueue(async()=>{
+   const configFile=path.join(this.root,'config.json'),oldConfig=await readFile(configFile).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='ENOENT')throw e;return undefined;}),metaFile=project?this.statePath(project.lab,'_'):undefined,oldMeta=metaFile&&await readFile(metaFile).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='ENOENT')throw e;return undefined;});
+   const meta=project?await this.readState(project.lab,'_'):undefined;if(meta)meta.buildOptions=structuredClone(project!.options);
+   try{await this.atomic(configFile,JSON.stringify(snapshot,null,2)+'\n');if(meta)await this.writeState(project!.lab,'_',meta);}
+   catch(error){
+    const restore=async(file:string,bytes:Buffer|undefined)=>{const now=await readFile(file).catch(()=>undefined);if(bytes){if(!now?.equals(bytes))await writeFileAtomic(file,bytes);}else if(now)await rm(file,{force:true});};
+    const results=await Promise.allSettled([restore(configFile,oldConfig),...(metaFile?[restore(metaFile,oldMeta||undefined)]:[])]);
+    if(results.some(r=>r.status==='rejected'))throw new AggregateError([error,...results.filter(r=>r.status==='rejected').map(r=>(r as PromiseRejectedResult).reason)],'设置未保存，恢复原配置时也发生错误。');
+    throw error;
+   }
+  });
+ }
  paths(labId:string,problemId:string,language:Language){
   selection(labId,problemId);
   const dir=problemId?path.join(this.root,'projects',labId):this.root,base=problemId||'空项目';
@@ -283,7 +297,7 @@ export class Storage{
  }
  async buildOptions(labId:string){
   filePart(labId,'项目名称');const meta=await this.readState(labId,'_');
-  return meta.buildOptions??{inheritDefaults:true,cArgs:[],cppArgs:[],linkArgs:[]};
+  return meta.buildOptions;
  }
  async saveBuildOptions(labId:string,value:import('../shared/workspace').ProjectBuildOptions){
   filePart(labId,'项目名称');if(!value||typeof value.inheritDefaults!=='boolean'||![value.cArgs,value.cppArgs,value.linkArgs].every(a=>Array.isArray(a)&&a.every(s=>typeof s==='string')))throw new Error('项目编译参数无效');

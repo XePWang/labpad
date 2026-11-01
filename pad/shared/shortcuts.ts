@@ -1,5 +1,5 @@
 export const shortcutActions=[
- ['run','编译并运行',['F9','Control+Enter']],['save','保存当前',['$mod+KeyS']],['saveAll','保存全部',['$mod+Shift+KeyS']],
+ ['run','编译',['F9','Control+Enter']],['save','保存当前',['$mod+KeyS']],['saveAll','保存全部',['$mod+Shift+KeyS']],
  ['format','格式化代码',['Shift+Alt+KeyF']],['close','关闭标签',['Control+F4']],['closeSaved','关闭已保存',['$mod+KeyK KeyU']],
  ['closeAll','关闭全部标签',['$mod+KeyK KeyW']],['next','下一个标签',['Control+Tab']],['previous','上一个标签',['Control+Shift+Tab']],
  ['copyPath','复制路径',['Shift+Alt+KeyC']],['copyRelativePath','复制相对路径',['Control+Shift+Alt+KeyC']],['interrupt','中断调试',['Control+KeyC']],

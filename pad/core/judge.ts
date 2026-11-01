@@ -1,4 +1,4 @@
-import {writeFile,mkdir} from 'node:fs/promises';
+import {writeFile,mkdir,mkdtemp,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {sandboxCommand} from './sandbox';
 import {compileDraft,copyResources} from './build';
@@ -7,22 +7,23 @@ import {runProcess} from './process';
 import {strictText} from '../shared/comparison';
 import {validateDraft} from '../shared/validate';
 import type {Draft,CompilerConfig,JudgeEvent,JudgeResult,CaseResult} from '../shared/types';
-export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,signal?:AbortSignal,onEvent?:(e:JudgeEvent)=>void,ids?:string[]):Promise<JudgeResult>{
+export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,signal?:AbortSignal,onEvent?:(e:JudgeEvent)=>void,ids?:string[],retained?:Awaited<ReturnType<typeof compileDraft>>):Promise<JudgeResult>{
  const draft=validateDraft(structuredClone(value));
  if(ids&&(!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!draft.problem.testCases.some(t=>t.id===id))))throw new Error('请选择有效的测试点');
  const result:JudgeResult={status:'completed',cases:[],compiler:'',comparison:draft.problem.comparison,selectedCaseIds:ids};
  if(!draft.problem.testCases.length)return {...result,status:'error',error:'请先新增或导入测试点'};
- let prepared:Awaited<ReturnType<Compiler['compile']>>|undefined;
+ let prepared:Awaited<ReturnType<Compiler['compile']>>|undefined,runDirectory:string|undefined;
  try{
-  prepared=await compileDraft(compiler,draft,config,signal);
+  prepared=retained??await compileDraft(compiler,draft,config,signal);
   result.compilation=prepared.compilation;result.compiler=prepared.compilation.command[0];
-  onEvent?.({type:'compilation',compilation:prepared.compilation});
+  if(!retained)onEvent?.({type:'compilation',compilation:prepared.compilation});
   if(prepared.compilation.status==='cancelled'){result.status='cancelled';return result;}
   if(prepared.compilation.status==='CE')return result;
+  runDirectory=await mkdtemp(path.join(prepared.directory,'tests-'));
   for(const [index,test] of draft.problem.testCases.entries()){
    if(ids&&!ids.includes(test.id))continue;
    if(signal?.aborted){result.status='cancelled';break;}
-   const cwd=path.join(prepared.directory,'case-'+index);await mkdir(cwd);await copyResources(prepared.resources,cwd);
+   const cwd=path.join(runDirectory,'case-'+index);await mkdir(cwd);await copyResources(prepared.resources,cwd);
    const command=compiler.paths.isolation==='bubblewrap'?sandboxCommand(prepared.executable,cwd):{program:prepared.executable,args:[]};
    const r=await runProcess(command.program,command.args,{cwd,input:Buffer.from(test.input,'utf8'),
     timeLimitMs:draft.problem.timeLimitMs,outputLimitBytes:draft.problem.outputLimitBytes,
@@ -60,6 +61,6 @@ export async function judge(compiler:Compiler,value:Draft,config:CompilerConfig,
  }catch(error){
   result.status=signal?.aborted?'cancelled':'error';
   if(result.status==='error')result.error=error instanceof Error?error.message:String(error);
- }finally{await prepared?.cleanup();}
+ }finally{if(runDirectory)await rm(runDirectory,{recursive:true,force:true});if(!retained)await prepared?.cleanup();}
  return result;
 }

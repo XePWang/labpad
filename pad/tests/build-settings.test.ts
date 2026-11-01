@@ -35,10 +35,10 @@ test('pairing advice uses categories, runtime libraries and explicit disabling i
  assert.equal(inspect(['-fsanitize=undefined','-fsanitize-trap=all'],[])[0].severity,'info');
 });
 test('project preview and filesystem resolution share source matching, defaults, flags and English source diagnostics',async()=>temp(async root=>{
- const draft=project(true);draft.workspace!.files['src/helper.cpp']='int helper(){return 1;}';
+ const draft=project(false);draft.workspace!.files['src/helper.cpp']='int helper(){return 1;}';
  draft.workspace!.files['LPMake.txt']='target("app")\nset_standard("c17")\nadd_files("src/*.{c,cpp}")\nadd_cflags("-std=c11","-O1")\n';
  for(const [file,text]of Object.entries(draft.workspace!.files)){await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),text);}
- const config=defaultConfig().compiler,logical=draftPlan(draft,config),physical=await resolve(parse(draft.workspace!.files['LPMake.txt']).spec,root,{c:config.cArgs,cpp:config.cppArgs,link:config.linkArgs},true);
+ const config=defaultConfig().compiler,logical=draftPlan(draft,config),physical=await resolve(parse(draft.workspace!.files['LPMake.txt']).spec,root,{c:config.cArgs,cpp:config.cppArgs,link:config.linkArgs},false);
  assert.deepEqual(physical.units,logical.units);assert.deepEqual(physical.linkArgs,logical.linkArgs);
  const preview=previewPlan(draft,config);assert.equal(preview.units.find(u=>u.language==='c')!.summary.standard,'c11');assert.ok(preview.issues.some(i=>i.field==='cStandard'));assert.ok(preview.issues.some(i=>i.field==='optimize'));
  draft.workspace!.files['LPMake.txt']='target("app")\nadd_files("src/*.c")\nadd_cflags("-o")\n';
@@ -56,26 +56,26 @@ test('fingerprints exclude ignored defaults and unused languages but retain actu
  const custom={inheritDefaults:false,cArgs:['-std=c11'],cppArgs:[],linkArgs:[]};
  assert.equal(fingerprint(single,effectiveCompiler(config,custom),'id'),fingerprint(single,effectiveCompiler({...config,cArgs:['-O3'],cppArgs:['-E']},custom),'id'));
 });
-test('workspace saves build text and inheritance together; ordinary saves leave build options alone; export preserves overlays',async()=>temp(async root=>{
+test('workspace text is the build source; ordinary saves and export preserve independent files',async()=>temp(async root=>{
  const storage=new Storage(root);await storage.init();const current=await storage.workspace.create('工程'),make=await storage.workspace.open('工程','LPMake.txt');
- await storage.workspace.save({...current,source:'// updated ordinary file',workspaceBuild:{inheritDefaults:false}});
- assert.equal((await storage.workspace.read('工程')).inheritDefaults,true);
- const changed={...make,source:make.source+'# changed\n',workspaceBuild:{inheritDefaults:false}};await storage.workspace.save(changed);
- assert.equal((await storage.workspace.read('工程')).inheritDefaults,false);assert.equal((await storage.workspace.open('工程','LPMake.txt')).source,changed.source);
- const overlay={...current,source:'// unsaved overlay',workspaceBuild:{inheritDefaults:true}};
- const snapshot=await storage.workspace.snapshot('工程',[overlay]);assert.equal(snapshot.inheritDefaults,true);assert.equal(snapshot.files['src/main.c'],overlay.source);
- const exported=await prepareWorkspaceProject(storage,{...current,workspaceBuild:{inheritDefaults:true}},defaultConfig(),[overlay],true);
- assert.equal(exported.files.find(f=>f.name==='src/main.c')?.source,overlay.source);
- assert.equal(JSON.parse(exported.files.find(f=>f.name==='labpad.project.json')!.source).build.inheritDefaults,true);
+ await storage.workspace.save({...current,source:'// updated ordinary file'});
+ assert.equal(Object.hasOwn(await storage.workspace.read('工程'),'inheritDefaults'),false);
+ const changed={...make,source:make.source+'# changed\n'};await storage.workspace.save(changed);
+ assert.equal(Object.hasOwn(await storage.workspace.read('工程'),'inheritDefaults'),false);assert.equal((await storage.workspace.open('工程','LPMake.txt')).source,changed.source);
+ const overlay={...current,source:'// unsaved overlay'};
+ const snapshot=await storage.workspace.snapshot('工程',[overlay]);assert.equal(Object.hasOwn(snapshot,'inheritDefaults'),false);assert.equal(snapshot.files['main.c'],overlay.source);
+ const exported=await prepareWorkspaceProject(storage,{...current},defaultConfig(),[overlay],true);
+ assert.equal(exported.files.find(f=>f.name==='main.c')?.source,overlay.source);
+ assert.equal(Object.hasOwn(JSON.parse(exported.files.find(f=>f.name==='labpad.project.json')!.source).build,'inheritDefaults'),false);
 }));
-test('failed metadata write rolls back source and inheritance, keeps the queue usable and preserves exact original bytes',async()=>temp(async root=>{
+test('failed metadata write rolls back source and metadata, keeps the queue usable and preserves exact original bytes',async()=>temp(async root=>{
  const storage=new Storage(root);await storage.init();await storage.workspace.create('工程');const store=storage.workspace,make=await store.open('工程','LPMake.txt');
  const metadata=await readFile(store.metadata('工程')),source=await readFile(make.sourceFile!),original=(store as any).write;
  (store as any).write=async()=>{throw Error('simulated metadata failure');};
- await assert.rejects(store.save({...make,source:'changed',workspaceBuild:{inheritDefaults:false}}),/simulated metadata failure/);
+ await assert.rejects(store.save({...make,source:'changed'}),/simulated metadata failure/);
  assert.deepEqual(await readFile(make.sourceFile!),source);assert.deepEqual(await readFile(store.metadata('工程')),metadata);
  (store as any).write=original;
- await store.save({...make,workspaceBuild:{inheritDefaults:false}});assert.equal((await store.read('工程')).inheritDefaults,false);
+ await store.save({...make});assert.equal(Object.hasOwn(await store.read('工程'),'inheritDefaults'),false);
 }));
 test('real GCC workspace reuses its build directory after code/tests/ignored parameters change and uses only the C identity',async()=>temp(async root=>{
  const compiler=new Compiler({...runtime,cacheDirectory:path.join(root,'cache'),workDirectory:path.join(root,'run')}),config={...defaultConfig().compiler,mode:'custom' as const,kind:'gcc' as const,cPath:'/usr/bin/gcc',cppPath:'/unavailable-unused-cxx',cppArgs:['-E']},draft=project(false);

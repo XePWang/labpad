@@ -18,7 +18,7 @@ const emit=defineEmits<{(e:'update:modelValue',value:string):void;(e:'format'):v
 const host=ref<HTMLDivElement>();let view:EditorView|undefined;
 const states=new Map<string,{state:EditorState;top:number;left:number}>();
 const readOnly=new Compartment(),indentation=new Compartment(),colorTheme=new Compartment(),syntax=new Compartment();
-const lpLanguage=LRLanguage.define({parser:parser.configure({props:[styleTags({Name:tags.function(tags.variableName),String:tags.string,Comment:tags.lineComment}),indentNodeProp.add({Call:delimitedIndent({closing:')',align:false})}),foldNodeProp.add({Call:foldInside})]}),languageData:{commentTokens:{line:'#'}}});
+const lpLanguage=LRLanguage.define({parser:parser.configure({props:[styleTags({Name:tags.function(tags.variableName),String:tags.string,Comment:tags.lineComment,BlockComment:tags.blockComment}),indentNodeProp.add({Call:delimitedIndent({closing:')',align:false})}),foldNodeProp.add({Call:foldInside})]}),languageData:{commentTokens:{line:'#',block:{open:'--[[',close:']]'}}}});
 function language(){return props.file==='LPMake.txt'?new LanguageSupport(lpLanguage,[lpLanguage.data.of({autocomplete:(context:any)=>{const word=context.matchBefore(/[a-z_]+/);if(!word&&!context.explicit)return null;return {from:word?.from??context.pos,options:commands.map(label=>({label,type:'function',apply:label+'(\"\")'}))};}})]):cpp();}
 function indentConfig(){return [EditorState.tabSize.of(props.indentSize),indentUnit.of(' '.repeat(props.indentSize))];}
 function colors(){

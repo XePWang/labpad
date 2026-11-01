@@ -1,7 +1,8 @@
-import {draftPlan,buildOptionsSignature} from './plan';
+import {draftPlan,buildOptionsSignature,standaloneSource} from './plan';
 import {mkdir,readFile,writeFile,rm,cp,mkdtemp,readdir,link} from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';import {performance} from 'node:perf_hooks';
 import type {Compiler,Prepared} from '../compiler';import {runProcess} from '../process';import {parse,ConfigError} from '../../shared/lpmake';import {resolve} from './resolve';import {workspacePath,uniquePaths,type WorkspaceSnapshot} from '../../shared/workspace';import type {CompilerConfig,Draft,Compilation} from '../../shared/types';
 export async function compileDraft(compiler:Compiler,draft:Draft,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
+ config=await compiler.forDraft(draft,config);
  if(!draft.workspace)return compiler.compile(draft.source,draft.language,config,signal);
  return buildWorkspace(compiler,draft.workspace,draft.problem.labId,config,signal);
 }
@@ -24,7 +25,7 @@ export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapsho
   await mkdir(buildRoot,{recursive:true});await writeFile(path.join(buildRoot,'owner.json'),JSON.stringify({labId}),'utf8');await rm(output,{force:true});
   await syncSnapshot(root,snapshot.files);
   if(typeof snapshot.files['LPMake.txt']!=='string')throw new ConfigError('',0,'The build configuration file "LPMake.txt" is missing.','Create LPMake.txt in the project root and add a target() declaration.');
-  const plan=await resolve(parse(snapshot.files['LPMake.txt']).spec,root,{c:config.cArgs,cpp:config.cppArgs,link:config.linkArgs},snapshot.inheritDefaults),env=await compiler.environment(config);
+  const plan=await resolve(parse(standaloneSource(input,config)).spec,root,{c:[],cpp:[],link:[]},false,(config as import('./plan').CompilerContext).linkTarget),env=await compiler.environment(config);
   const compilation:Compilation={status:'success',stdout:'',stderr:'',command:[],commands:[],elapsedMs:0};
   const logs:{stdout:string;stderr:string;code:number|null;reason?:string;command:string[]}[]=new Array(plan.units.length);
   const objects=plan.units.map(u=>path.join(buildRoot,'obj',u.path+'.o'));let next=0;

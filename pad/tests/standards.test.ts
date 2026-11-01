@@ -30,7 +30,8 @@ test('C17/C++20 defaults agree across profiles, project templates and no-inherit
   for(const inherit of [true,false]){const plan=await resolve(parse('target("app")\nadd_files("*.c", "*.cpp")').spec,root,{c:[],cpp:[],link:[]},inherit);assert.equal(standard(plan.units.find(u=>u.language==='c')!.args),'-std=c17');assert.equal(standard(plan.units.find(u=>u.language==='cpp')!.args),'-std=c++20');}
   const explicit=await resolve(parse('target("app")\nset_standard("c11")\nset_standard("c++17")\nadd_files("*.c", "*.cpp")').spec,root);
   assert.equal(standard(explicit.units.find(u=>u.language==='c')!.args),'-std=c11');assert.equal(standard(explicit.units.find(u=>u.language==='cpp')!.args),'-std=c++17');
-  const custom=await resolve(parse('target("app")\nadd_files("main.cpp")').spec,root,{c:[],cpp:['-std=c++17'],link:[]});assert.equal(standard(custom.units[0].args),'-std=c++17');
+  const custom=await resolve(parse('target("app")\nadd_files("main.cpp")').spec,root,{c:[],cpp:['-std=c++17'],link:[]});assert.equal(standard(custom.units[0].args),'-std=c++20');
+  const legacy=await resolve(parse('target("app")\nadd_files("main.cpp")').spec,root,{c:[],cpp:['-std=c++17'],link:[]},true);assert.equal(standard(legacy.units[0].args),'-std=c++17');
   const storage=new Storage(path.join(root,'data'));const config=await storage.init();assert.equal(standard(config.compiler.cppArgs),'-std=c++20');config.compiler.cppArgs=['-std=c++17','-O0'];await storage.saveConfig(config);assert.deepEqual((await new Storage(storage.root).init()).compiler.cppArgs,config.compiler.cppArgs);
  }finally{await rm(root,{recursive:true,force:true});}
 });

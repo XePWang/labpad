@@ -5,8 +5,7 @@
   "labId": "多文件示例",
   "build": {
     "system": "lpmake",
-    "file": "LPMake.txt",
-    "inheritDefaults": true
+    "file": "LPMake.txt"
   },
   "tests": {
     "timeLimitMs": 1000,
@@ -45,7 +44,7 @@
   "files": [
     {
       "path": "LPMake.txt",
-      "content": "# src 中新建的 C 文件自动参与构建\ntarget(\"sum\")\nset_standard(\"c17\")\nadd_includedirs(\"include\")\nadd_files(\"src/*.c\")\n"
+      "content": "# src 中新建的 C 文件自动参与构建\ntarget(\"sum\")\nset_standard(\"c17\")\nadd_includedirs(\"include\")\nadd_files(\"src/*.c\")\nset_standard(\"c++20\")\nset_mode(\"debug\")\nadd_cflags(\"-Wall\", \"-Wextra\", \"-Wshadow\", \"-Wconversion\", \"-Wundef\", \"-Wformat=2\")\nadd_cxxflags(\"-Wall\", \"-Wextra\", \"-Wshadow\", \"-Wconversion\", \"-Wundef\", \"-Wformat=2\")\nadd_links(\"m\")\n"
     },
     {
       "path": "src/main.c",

@@ -19,15 +19,15 @@ test('workspace paths reject escapes and cross-platform conflicts',()=>{
 });
 test('workspace files stay separate from legacy drafts; rename, collision, view and snapshots preserve unsaved source',async()=>temp(async root=>{
  const storage=new Storage(root);await storage.init();const first=await storage.workspace.create('工程','c');
- assert.equal(first.file,'src/main.c');assert.equal((await storage.projects())[0].mode,'project');
+ assert.equal(first.file,'main.c');assert.equal((await storage.projects())[0].mode,'project');
  await storage.workspace.mutate('工程','newFile','include/api.h',undefined,'int api(void);\n');
  await assert.rejects(storage.workspace.mutate('工程','newFile','include/API.h'),/同名/);await assert.rejects(storage.workspace.mutate('工程','newFile','Include/new.h'),/大小写/);
  await storage.workspace.mutate('工程','rename','include/api.h','include/stack.h');
  await assert.rejects(storage.workspace.mutate('工程','delete','LPMake.txt'),/不能/);
- await storage.workspace.update('工程',{openFiles:['LPMake.txt','src/main.c'],activeFile:'LPMake.txt',expanded:['src'],sidebarCollapsed:true});
+ await storage.workspace.update('工程',{openFiles:['LPMake.txt','main.c'],activeFile:'LPMake.txt',expanded:['src'],sidebarCollapsed:true});
  assert.equal((await storage.workspace.documents('工程')).length,2);
- const snapshot=await storage.workspace.snapshot('工程',[{...first,source:'// unsaved'}]);assert.equal(snapshot.files['src/main.c'],'// unsaved');assert.notEqual((await storage.workspace.open('工程','src/main.c')).source,'// unsaved');
- await storage.workspace.save({...first,source:'// saved'});assert.equal((await storage.workspace.open('工程','src/main.c')).source,'// saved');
+ const snapshot=await storage.workspace.snapshot('工程',[{...first,source:'// unsaved'}]);assert.equal(snapshot.files['main.c'],'// unsaved');assert.notEqual((await storage.workspace.open('工程','main.c')).source,'// unsaved');
+ await storage.workspace.save({...first,source:'// saved'});assert.equal((await storage.workspace.open('工程','main.c')).source,'// saved');
  await storage.createLab('旧项目');await storage.createProblem('旧项目','Lab 1','c');assert.equal((await storage.load('旧项目','Lab 1','c')).source.includes('main'),true);
 }));
 test('production pipeline builds mixed snapshots on GCC and Zig, relinks changed headers and blocks stale executable',async()=>temp(async root=>{

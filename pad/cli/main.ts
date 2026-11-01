@@ -1,4 +1,4 @@
-import {effectiveCompiler,type ProjectBuildOptions} from '../shared/workspace';
+import {effectiveCompiler,defaultLpmake,type ProjectBuildOptions} from '../shared/workspace';
 import {directoryFiles} from './projects';
 import {archiveFiles} from '../core/project-archive';
 import {testPatch} from '../shared/test-import';
@@ -44,8 +44,9 @@ async function main(){
  let draft:Draft,buildOptions:ProjectBuildOptions|undefined;
  if(values.project){
   const location=path.resolve(values.project),files=location.toLowerCase().endsWith('.zip')?await archiveFiles(await readFile(location)):await directoryFiles(location);delete files['labpad.project.json'];
+  if(!files['LPMake.txt']){files['LPMake.txt']=defaultLpmake();console.error('原项目未提供 LPMake.txt，已填充默认模板');}
   const labId=typeof raw.labId==='string'?raw.labId:'项目',rules=raw.mode==='project'?testPatch(raw.tests,labId,''):testPatch(raw,labId,'');
-  const problem=validateProblem({...defaultProblem(labId,''),...rules});draft={source:'',language:'c',problem,workspace:{files,inheritDefaults:(raw.build as any)?.inheritDefaults??true}};
+  const problem=validateProblem({...defaultProblem(labId,''),...rules});draft={source:'',language:'c',problem,workspace:{files,...((raw.build as any)?.inheritDefaults===true?{inheritDefaults:true}:{})}};
  }else{
   const file=path.resolve(values.source!),language=file.toLowerCase().endsWith('.cpp')?'cpp':'c';if(!/\.(c|cpp)$/i.test(file))throw Error('单文件仅支持 .c / .cpp');
   const problem=raw.kind==='labpad.project'?(()=>{

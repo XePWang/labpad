@@ -1,3 +1,4 @@
+import {nativeButtonOrder,type DesktopPlatform} from '../shared/dialog-actions';
 import {previewPlan} from '../core/build/plan';
 import {assertParameters} from '../shared/parameters';
 import {app,BrowserWindow,dialog,ipcMain,Menu,shell,nativeImage,nativeTheme,clipboard} from 'electron';
@@ -9,7 +10,7 @@ import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {mkdirSync,rmSync,constants} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {readFile,writeFile,mkdir,stat,access,realpath,rename} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,mkdtemp,rm,stat,access,realpath,rename} from 'node:fs/promises';
 import type {IPty} from 'node-pty';
 import {createRequire} from 'node:module';
 import {Compiler} from '../core/compiler';
@@ -21,9 +22,10 @@ import {parseWorkspacePackage,workspacePackage,workspacePath,effectiveCompiler,t
 import {parseLabPackage,parseTestCases} from '../shared/project-format';
 import {parseIOPatch,parseProjectTests,mergeTests,exportIO,exportProjectTests} from '../shared/test-import';
 import {readProjectArchive} from '../core/project-archive';
-import {prepareWorkspaceProject,prepareSource,prepareProject,submissionZip,fingerprint,checkRecord,coverage,storedCheck,exportChoices,type Submission} from '../core/submission';
+import {prepareWorkspaceProject,prepareSource,prepareProject,submissionZip,fingerprint,compilationFingerprint,checkRecord,coverage,storedCheck,exportChoices,type Submission} from '../core/submission';
+import {CompiledProgram} from '../core/compiled-program';
 import {judge} from '../core/judge';
-import {Storage,readJSON,importPairs,exists,writeSource} from '../core/storage';
+import {Storage,readJSON,importPairs,exists,writeSource,decodeText} from '../core/storage';
 import {filePart,selection,validateConfig,validateDraft,validateLayout,validateProblem} from '../shared/validate';
 import type {CompilerConfig,Config,Draft,DebugState,JudgeEvent,Language,LoadedDraft,PathKind,SaveResult} from '../shared/types';
 app.setName('LabPad');if(process.platform==='win32')app.setAppUserModelId('cn.xep.labpad');
@@ -47,6 +49,7 @@ let storage=new Storage(defaultRoot);
 const formatterRoot=app.isPackaged?path.join(process.resourcesPath,'app.asar.unpacked/package.json'):path.join(root,'pad/package.json');
 const formatter=new Formatter(app.isPackaged?path.join(process.resourcesPath,'formatter-worker.cjs'):path.join(__dirname,'formatter-worker.cjs'),createRequire(formatterRoot).resolve('@wasm-fmt/clang-format/node'));
 const compiler=new Compiler({toolchain,checkers,cacheDirectory:process.env.LABPAD_CACHE_DIR,processHost:process.platform==='win32'?path.join(checkers,'process-host.exe'):undefined});
+const compiledProgram=new CompiledProgram(compiler);
 let shortcutWindow:BrowserWindow|undefined,openBuffers:Draft[]=[];
 let warmController:AbortController|undefined,warmTask:Promise<unknown>|undefined,warmTimer:ReturnType<typeof setTimeout>|undefined;
 let debugSession=0,acknowledge:((id:number,size:number)=>void)|undefined;
@@ -75,15 +78,33 @@ async function validatePath(value:string,kind:PathKind,allowEmpty=false){
 }
 async function requirePath(value:string,kind:PathKind){const result=await validatePath(value,kind);if(!result.valid)throw new Error(result.message);}
 async function inputIdentity(d:Draft,options:CompilerConfig){return compiler.identityFor(d,options);}
-async function draftOptions(d:Draft){return d.file?structuredClone(config.compiler):effectiveCompiler(config.compiler,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);}
+async function draftOptions(d:Draft){const base=d.file?structuredClone(config.compiler):effectiveCompiler(config.compiler,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);return compiler.forDraft(d,base);}
 async function buildInput(value:Draft){const d=structuredClone(validateDraft(value));if(await storage.workspace.isProject(d.problem.labId))d.workspace=await storage.workspace.snapshot(d.problem.labId,[...openBuffers,d]);return d;}
+async function savedBuildInput(value:Draft){
+ await saves;const d=structuredClone(validateDraft(value));let saved=true;
+ if(await storage.workspace.isProject(d.problem.labId)){
+  d.workspace=await storage.workspace.snapshot(d.problem.labId,[]);
+  for(const buffer of openBuffers)if(buffer.problem.labId===d.problem.labId&&buffer.file&&d.workspace.files[buffer.file]!==buffer.source)saved=false;
+  if(d.file)d.source=d.workspace.files[d.file]??'';
+ }else{
+  const state=await storage.projectState(d.problem.labId,d.problem.problemId,d.language),version=state.documents?.find(v=>v.id===d.documentId);
+  const file=version?storage.documentPath(d.problem.labId,d.problem.problemId,version):storage.paths(d.problem.labId,d.problem.problemId,d.language).source;
+  if(!await exists(file))saved=false;
+  else{const text=decodeText(await readFile(file)).text;saved=text===d.source;d.source=text;}
+ }
+ return {draft:d,saved};
+}
+async function programContext(value:Draft){
+ const input=await savedBuildInput(value),options=await draftOptions(input.draft);
+ return {...input,options,key:compilationFingerprint(input.draft,options,await inputIdentity(input.draft,options))};
+}
 async function workspaceBootstrap(){
  const lab=config.currentLab,state=await storage.workspace.read(lab),documents=await storage.workspace.documents(lab);
  let draft=documents.find(d=>d.file===currentDocument?.file)??documents.find(d=>d.file===state.activeFile)??documents[0];
  if(!draft){const source=(await storage.workspace.open(lab,'LPMake.txt'));documents.push(source);draft=source;}
  if(currentDocument?.file&&currentDocument.problem.labId===lab){const current=currentDocument;draft={...draft,...current};const index=documents.findIndex(d=>d.file===current.file);if(index>=0)documents[index]=draft;else documents.push(draft);}else documentDirty=false;
  currentDocument=draft;
- return {...await settingsResult(),draft,documents,sourcePath:draft.sourceFile??null,version:app.getVersion(),workspace:{files:await storage.workspace.list(lab),expanded:state.expanded??[],sidebarWidth:state.sidebarWidth??190,sidebarCollapsed:state.sidebarCollapsed??false}};
+ return {...await settingsResult(),draft,documents,sourcePath:draft.sourceFile??null,version:app.getVersion(),...(state.inheritDefaults!==undefined?{warning:'旧版构建配置暂未迁移，请先修复 LPMake.txt 的错误并保存。'}:{}),workspace:{files:await storage.workspace.list(lab),expanded:state.expanded??[],sidebarWidth:state.sidebarWidth??190,sidebarCollapsed:state.sidebarCollapsed??false}};
 }
 async function persist(value:Draft):Promise<SaveResult>{
  const snapshot=structuredClone(validateDraft(value)),original=JSON.stringify(snapshot),options=structuredClone(config);
@@ -91,8 +112,8 @@ async function persist(value:Draft):Promise<SaveResult>{
   if(snapshot.file&&await storage.workspace.isProject(snapshot.problem.labId)){
    let formatWarning:string|undefined;
    if(options.formatOnSave&&/\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(snapshot.file))try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+String(e);}
-   await storage.workspace.save(snapshot);if(currentDocument?.documentId===snapshot.documentId&&JSON.stringify(currentDocument)===original){currentDocument=structuredClone(snapshot);documentDirty=false;}
-   return {path:await storage.workspace.path(snapshot.problem.labId,snapshot.file),source:snapshot.source,formatWarning,workspaceBuild:snapshot.file==='LPMake.txt'?snapshot.workspaceBuild:undefined};
+   snapshot.source=await storage.workspace.save(snapshot);if(currentDocument?.documentId===snapshot.documentId&&JSON.stringify(currentDocument)===original){currentDocument=structuredClone(snapshot);documentDirty=false;}
+   return {path:await storage.workspace.path(snapshot.problem.labId,snapshot.file),source:snapshot.source,formatWarning};
   }
   let formatWarning:string|undefined;
   if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
@@ -133,19 +154,23 @@ async function bootstrap(){
  return {...await settingsResult(),draft:structuredClone(currentDocument),documents,sourcePath:current.sourceFile??null,version:app.getVersion()};
 }
 function submissionServices(){const options=structuredClone(config.compiler);return {identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
+async function messageBox(options:Electron.MessageBoxOptions){
+ const order=nativeButtonOrder(options.buttons?.length??1,options.cancelId??0,process.platform as DesktopPlatform);
+ const result=await dialog.showMessageBox(win,{...options,buttons:order.map(i=>options.buttons?.[i]??'确定'),defaultId:order.indexOf(options.defaultId??0),cancelId:order.indexOf(options.cancelId??0)});
+ return {...result,response:order[result.response]};
+}
 async function confirmUnsaved(){
- const result=await dialog.showMessageBox(win,{type:'question',title:'保存修改',message:'源码、构建设置或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
+ const result=await messageBox({type:'question',title:'保存修改',message:'源码、构建设置或测试点有未保存的修改。',buttons:['保存','不保存','取消'],defaultId:0,cancelId:2,noLink:true});
  return (['save','discard','cancel'] as const)[result.response];
 }
 async function startDebug(value:Draft){
- requireIdle();await stopWarmup();requireIdle();const d=await buildInput(value),settings={...structuredClone(config),compiler:await draftOptions(value)},abort=new AbortController();controller=abort;
- debugState({status:'compiling'});
+ requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');const d=context.draft,program=compiledProgram.require(context.key),settings={...structuredClone(config),compiler:context.options},abort=new AbortController();controller=abort;
+ 
  let outcome:DebugState|undefined;
  const task=(async()=>{
-  let prepared:Awaited<ReturnType<Compiler['compile']>>|undefined,shutdown:Promise<void>|undefined;
+  let prepared=program,runDirectory:string|undefined,shutdown:Promise<void>|undefined;
   try{
-   prepared=await compileDraft(compiler,d,settings.compiler,abort.signal);await copyResources(prepared.resources,prepared.directory);
-   judgeEvent({type:'compilation',compilation:prepared.compilation});
+   runDirectory=await mkdtemp(path.join(prepared.directory,'debug-'));await copyResources(prepared.resources,runDirectory);
    if(prepared.compilation.status==='cancelled'){outcome={status:'stopped'};return;}
    if(prepared.compilation.status==='CE'){outcome={status:'error',message:'编译失败，请查看“输出”页'};return;}
    if(abort.signal.aborted){outcome={status:'stopped'};return;}
@@ -155,7 +180,7 @@ async function startDebug(value:Draft){
     const session=++debugSession;
     const flush=()=>{if(pending){send('debug:data',{session,data:pending});pending='';}scheduled=undefined;};
     try{
-     const child=pty.spawn(process.platform==='win32'?compiler.paths.processHost!:prepared!.executable,process.platform==='win32'?['--terminal',prepared!.executable]:[],{name:'xterm-256color',cols:100,rows:18,cwd:prepared!.directory,env:Object.fromEntries(Object.entries(env).filter((e):e is [string,string]=>e[1]!==undefined))});terminal=child;
+     const child=pty.spawn(process.platform==='win32'?compiler.paths.processHost!:'/bin/sh',process.platform==='win32'?['--terminal-no-echo',prepared!.executable]:['-c','stty -echo || exit 125; exec "$1"','labpad-debug',prepared!.executable],{name:'xterm-256color',cols:100,rows:18,cwd:runDirectory!,env:Object.fromEntries(Object.entries(env).filter((e):e is [string,string]=>e[1]!==undefined))});terminal=child;
      const kill=()=>{
       if(shutdown)return;
       if(process.platform==='win32')shutdown=new Promise<void>(done=>{execFile('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>{if(terminal===child)try{child.kill();}catch{}done();});});
@@ -167,14 +192,14 @@ async function startDebug(value:Draft){
      const exitListener=child.onExit(exit=>{
       if(timer)clearTimeout(timer);if(scheduled)clearTimeout(scheduled);flush();
       abort.signal.removeEventListener('abort',kill);dataListener.dispose();exitListener.dispose();terminal=undefined;acknowledge=undefined;
-      outcome={status:abort.signal.aborted?'stopped':'exited',message:'退出码 '+exit.exitCode};resolve();
+      outcome={status:abort.signal.aborted?'stopped':'exited',message:abort.signal.aborted?'程序已停止':'退出码 '+exit.exitCode};resolve();
      });
      if(settings.debugTimeLimitMs)timer=setTimeout(()=>abort.abort(),settings.debugTimeLimitMs);
      debugState({status:'running'});if(abort.signal.aborted)kill();
     }catch(e){reject(e);}
    });
   }catch(e){outcome={status:abort.signal.aborted?'stopped':'error',message:abort.signal.aborted?undefined:e instanceof Error?e.message:String(e)};}
-  finally{await shutdown;try{await prepared?.cleanup();}catch(e){outcome={status:'error',message:'清理运行文件失败：'+(e instanceof Error?e.message:String(e))};}}
+  finally{await shutdown;try{if(runDirectory)await rm(runDirectory,{recursive:true,force:true});}catch(e){outcome={status:'error',message:'清理运行文件失败：'+(e instanceof Error?e.message:String(e))};}}
  })();
  active=task;void task.finally(()=>{if(active===task){active=undefined;controller=undefined;if(outcome)debugState(outcome);}});
 }
@@ -205,17 +230,17 @@ async function initialize(){
   if(!['newFile','newFolder','rename','delete'].includes(action))throw new Error('文件操作无效');
   if(action==='delete'){
    const entries=await storage.workspace.list(lab),count=entries.filter(e=>e.path===file||e.path.startsWith(file+'/')).length;
-   const choice=await dialog.showMessageBox(win,{type:'warning',title:'删除项目文件',message:'删除“'+file+'”？',detail:'将删除 '+count+' 项及其中未保存的修改。此操作无法撤销。',buttons:['取消','删除'],defaultId:0,cancelId:0,noLink:true});if(choice.response!==1)return entries;
+   const choice=await messageBox({type:'warning',title:'删除项目文件',message:'删除“'+file+'”？',detail:'将删除 '+count+' 项及其中未保存的修改。此操作无法撤销。',buttons:['取消','删除'],defaultId:0,cancelId:0,noLink:true});if(choice.response!==1)return entries;
   }
   return storage.workspace.mutate(lab,action as 'newFile'|'newFolder'|'rename'|'delete',file,target,content);
  });
- handle('build:preview',async(value:Draft,options?:ProjectBuildOptions)=>{
-  const d=await buildInput(value),base=d.workspace?structuredClone(config.compiler):options?effectiveCompiler(config.compiler,options):await draftOptions(d);
-  return previewPlan(d,base);
+ handle('build:preview',async(value:Draft,options?:ProjectBuildOptions,machine?:CompilerConfig)=>{
+  const d=await buildInput(value),selected=machine?structuredClone(validateConfig({...config,compiler:machine})).compiler:config.compiler,base=d.workspace?structuredClone(selected):options?effectiveCompiler(selected,options):effectiveCompiler(selected,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);
+  return previewPlan(d,await compiler.forDraft(d,base));
  });
- handle('project:build:get',async(lab:string)=>await storage.workspace.isProject(lab)?{inheritDefaults:(await storage.workspace.read(lab)).inheritDefaults,cArgs:[],cppArgs:[],linkArgs:[]}:storage.buildOptions(lab));
+ handle('project:build:get',async(lab:string)=>await storage.workspace.isProject(lab)?undefined:storage.buildOptions(lab));
  handle('project:build:save',async(lab:string,value:ProjectBuildOptions)=>{
-  requireIdle();await saves;if(await storage.workspace.isProject(lab)){await storage.workspace.update(lab,{inheritDefaults:!!value.inheritDefaults});return;}
+  requireIdle();await saves;if(await storage.workspace.isProject(lab))throw new Error('项目构建参数由 LPMake.txt 管理，请编辑构建配置。');
   if(!value.inheritDefaults){assertParameters(value.cArgs,'C 参数');assertParameters(value.cppArgs,'C++ 参数');assertParameters(value.linkArgs,'链接参数');}
   await storage.saveBuildOptions(lab,value);
  });
@@ -224,7 +249,7 @@ async function initialize(){
   let files=0,tests=0;
   if(project.mode==='project'){files=(await storage.workspace.list(lab)).filter(f=>!f.directory).length;tests=(await storage.workspace.read(lab)).tests.testCases.length;}
   else for(const id of project.problems){files+=(await storage.allDocuments(lab,id,'c')).length;tests+=(await storage.load(lab,id,'c',true)).problem.testCases.length;}
-  const choice=await dialog.showMessageBox(win,{type:'warning',title:'删除实验项目',message:'删除“'+lab+'”？',detail:'将删除本项目的 '+files+' 份文件、'+tests+' 个测试点、项目配置及本地记录。'+(documentDirty&&currentDocument?.problem.labId===lab?'\n包含未保存的修改。':'')+(active&&currentDocument?.problem.labId===lab?'\n正在运行的任务会停止。':'')+'\n此操作无法撤销。原始导入文件及其他项目保留。',buttons:['取消','删除整个项目'],defaultId:0,cancelId:0,noLink:true});
+  const choice=await messageBox({type:'warning',title:'删除实验项目',message:'删除“'+lab+'”？',detail:'将删除本项目的 '+files+' 份文件、'+tests+' 个测试点、项目配置及本地记录。'+(documentDirty&&currentDocument?.problem.labId===lab?'\n包含未保存的修改。':'')+(active&&currentDocument?.problem.labId===lab?'\n正在运行的任务会停止。':'')+'\n此操作无法撤销。原始导入文件及其他项目保留。',buttons:['取消','删除整个项目'],defaultId:0,cancelId:0,noLink:true});
   if(choice.response!==1)return false;
   if(active){if(currentDocument?.problem.labId!==lab)throw new Error('请等当前任务结束后再删除项目');await stop();}
   await stopWarmup();await clearWorkspaceCache(compiler,lab);await storage.deleteLab(lab);
@@ -251,7 +276,7 @@ async function initialize(){
    const drafts=values.map(validateDraft);
    if(await storage.workspace.isProject(drafts[0].problem.labId)){
     if(kind==='project'){
-     const d=await buildInput(drafts[0]),options=await draftOptions(d),preview=await prepareWorkspaceProject(storage,d,structuredClone(config),[...openBuffers,...drafts],includeConfig,submissionServices()),record=(await storage.workspace.read(d.problem.labId)).check;
+     const d=await buildInput(drafts[0]),options=await draftOptions(d),preview=await prepareWorkspaceProject(storage,d,{...structuredClone(config),compiler:options},[...openBuffers,...drafts],includeConfig,submissionServices()),record=(await storage.workspace.read(d.problem.labId)).check;
      if(d.problem.testCases.length&&(!record||record.fingerprint!==fingerprint(d,options,await inputIdentity(d,options))||record.total!==d.problem.testCases.length)&&!preview.warnings.some(w=>w.startsWith('尚未全部通过')))preview.warnings.unshift('尚未全部通过：内容或规则已改变，请重新测试。');
      return preview;
     }
@@ -283,7 +308,7 @@ async function initialize(){
  handle('clipboard:write',(text:string)=>{if(typeof text!=='string')throw new Error('复制内容无效');clipboard.writeText(text);});
   handle('path:show-file',async(file:string)=>{if(typeof file!=='string'||!path.isAbsolute(file))throw new Error('请选择已保存的源码文件');try{if(!(await stat(file)).isFile())throw new Error();await access(file,constants.R_OK);}catch{throw new Error('文件不存在或无法访问，请先保存源码');}shell.showItemInFolder(file);});
  handle('path:copy',(file:string,relative:boolean)=>{clipboard.writeText(relative?path.relative(storage.root,file):file);});
- handle('cache:clear',async()=>{requireIdle();await stopWarmup();return compiler.cache.clear();});
+ handle('cache:clear',async()=>{requireIdle();await stopWarmup();await compiledProgram.clear();return compiler.cache.clear();});
  handle('shortcuts:open',async()=>{
   if(shortcutWindow&&!shortcutWindow.isDestroyed()){shortcutWindow.focus();return;}
   shortcutWindow=new BrowserWindow({parent:win,width:760,height:750,minWidth:540,minHeight:480,title:'LabPad · 快捷键',icon:iconPath,backgroundColor:config.theme==='light'?'#ffffff':'#1e1e1e',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
@@ -300,9 +325,10 @@ async function initialize(){
   return result.canceled?null:result.filePaths[0];
  });
  handle('path:reveal',async(value:string,kind:PathKind)=>{await requirePath(value,kind);if(kind==='directory'){const error=await shell.openPath(value);if(error)throw new Error(error);}else shell.showItemInFolder(value);});
- handle('config:save',async(value:Config,dataRoot:string)=>{
+ handle('config:save',async(value:Config,dataRoot:string,project?:{lab:string;options:ProjectBuildOptions})=>{
   requireIdle();await stopWarmup();await saves;
   const next=structuredClone(validateConfig({...value,currentLab:config.currentLab,currentProblem:config.currentProblem,sourceFile:config.sourceFile,layout:config.layout,shortcuts:config.shortcuts}));
+  if(project){filePart(project.lab,'项目名称');if(project.lab!==config.currentLab||await storage.workspace.isProject(project.lab))throw new Error('当前实验已变化，请重新打开设置。');}
   await requirePath(dataRoot,'directory');const target=await realpath(dataRoot.trim());
   if(next.compiler.mode==='custom'){
    next.compiler.cPath=next.compiler.cPath.trim();next.compiler.cppPath=next.compiler.cppPath.trim();
@@ -312,9 +338,9 @@ async function initialize(){
   }
   await compiler.info(next.compiler);
   if(target!==await realpath(storage.root)){
-   await storage.copyDataTo(target);const replacement=new Storage(target);await replacement.saveConfig(next);
+   await storage.copyDataTo(target);const replacement=new Storage(target);await replacement.saveSettings(next,project);
    await mkdir(defaultRoot,{recursive:true});await writeFile(locationFile+'.tmp',JSON.stringify({dataDirectory:target},null,2)+'\n','utf8');await rename(locationFile+'.tmp',locationFile);storage=replacement;
-  }else await storage.saveConfig(next);
+  }else await storage.saveSettings(next,project);
   config=next;win.webContents.setZoomFactor(next.zoomFactor);scheduleWarmup();nativeTheme.themeSource=next.theme;win.setBackgroundColor(next.theme==='light'?'#ffffff':'#1e1e1e');return settingsResult();
  });
  handle('source:format',(source:string,language:Language,indentSize:number)=>{if(typeof source!=='string'||!['c','cpp'].includes(language))throw new Error('源码数据无效');return formatter.format(source,language,indentSize);});
@@ -329,7 +355,7 @@ async function initialize(){
   if(await storage.workspace.isProject(config.currentLab)){
    const name=workspacePath('src/'+path.basename(file)),target=await storage.workspace.path(config.currentLab,name,true),decoded=(await import('../core/storage')).decodeText(await readFile(file));
    if(await exists(target)&&await realpath(file)===await realpath(target)){const document=await storage.workspace.open(config.currentLab,name);return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document,reused:true};}
-   if(await exists(target)){const choice=await dialog.showMessageBox(win,{type:'question',title:'替换项目文件',message:'“'+name+'”已存在，是否替换？',detail:'当前文件及其未保存修改将被替换。原始导入文件保留。',buttons:['取消','替换'],defaultId:0,cancelId:0,noLink:true});if(choice.response!==1)return null;await writeSource(target,decoded.text);}else await storage.workspace.mutate(config.currentLab,'newFile',name,undefined,decoded.text);
+   if(await exists(target)){const choice=await messageBox({type:'question',title:'替换项目文件',message:'“'+name+'”已存在，是否替换？',detail:'当前文件及其未保存修改将被替换。原始导入文件保留。',buttons:['取消','替换'],defaultId:0,cancelId:0,noLink:true});if(choice.response!==1)return null;await writeSource(target,decoded.text);}else await storage.workspace.mutate(config.currentLab,'newFile',name,undefined,decoded.text);
    const document=await storage.workspace.open(config.currentLab,name);currentDocument=document;openBuffers=openBuffers.filter(d=>d.file!==name);
    return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document};
   }
@@ -346,14 +372,14 @@ async function initialize(){
   if(selected.canceled)return null;
   const patch=selected.filePaths.length===1&&path.extname(selected.filePaths[0]).toLowerCase()==='.json'
    ?parseIOPatch(await readJSON(selected.filePaths[0]),current.problem):{testCases:(await importPairs(selected.filePaths,lab,problem)).testCases};
-  const choice=await dialog.showMessageBox(win,{type:'question',title:'导入测试点',message:'导入 '+patch.testCases!.length+' 个测试点',detail:'当前有 '+current.problem.testCases.length+' 个测试点。覆盖会替换现有测试点；追加会保留原点及其比较规则。',buttons:['取消','覆盖现有测试点','追加到末尾'],defaultId:0,cancelId:0,noLink:true});
+  const choice=await messageBox({type:'question',title:'导入测试点',message:'导入 '+patch.testCases!.length+' 个测试点',detail:'当前有 '+current.problem.testCases.length+' 个测试点。覆盖会替换现有测试点；追加会保留原点及其比较规则。',buttons:['取消','覆盖现有测试点','追加到末尾'],defaultId:0,cancelId:0,noLink:true});
   if(!choice.response)return null;const mode=choice.response===1?'replace':'append';let adoptLimits=false;
   if(mode==='append'&&(patch.timeLimitMs!==undefined&&patch.timeLimitMs!==current.problem.timeLimitMs||patch.outputLimitBytes!==undefined&&patch.outputLimitBytes!==current.problem.outputLimitBytes)){
-   const answer=await dialog.showMessageBox(win,{type:'question',title:'测试限制',message:'导入文件包含不同的时限或输出上限。',detail:'这些限制作用于整题。追加测试点时，可以保留当前限制。',buttons:['取消','保留当前限制','采用导入限制'],defaultId:1,cancelId:0,noLink:true});
+   const answer=await messageBox({type:'question',title:'测试限制',message:'导入文件包含不同的时限或输出上限。',detail:'这些限制作用于整题。追加测试点时，可以保留当前限制。',buttons:['取消','保留当前限制','采用导入限制'],defaultId:1,cancelId:0,noLink:true});
    if(!answer.response)return null;adoptLimits=answer.response===2;
   }
   const imported=mergeTests(current.problem,patch,mode,adoptLimits);
-  const confirm=await dialog.showMessageBox(win,{type:'question',title:'确认导入',message:(mode==='replace'?'覆盖后':'追加后')+'共 '+imported.problem.testCases.length+' 个测试点',detail:(mode==='append'?'原测试点及其比较规则保留。':'仅替换测试点及文件中明确给出的规则，源码保留。')+(imported.renamed.length?'\n编号冲突已调整：'+imported.renamed.map(x=>x.from+' → '+x.to).join('、'):'')+'\n导入后需要重新测试。',buttons:['取消','导入'],defaultId:1,cancelId:0,noLink:true});
+  const confirm=await messageBox({type:'question',title:'确认导入',message:(mode==='replace'?'覆盖后':'追加后')+'共 '+imported.problem.testCases.length+' 个测试点',detail:(mode==='append'?'原测试点及其比较规则保留。':'仅替换测试点及文件中明确给出的规则，源码保留。')+(imported.renamed.length?'\n编号冲突已调整：'+imported.renamed.map(x=>x.from+' → '+x.to).join('、'):'')+'\n导入后需要重新测试。',buttons:['取消','导入'],defaultId:1,cancelId:0,noLink:true});
   if(confirm.response!==1)return null;
   if(await storage.workspace.isProject(lab))await storage.workspace.update(lab,{tests:imported.problem});else await storage.save({...current,problem:imported.problem},false);if(currentDocument?.problem.labId===lab&&currentDocument.problem.problemId===problem)currentDocument.problem=imported.problem;return imported.problem;
  });
@@ -364,7 +390,7 @@ async function initialize(){
   const value=(path.extname(selected.filePaths[0]).toLowerCase()==='.zip'?await readProjectArchive(selected.filePaths[0]):await readJSON(selected.filePaths[0])) as any,target=(await storage.projects()).find(p=>p.labId===value?.labId),testsOnly=value?.kind==='labpad.projectTests';
   let update=testsOnly;
   if(target&&!testsOnly){
-   const choice=await dialog.showMessageBox(win,{type:'question',title:'导入实验项目',message:'“'+target.labId+'”已存在。',detail:'更新测试点会保留源码、模板和正在编辑的内容。',buttons:['取消','更新测试点','导入副本'],defaultId:1,cancelId:0,noLink:true});
+   const choice=await messageBox({type:'question',title:'导入实验项目',message:'“'+target.labId+'”已存在。',detail:'更新测试点会保留源码、模板和正在编辑的内容。',buttons:['取消','更新测试点','导入副本'],defaultId:1,cancelId:0,noLink:true});
    if(!choice.response)return null;update=choice.response===1;
   }
   if(update){
@@ -373,7 +399,7 @@ async function initialize(){
    if(incoming.mode==='project'){
     const current=currentDocument?.problem.labId===target.labId?currentDocument.problem:(await storage.workspace.read(target.labId)).tests;
     const tests=mergeTests(current,incoming.tests!,'replace').problem;
-    const answer=await dialog.showMessageBox(win,{type:'question',title:'更新项目测试点',message:'更新“'+target.labId+'”的 '+tests.testCases.length+' 个测试点',detail:'源码、LPMake与未保存编辑保留。空测试集将清空现有测试点。',buttons:['取消','更新测试点'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return null;
+    const answer=await messageBox({type:'question',title:'更新项目测试点',message:'更新“'+target.labId+'”的 '+tests.testCases.length+' 个测试点',detail:'源码、LPMake与未保存编辑保留。空测试集将清空现有测试点。',buttons:['取消','更新测试点'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return null;
     await storage.workspace.update(target.labId,{tests});if(currentDocument?.problem.labId===target.labId)currentDocument.problem=tests;return {...await bootstrap(),updatedProblems:[tests]};
    }
    const missing=incoming.problems!.filter(p=>!target.problems.includes(p.problemId));if(missing.length)throw new Error('以下题号不存在：'+missing.map(p=>p.problemId).join('、'));
@@ -381,7 +407,7 @@ async function initialize(){
     const current=currentDocument?.problem.labId===target.labId&&currentDocument.problem.problemId===p.problemId?currentDocument.problem:(await storage.load(target.labId,p.problemId,'c',true)).problem;
     return mergeTests(current,p.rules,'replace').problem;
    }));
-   const choice=await dialog.showMessageBox(win,{type:'question',title:'更新项目测试点',message:'更新“'+target.labId+'”的 '+rules.length+' 道题目',detail:rules.map(p=>p.problemId+'：'+p.testCases.length+' 个测试点'+(!p.testCases.length?'（将清空）':'')).join('\n')+'\n源码及未保存编辑保留；未列出的题目不变。',buttons:['取消','更新测试点'],defaultId:0,cancelId:0,noLink:true});
+   const choice=await messageBox({type:'question',title:'更新项目测试点',message:'更新“'+target.labId+'”的 '+rules.length+' 道题目',detail:rules.map(p=>p.problemId+'：'+p.testCases.length+' 个测试点'+(!p.testCases.length?'（将清空）':'')).join('\n')+'\n源码及未保存编辑保留；未列出的题目不变。',buttons:['取消','更新测试点'],defaultId:0,cancelId:0,noLink:true});
    if(choice.response!==1)return null;
    await storage.updateProjectTests(target.labId,rules);
    const current=rules.find(p=>p.problemId===currentDocument?.problem.problemId&&p.labId===currentDocument.problem.labId);if(current&&currentDocument)currentDocument.problem=current;
@@ -390,7 +416,8 @@ async function initialize(){
   const workspace=value?.mode==='project'?parseWorkspacePackage(value):undefined,lab=workspace??parseLabPackage(value),name=await storage.nextLabName(lab.labId);
   if(documentDirty||openBuffers.length){const choice=await confirmUnsaved();if(choice==='cancel')return null;if(choice==='save')for(const d of openBuffers.length?openBuffers:currentDocument?[currentDocument]:[])await persist(d);}
   const imported=workspace?await storage.workspace.create(name,config.language,workspace):undefined;if(imported)await selectDraft(name,'',imported.language);else{const created=await storage.importProject(lab,name);await selectDraft(created.labId,created.problemId,created.language);}
-  return bootstrap();
+  let editBuild=false;if(workspace?.templateFilled){const answer=await messageBox({type:'info',title:'项目构建配置',message:'原项目未提供 LPMake.txt，已填充默认模板',detail:'可修改源文件匹配、包含目录及编译参数。忽略后仍使用默认模板，构建时可按诊断自行调整。',buttons:['修改配置','忽略'],defaultId:0,cancelId:1,noLink:true});editBuild=answer.response===0;}
+  return {...await bootstrap(),...(editBuild?{editBuild:true}:{})};
  });
  handle('tests:export',async(kind:string,value:unknown)=>{
   requireIdle();await saves;const problem=validateProblem(value);let content:unknown=exportIO(problem),name=(problem.problemId||problem.labId||'测试点')+'.io.json';
@@ -405,13 +432,22 @@ async function initialize(){
   const d=validateDraft(value);if(d.file){shell.showItemInFolder(storage.workspace.metadata(d.problem.labId));return;}const file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
   if(!await exists(file))throw new Error('请先保存当前题目，再打开题目文件');shell.showItemInFolder(file);
  });
+ handle('compile:state',async(value:Draft)=>{let saved=false;try{saved=(await savedBuildInput(value)).saved;const context=await programContext(value);return {saved,ready:saved&&compiledProgram.matches(context.key)};}catch{return {saved,ready:false};}});
+ handle('compile:confirm',async()=>{const result=await messageBox({type:'question',title:'保存后编译',message:'源码或构建配置尚未保存。',detail:'编译使用已保存的文件。',buttons:['保存并编译','取消'],defaultId:0,cancelId:1,noLink:true});return result.response===0;});
+ handle('compile',async(value:Draft)=>{
+  requireIdle();await stopWarmup();requireIdle();await compiledProgram.clear();const context=await programContext(value);
+  if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');
+  const abort=new AbortController();controller=abort;
+  const task=compiledProgram.compile(context.key,context.draft,context.options,abort.signal);active=task;
+  try{const result=await task;judgeEvent({type:'compilation',compilation:result});return result;}finally{if(active===task){active=undefined;controller=undefined;}}
+ });
  handle('judge',async(value:Draft,ids?:string[])=>{
-  requireIdle();await stopWarmup();requireIdle();const d=await buildInput(value),options=await draftOptions(value),abort=new AbortController();controller=abort;
+  requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');const d=context.draft,options=context.options,program=compiledProgram.require(context.key),abort=new AbortController();controller=abort;
   const task=(async()=>{
    const hash=fingerprint(d,options,await inputIdentity(d,options));
    const previous=await storedCheck(storage,d);
    await storage.recordCheck(d,checkRecord(d,hash,undefined,previous));
-   const result=await judge(compiler,d,options,abort.signal,judgeEvent,ids);
+   const result=await judge(compiler,d,options,abort.signal,judgeEvent,ids,program);
    await storage.recordCheck(d,checkRecord(d,hash,result,previous));return result;
   })();active=task;
   try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
@@ -445,7 +481,7 @@ app.whenReady().then(async()=>{
      const choice=config.saveMode==='auto'?'save':await confirmUnsaved();
      if(choice==='cancel'){closing=false;return;}if(choice==='save'){if(openBuffers.length)for(const buffer of openBuffers)await persist(buffer);else await storage.save(currentDocument,false);}
     }
-    await stopWarmup();await stop();await saves;if(initialized)await storage.flush();await compiler.dispose();await formatter.dispose();shortcutWindow?.destroy();win.destroy();app.quit();
+    await stopWarmup();await stop();await saves;if(initialized)await storage.flush();await compiledProgram.clear();await compiler.dispose();await formatter.dispose();shortcutWindow?.destroy();win.destroy();app.quit();
    }catch(e){closing=false;dialog.showErrorBox('尚未保存',String(e));}
   })();
  });

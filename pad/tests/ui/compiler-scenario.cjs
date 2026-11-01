@@ -1,3 +1,4 @@
+const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
@@ -23,7 +24,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
  const snapshot=()=>page.evaluate(()=>window.labpad.bootstrap());
  async function prepare(){
   page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message));await page.locator('.toolbar').waitFor();
-  await app.evaluate(({dialog})=>{globalThis.__source='';dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});dialog.showOpenDialog=async()=>({canceled:!globalThis.__source,filePaths:[globalThis.__source]});});
+  await app.evaluate(({dialog})=>{globalThis.__source='';dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:1,checkboxChecked:false}));dialog.showOpenDialog=async()=>({canceled:!globalThis.__source,filePaths:[globalThis.__source]});});
  }
  async function settings(){await page.getByRole('button',{name:/设置/}).click();await settingsDialog().waitFor();}
  async function detect(){await button('自动检测').click();await dialog().waitFor({timeout:60000});}
@@ -32,7 +33,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
  try{
   await prepare();await settings();assert.equal(await button('自动检测').count(),0);await select('编译器使用方式').selectOption('custom');
   await select('编译器类型').selectOption('clang');await input('C 编译器路径').fill(path.join(temporary,'missing'));
-  await page.locator('summary').filter({hasText:/^本机默认参数$/}).click();
+  await page.locator('summary').filter({hasText:/^高级编译参数$/}).click();
   await input('C 参数').fill('-invalid-c-option');await input('C++ 参数').fill('-invalid-cpp-option');await input('链接参数').fill('-invalid-link-option');
   await detect();const choice=page.getByRole('radio',{name:'Zig '+installed,exact:true});await choice.waitFor();
   assert.equal(await button('使用此编译器').isDisabled(),true);
@@ -42,10 +43,10 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
   await button('取消').last().click();await dialog().waitFor({state:'hidden'});assert.equal(await select('编译器类型').inputValue(),'clang');assert.equal(await input('C 参数').inputValue(),'-invalid-c-option');
   assert.equal((await snapshot()).config.compiler.mode,'builtin');
   pass('custom-mode detection lists real installed compilers, requires manual selection, excludes bundled Zig and cancels without changes');
-  await detect();await choice.check();await dialog().getByRole('checkbox',{name:'同时使用推荐参数（更新本机默认参数）',exact:true}).uncheck();await button('使用此编译器').click();await dialog().waitFor({state:'hidden'});assert.equal(await input('C 参数').inputValue(),'-invalid-c-option');assert.equal(await input('C++ 参数').inputValue(),'-invalid-cpp-option');assert.equal(await input('链接参数').inputValue(),'-invalid-link-option');pass('detected compiler can update only type and paths while preserving custom machine argument arrays');
+  await detect();await choice.check();await dialog().getByRole('checkbox',{name:'同时使用推荐参数（更新全局配置）',exact:true}).uncheck();await button('使用此编译器').click();await dialog().waitFor({state:'hidden'});assert.equal(await input('C 参数').inputValue(),'-invalid-c-option');assert.equal(await input('C++ 参数').inputValue(),'-invalid-cpp-option');assert.equal(await input('链接参数').inputValue(),'-invalid-link-option');pass('detected compiler can update only type and paths while preserving custom machine argument arrays');
   await detect();await choice.check();await button('使用此编译器').click();await dialog().waitFor({state:'hidden'});
   assert.equal(await select('编译器类型').inputValue(),'zig');assert.equal(await input('C 编译器路径').inputValue(),installed);assert.equal(await input('C++ 编译器路径').inputValue(),installed);
-  assert.equal(await input('C 参数').inputValue(),'-std=c17\n-O2\n-Wall\n-Wextra');assert.equal(await input('C++ 参数').inputValue(),'-std=c++20\n-O2\n-Wall\n-Wextra');assert.equal(await input('链接参数').inputValue(),'-lm');
+  assert.equal(await input('C 参数').inputValue(),'-std=c17\n-O2\n-Wall\n-Wextra\n-Wshadow\n-Wconversion\n-Wundef\n-Wformat=2');assert.equal(await input('C++ 参数').inputValue(),'-std=c++20\n-O2\n-Wall\n-Wextra\n-Wshadow\n-Wconversion\n-Wundef\n-Wformat=2');assert.equal(await input('链接参数').inputValue(),'-lm');
   assert.equal((await snapshot()).config.compiler.mode,'builtin','selection waits for Save Settings');
   await until(()=>button('保存设置').isEnabled(),'selected paths validate');await button('保存设置').click();await settingsDialog().waitFor({state:'hidden'});
   const chosen=(await snapshot()).config.compiler;assert.equal(chosen.mode,'custom');assert.equal(chosen.kind,'zig');assert.equal(chosen.cPath,installed);
@@ -53,10 +54,10 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
 
   await page.locator('.cm-content').fill('#include <stdio.h>\n#if __STDC_VERSION__ != 201710L\n#error C17_required\n#endif\nint main(void){printf("42");}\n');
   await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('42');await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save source');
-  await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});
+  await compileAndRun(page);await page.locator('.verdict.ac').waitFor({timeout:150000});
   const cpp=path.join(temporary,'external.cpp');await fs.writeFile(cpp,'#include <iostream>\n#include <span>\nstatic_assert(__cplusplus==202002L);\nconsteval int value(){return 42;}\nint main(){int a[]={value()};std::span<int> s(a);std::cout<<s[0];}\n');await app.evaluate((_,file)=>{globalThis.__source=file;},cpp);await importSource();
   await until(async()=>{const loaded=await snapshot();return loaded.draft.language==='cpp'&&loaded.sourcePath!==cpp;},'C++ source imported as copy');
-  await page.getByRole('button',{name:/编译并运行/}).click();await page.locator('.verdict.ac').waitFor({timeout:150000});await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save C++ source');
+  await compileAndRun(page);await page.locator('.verdict.ac').waitFor({timeout:150000});await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save C++ source');
   pass('actual detected external Zig compiles and judges C and C++ from an installation path containing spaces and Chinese characters');
   await app.close();app=await launch();await prepare();assert.equal((await snapshot()).config.compiler.cPath,installed);
   pass('selected compiler persists across restart');

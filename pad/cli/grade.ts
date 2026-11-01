@@ -1,4 +1,4 @@
-import {usedLanguages} from '../core/build/plan';
+import {usedLanguages,independentMake} from '../core/build/plan';
 import {effectiveCompiler} from '../shared/workspace';
 import {withDefaultStandard} from '../shared/defaults';
 import {readFile,writeFile,mkdir,rename,rm,stat} from 'node:fs/promises';
@@ -44,7 +44,7 @@ export async function compilerConfig(value?:Partial<CompilerConfig>):Promise<Com
  return config;
 }
 function issueApplies(intake:Intake,id:string,problemId:string){return intake.issues.some(x=>x.pending&&(!x.students.length||x.students.includes(id))&&(!x.problemId||x.problemId===problemId));}
-async function gradeStudent(student:Student,problems:Problem[],intake:Intake,compiler:Compiler,config:CompilerConfig,signal?:AbortSignal,workspaceConfig?:{lpmake:string;inheritDefaults:boolean;allowStudentBuild:boolean}):Promise<StudentGrade>{
+async function gradeStudent(student:Student,problems:Problem[],intake:Intake,compiler:Compiler,config:CompilerConfig,signal?:AbortSignal,workspaceConfig?:{lpmake:string;allowStudentBuild:boolean}):Promise<StudentGrade>{
  const outcomes:Outcome[]=[];
  for(const problem of problems){
   signal?.throwIfAborted();const versions=intake.candidates.filter(v=>v.studentId===student.studentId&&v.problemId===problem.problemId);
@@ -57,12 +57,12 @@ async function gradeStudent(student:Student,problems:Problem[],intake:Intake,com
     const files={...candidate.workspace.files};files['LPMake.txt']=workspaceConfig?.allowStudentBuild?files['LPMake.txt']:workspaceConfig!.lpmake;
     if(!files['LPMake.txt'])throw new ConfigError('',0,'The submission is missing LPMake.txt.','Include the build configuration file in the project submission.');const spec=parseMake(files['LPMake.txt']).spec;
     if(workspaceConfig?.allowStudentBuild){
-     const allowed=/^(?:-W(?:all|extra|error|pedantic|no-[A-Za-z0-9_-]+)|-std=(?:c|gnu)(?:\+\+)?[0-9]+|-O[0-3s]|-g[0-3]?|-pthread|-pipe|-pedantic(?:-errors)?|-fno-omit-frame-pointer)$/;
+     const allowed=/^(?:-W(?:all|extra|shadow|conversion|undef|format=2|error|pedantic|no-[A-Za-z0-9_-]+)|-std=(?:c|gnu)(?:\+\+)?[0-9]+|-O[0-3s]|-g[0-3]?|-pthread|-pipe|-pedantic(?:-errors)?|-fno-omit-frame-pointer)$/;
      for(const flag of [...spec.cflags,...spec.cxxflags])if(!allowed.test(flag))throw diagnostic(spec,spec.cflags.includes(flag)?'add_cflags':'add_cxxflags',flag,'Compiler flag '+JSON.stringify(flag)+' is not allowed by the grading configuration.','Remove this flag or ask the instructor to approve the required build option.');
      for(const flag of spec.ldflags)if(!['-pthread','-s','-static'].includes(flag))throw diagnostic(spec,'add_ldflags',flag,'Linker flag '+JSON.stringify(flag)+' is not allowed by the grading configuration.','Remove this flag or ask the instructor to approve the required link option.');
      if(spec.links.some(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)))throw diagnostic(spec,'add_links',spec.links.find(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)),'A library name contains unsupported characters.','Use a library name such as "m"; do not pass paths or linker flags to add_links().');
     }
-    draft.workspace={files,inheritDefaults:workspaceConfig?.inheritDefaults??true};
+    draft.workspace={files};
    }}catch(e){configurationError=e instanceof Error?e.message:String(e);}
    if(configurationError)result={status:'completed',compiler:'',comparison:problem.comparison,cases:[],compilation:{status:'CE',stdout:'',stderr:configurationError,command:[],elapsedMs:0}};
    else if(problem.testCases.length)result=await judge(compiler,draft,config,signal);
@@ -151,14 +151,15 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
   await writeFileAtomic(path.join(lab,'src','index.json'),JSON.stringify(versions,null,2)+'\n');
   const languages=new Set<Language>();
   for(const candidate of intake.candidates){
-   if(candidate.workspace){const files={...candidate.workspace.files};if(!value.allowStudentBuild)files['LPMake.txt']=workspace!.files.find(f=>f.path==='LPMake.txt')!.content;for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files,inheritDefaults:workspace!.build.inheritDefaults??true}}))languages.add(language);}
+   if(candidate.workspace){const files={...candidate.workspace.files};if(!value.allowStudentBuild)files['LPMake.txt']=workspace!.files.find(f=>f.path==='LPMake.txt')!.content;for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files}}))languages.add(language);}
    else languages.add(candidate.language);
   }
-  if(!languages.size){if(workspace){for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files:Object.fromEntries(workspace.files.map(f=>[f.path,f.content])),inheritDefaults:workspace.build.inheritDefaults??true}}))languages.add(language);}else for(const p of pkg.problems)languages.add(p.language??'c');}
-  const inherit=!workspace||(workspace.build.inheritDefaults??true),compilerContexts:Partial<Record<Language,string>>={};
+  if(!languages.size){if(workspace){for(const language of usedLanguages({source:'',language:'c',problem:problems[0],workspace:{files:Object.fromEntries(workspace.files.map(f=>[f.path,f.content]))}}))languages.add(language);}else for(const p of pkg.problems)languages.add(p.language??'c');}
+  if(workspace?.build.inheritDefaults===true){const make=workspace.files.find(f=>f.path==='LPMake.txt')!;make.content=independentMake(make.content,{c:config.cArgs,cpp:config.cppArgs,link:config.linkArgs});}if(workspace)delete workspace.build.inheritDefaults;
+  const inherit=!workspace,compilerContexts:Partial<Record<Language,string>>={};
   const compilerContext=async(language:Language)=>digest([language,await compiler!.identity(config,language),config.mode==='builtin'?'zig':config.kind,inherit?withDefaultStandard(language==='c'?config.cArgs:config.cppArgs,language):[defaultStandards[language]],inherit?config.linkArgs:[]]);
   for(const language of languages)compilerContexts[language]=await compilerContext(language);
-  const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,isolation,'effective-compiler-context-v2']);
+  const context=digest([workspace?.files.find(f=>f.path==='LPMake.txt')?.content,workspace?.build,value.allowStudentBuild??false,problems,value.weights,roster,isolation,'parameter-source-context-v3']);
   let state:GradeState={schemaVersion:1,context,compilerContexts,students:{}};
   if(options.studentId){
    if(!roster.some(s=>s.studentId===options.studentId))throw Error('该学号不在点名册中：'+options.studentId);
@@ -185,7 +186,7 @@ export async function runGrade(lab:string,paths:RuntimePaths,options:{studentId?
   const selected=options.studentId?roster.filter(s=>s.studentId===options.studentId):roster;
   for(const [index,student] of selected.entries()){
    options.signal?.throwIfAborted();options.progress?.('评测 '+(index+1)+' / '+selected.length);
-   state.students[student.studentId]=await gradeStudent(student,problems,intake,compiler,config,options.signal,workspace?{lpmake:workspace.files.find(f=>f.path==='LPMake.txt')!.content,inheritDefaults:workspace.build.inheritDefaults??true,allowStudentBuild:value.allowStudentBuild===true}:undefined);
+   state.students[student.studentId]=await gradeStudent(student,problems,intake,compiler,config,options.signal,workspace?{lpmake:workspace.files.find(f=>f.path==='LPMake.txt')!.content,allowStudentBuild:value.allowStudentBuild===true}:undefined);
   }
   options.signal?.throwIfAborted();
   const report=rows(state,roster,problems,value.weights);

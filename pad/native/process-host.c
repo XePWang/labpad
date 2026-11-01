@@ -1,6 +1,10 @@
 // LabPad process-tree host for Windows, MIT.
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #include <windows.h>
 #include <wchar.h>
 #include <stdlib.h>
@@ -20,10 +24,12 @@ static wchar_t* quote(wchar_t* out, const wchar_t* arg) {
     *out++=L'"'; return out;
 }
 int wmain(int argc, wchar_t** argv) {
-    int terminal=argc>1 && wcscmp(argv[1],L"--terminal")==0;
+    int no_echo=argc>1 && wcscmp(argv[1],L"--terminal-no-echo")==0;
+    int terminal=no_echo || (argc>1 && wcscmp(argv[1],L"--terminal")==0);
     int first=terminal?2:1;
     if (argc<=first) return 125;
     if(terminal && (!SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8))) return 125;
+    if(no_echo){DWORD mode;HANDLE input=GetStdHandle(STD_INPUT_HANDLE);if(!GetConsoleMode(input,&mode)||!SetConsoleMode(input,mode & ~ENABLE_ECHO_INPUT))return 125;}
     size_t size=1;
     for (int i=first;i<argc;i++) size+=wcslen(argv[i])*2+4;
     wchar_t* command=(wchar_t*)calloc(size,sizeof(wchar_t));

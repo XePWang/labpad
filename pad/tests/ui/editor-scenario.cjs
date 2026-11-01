@@ -1,3 +1,4 @@
+const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
@@ -32,7 +33,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
   await app.evaluate(({dialog})=>{
    globalThis.__file='';globalThis.__answer=1;
-   dialog.showMessageBox=async()=>({response:globalThis.__answer,checkboxChecked:false});
+   dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:globalThis.__answer,checkboxChecked:false}));
    dialog.showOpenDialog=async()=>({canceled:!globalThis.__file,filePaths:[globalThis.__file]});
   });
  }

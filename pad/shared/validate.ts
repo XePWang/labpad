@@ -33,7 +33,6 @@ export function validateProblem(value:unknown):Problem {
 export function validateDraft(value:unknown):Draft {
  const d=value as Draft;
  if(!d||typeof d.source!=='string'||!['c','cpp'].includes(d.language))throw new Error('源码数据无效');
- if(d.workspaceBuild&&typeof d.workspaceBuild.inheritDefaults!=='boolean')throw new Error('项目继承选项应为布尔值');
  validateProblem(d.problem);return d;
 }
 export function validateLayout(value:unknown):LayoutConfig{
@@ -61,5 +60,6 @@ export function validateConfig(value:unknown):Config {
  throw new Error('调试时限应留空或填写正整数（毫秒）');
  if(!Number.isSafeInteger(c.terminalBufferLines)||c.terminalBufferLines<100||c.terminalBufferLines>100000)
  throw new Error('终端缓冲应为 100 至 100000 行');
+ if(!Number.isSafeInteger(c.terminalHistoryBytes)||c.terminalHistoryBytes<1024||c.terminalHistoryBytes>1048576)throw new Error('调试输入历史应为 1024 至 1048576 字节');
  return c;
 }

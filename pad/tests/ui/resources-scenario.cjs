@@ -1,3 +1,4 @@
+const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const until=async(fn,label,timeout=150000)=>{const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,70));}throw Error('Timeout: '+label);};
 async function runResourcesScenario(electron,{executable,cwd,evidence}){
@@ -9,7 +10,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.getByRole('tab'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
  async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
   const runtime=await app.evaluate(({app})=>({pid:process.pid,profile:app.getPath('userData')}));
-  await app.evaluate(({dialog})=>{globalThis.__answer=2;dialog.showMessageBox=async()=>({response:globalThis.__answer,checkboxChecked:false});});
+  await app.evaluate(({dialog})=>{globalThis.__answer=2;dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:globalThis.__answer,checkboxChecked:false}));});
   await page.getByRole('button',{name:/设置/}).click();await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
   const source='#include <stdio.h>\nint main(void){puts("ready-中文");fflush(stdout);char line[80];fgets(line,sizeof line,stdin);return 0;}\n';
   await editor().fill(source);await page.keyboard.press('Control+s');await until(()=>page.locator('.save-status').textContent().then(t=>t==='已保存'),'save');
@@ -30,7 +31,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   // Open/close child windows repeatedly; record a user-defined key.
   for(let cycle=0;cycle<4;cycle++){
    await page.getByRole('button',{name:/设置/}).click();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();assert.ok(!(await popup.locator('body').innerText()).includes('$mod'));assert.equal(await popup.getByRole('textbox',{name:'保存当前 快捷键',exact:true}).inputValue(),process.platform==='darwin'?'⌘S':'Ctrl+S');
-   if(!cycle){await popup.getByRole('button',{name:'录制',exact:true}).first().click();await popup.keyboard.press('F7');await until(()=>popup.getByRole('textbox',{name:'编译并运行 快捷键',exact:true}).inputValue().then(t=>t==='F7'),'recorded shortcut');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'record saved');}
+   if(!cycle){await popup.getByRole('button',{name:'录制',exact:true}).first().click();await popup.keyboard.press('F7');await until(()=>popup.getByRole('textbox',{name:'编译 快捷键',exact:true}).inputValue().then(t=>t==='F7'),'recorded shortcut');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'record saved');}
    await popup.close();await button('取消').click();await until(()=>app.windows().length===1,'child disposed');
   }
   console.log('PASS shortcut recording and repeated settings-window lifecycle');
@@ -45,11 +46,11 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
    await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'debug stopped');
    await menu('另存为新版本');await until(()=>tabs().count().then(n=>n===2),'new version');await app.evaluate(()=>globalThis.__answer=1);await menu('关闭',1);await until(()=>tabs().count().then(n=>n===1),'version closes');
    const directories=(await fs.readdir(os.tmpdir())).filter(n=>n.startsWith('labpad-runtime-'+runtime.pid+'-'));assert.equal(directories.length,1);
-   assert.deepEqual((await fs.readdir(path.join(os.tmpdir(),directories[0]))).filter(n=>n.startsWith('run-')),[]);
+   assert.equal((await fs.readdir(path.join(os.tmpdir(),directories[0]))).filter(n=>n.startsWith('run-')).length,1,'only the current compiled program is retained');
    if(cycle===3||cycle===7)samples.push(await heap());
   }
   assert.ok(samples.at(-1)<samples[0]+80000,'renderer private memory grew by more than 80 MB: '+samples);assert.equal(app.windows().length,1);assert.deepEqual(errors,[]);
-  console.log('PASS eight repeated compile/PTY/stop/version-close cycles free run directories; memory KB '+JSON.stringify(samples));
+  console.log('PASS eight compile/PTY/stop/version-close cycles retain one program and remove earlier runs; memory KB '+JSON.stringify(samples));
   // Scale extremes and moving managed version data.
   await app.evaluate(()=>globalThis.__answer=0);await page.keyboard.press('Control+s');
   const relocated=path.join(temporary,'relocated');await fs.mkdir(relocated);
@@ -60,6 +61,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()),Number(factor));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   }
   await fs.writeFile(path.join(evidence,'resource-checks.json'),JSON.stringify({platform:process.platform,privateKB:samples,cycles:8},null,2));console.log('PASS source versions relocate with originals preserved and 75% / 200% scale fits without page overflow');
+  await app.close();await until(async()=>!(await fs.readdir(os.tmpdir())).some(n=>n.startsWith('labpad-runtime-'+runtime.pid+'-')),'compiled runtime removed at exit',15000);console.log('PASS application exit removes the retained compiled program and runtime directory');
  }catch(e){if(page&&!page.isClosed()){console.error(await page.locator('body').innerText());await page.screenshot({path:path.join(evidence,'resources-failure.png'),fullPage:true}).catch(()=>{});}throw e;}
  finally{await app.evaluate(()=>globalThis.__answer=1).catch(()=>{});await app.close().catch(()=>{});await fs.rm(temporary,{recursive:true,force:true});}
 }

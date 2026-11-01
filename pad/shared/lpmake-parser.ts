@@ -2,15 +2,15 @@
 import {LRParser} from "@lezer/lr"
 export const parser = LRParser.deserialize({
   version: 14,
-  states: "#YQYQPOOO_QPO'#C_OOQO'#Cd'#CdQYQPOOOdQPO,58yOOQO-E6b-E6bOlQPO'#CaOOQO1G.e1G.eOtQPO1G.eOOQO'#Cc'#CcOyQPO,58{O!RQPO,58{OOQO7+$P7+$POOQO,59P,59PO!ZQPO1G.gOOQO-E6c-E6cP!cQPO'#Ce",
-  stateData: "!h~O[OSPOS~OSPO~O]SO~OUUO_VO~O^XO_TX~O_[O~OU]O_Ta~O^XO_Ta~OU]O_Ti~OU]O~O",
-  goto: "tYPPPZP_PbhnTQORRWSQYUR^ZQRORTRQZUR_Z",
-  nodeNames: "⚠ Comment Program Call Name Arguments String Comma",
-  maxTerm: 15,
-  skippedNodes: [0,1],
+  states: "#`Q]QPOOOeQPO'#C`OOQO'#Ce'#CeOOQO'#Cf'#CfQ]QPOOOjQPO,58zOOQO-E6d-E6dOrQPO'#CbOOQO1G.f1G.fOzQPO1G.fOOQO'#Cd'#CdO!PQPO,58|O!XQPO,58|OOQO7+$Q7+$QOOQO,59R,59RO!aQPO1G.hOOQO-E6e-E6eP!iQPO'#Cg",
+  stateData: "!q~O^OSPOSQOS~OTPObQO~O_TO~OVVOaWO~O`YOaUX~Oa]O~OV^OaUa~O`YOaUa~OV^OaUi~OV^O~OQP~",
+  goto: "v[PPPP]PaPd]jpTROSRXTQZVR_[QSORUSQ[VR`[",
+  nodeNames: "⚠ Comment BlockComment Program Call Name Arguments String Comma Semicolon",
+  maxTerm: 18,
+  skippedNodes: [0,1,2],
   repeatNodeCount: 2,
-  tokenData: "%i~RbX^!Zpq!Zrs#Ost$]xy$wyz$||}%R!c!}%W#R#S%W#T#o%W#y#z!Z$f$g!Z#BY#BZ!Z$IS$I_!Z$I|$JO!Z$JT$JU!Z$KV$KW!Z&FU&FV!Z~!`Y[~X^!Zpq!Z#y#z!Z$f$g!Z#BY#BZ!Z$IS$I_!Z$I|$JO!Z$JT$JU!Z$KV$KW!Z&FU&FV!Z~#RXOY#OZ]#O^r#Ors#ns#O#O#O#P#s#P;'S#O;'S;=`$V<%lO#O~#sOU~~#vTOY#OZ]#O^;'S#O;'S;=`$V<%lO#O~$YP;=`<%l#O~$bTP~OY$]Z]$]^;'S$];'S;=`$q<%lO$]~$tP;=`<%l$]~$|O]~~%RO_~~%WO^~~%]SS~!Q![%W!c!}%W#R#S%W#T#o%W",
+  tokenData: "+^~ReX^!dpq!drs#Xst$fwx%Qxy&Yyz&_|}&d}!O&i!]!^*v!c!}*{#R#S*{#T#o*{#y#z!d$f$g!d#BY#BZ!d$IS$I_!d$I|$JO!d$JT$JU!d$KV$KW!d&FU&FV!d~!iY^~X^!dpq!d#y#z!d$f$g!d#BY#BZ!d$IS$I_!d$I|$JO!d$JT$JU!d$KV$KW!d&FU&FV!d~#[XOY#XZ]#X^r#Xrs#ws#O#X#O#P#|#P;'S#X;'S;=`$`<%lO#X~#|OV~~$PTOY#XZ]#X^;'S#X;'S;=`$`<%lO#X~$cP;=`<%l#X~$kTP~OY$fZ]$f^;'S$f;'S;=`$z<%lO$f~$}P;=`<%l$f~%TXOY%QZ]%Q^w%Qwx#wx#O%Q#O#P%p#P;'S%Q;'S;=`&S<%lO%Q~%sTOY%QZ]%Q^;'S%Q;'S;=`&S<%lO%Q~&VP;=`<%l%Q~&_O_~~&dOa~~&iO`~~&lP}!O&o~&tVP~OY$fZ]$f^!}$f!}#O'Z#O;'S$f;'S;=`$z<%lO$f~'`VP~OY$fZ]$f^!}$f!}#O'u#O;'S$f;'S;=`$z<%lO$f~'zXP~OY'uYZ(gZ]'u]^(g^#P'u#P#Q)h#Q;'S'u;'S;=`*p<%lO'u~(jTO#P(g#P#Q(y#Q;'S(g;'S;=`)b<%lO(g~(|TO#P(g#P#Q)]#Q;'S(g;'S;=`)b<%lO(g~)bOQ~~)eP;=`<%l(g~)mXP~OY'uYZ(gZ]'u]^(g^#P'u#P#Q*Y#Q;'S'u;'S;=`*p<%lO'u~*aTQ~P~OY$fZ]$f^;'S$f;'S;=`$z<%lO$f~*sP;=`<%l'u~*{Ob~~+QST~!Q![*{!c!}*{#R#S*{#T#o*{",
   tokenizers: [0],
-  topRules: {"Program":[0,2]},
-  tokenPrec: 0
+  topRules: {"Program":[0,3]},
+  tokenPrec: 76
 })

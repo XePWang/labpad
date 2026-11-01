@@ -4,7 +4,8 @@ import type {Bridge} from '../shared/types';
 function listen(channel:string,callback:(value:any)=>void){const handler=(_event:unknown,value:unknown)=>callback(value);ipcRenderer.on(channel,handler);return()=>ipcRenderer.removeListener(channel,handler);}
 async function invoke(channel:string,...args:unknown[]){try{return await ipcRenderer.invoke(channel,...args);}catch(e){throw new Error(operationError(e));}}
 const api:Bridge={
- buildPreview:(d,o)=>invoke('build:preview',d,o),
+ compile:d=>invoke('compile',d),compileState:d=>invoke('compile:state',d),confirmCompile:()=>invoke('compile:confirm'),
+ buildPreview:(d,o,m)=>invoke('build:preview',d,o,m),
  resetZoom:()=>invoke('zoom:reset'),onZoom:c=>listen('zoom:changed',c),
  workspaceSources:(l,s)=>invoke('workspace:sources',l,s),workspaceFiles:l=>invoke('workspace:files',l),workspaceOpen:(l,f)=>invoke('workspace:open',l,f),workspaceFileAction:(l,a,f,t,c)=>invoke('workspace:file',l,a,f,t,c),workspaceView:(l,v)=>invoke('workspace:view',l,v),projectBuildOptions:l=>invoke('project:build:get',l),saveProjectBuildOptions:(l,v)=>invoke('project:build:save',l,v),deleteProject:l=>invoke('project:delete',l),
 
@@ -15,7 +16,7 @@ const api:Bridge={
  saveProblem:p=>invoke('problem:save',p),bootstrap:()=>invoke('bootstrap'),reloadDocument:()=>invoke('draft:reload'),saveDraft:d=>invoke('draft:save',d),formatCode:(s,l,i)=>invoke('source:format',s,l,i),documentState:(d,s)=>ipcRenderer.send('document:state',d,s),
  loadDraft:(a,b,c,p=true)=>invoke('draft:load',a,b,c,p),projects:()=>invoke('projects'),
  createLab:(n,m)=>invoke('project:create',n,m),createProblem:(a,b,c)=>invoke('problem:create',a,b,c),
- saveConfig:(c,p)=>invoke('config:save',c,p),compilerInfo:c=>invoke('compiler:info',c),detectCompilers:()=>invoke('compiler:detect'),saveLayout:l=>invoke('layout:save',l),importSource:()=>invoke('source:import'),
+ saveConfig:(c,p,b)=>invoke('config:save',c,p,b),compilerInfo:c=>invoke('compiler:info',c),detectCompilers:()=>invoke('compiler:detect'),saveLayout:l=>invoke('layout:save',l),importSource:()=>invoke('source:import'),
  confirmUnsaved:()=>invoke('document:confirm'),validatePath:(p,k,e)=>invoke('path:validate',p,k,e),
  choosePath:(k,p)=>invoke('path:choose',k,p),revealPath:(p,k)=>invoke('path:reveal',p,k),revealSource:file=>invoke('path:show-file',file),
  importIO:(a,b)=>invoke('problem:import',a,b),importProject:()=>invoke('project:import'),exportTests:(k,p)=>invoke('tests:export',k,p),showProblemFile:d=>invoke('problem:show',d),

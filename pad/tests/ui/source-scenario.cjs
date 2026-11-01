@@ -1,3 +1,4 @@
+const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 async function until(fn,label,timeout=150000){const started=Date.now();while(Date.now()-started<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,70));}throw Error('Timeout: '+label);}
 async function runSourceScenario(electron,{executable,cwd,evidence}){
@@ -10,7 +11,7 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
  function pass(text){checks.push(text);console.log('PASS '+text);}
  async function prepare(){
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
-  await app.evaluate(({dialog})=>{globalThis.__files=[];globalThis.__answer=1;dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});dialog.showMessageBox=async()=>({response:globalThis.__answer,checkboxChecked:false});});
+  await app.evaluate(({dialog})=>{globalThis.__files=[];globalThis.__answer=1;dialog.showOpenDialog=async()=>({canceled:!globalThis.__files.length,filePaths:globalThis.__files});dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:globalThis.__answer,checkboxChecked:false}));});
   await page.evaluate(()=>{window.__output='';window.labpad.onDebugData(text=>window.__output+=text);});
  }
  async function closeAll(){await tabs().first().click({button:'right'});await page.getByRole('menuitem',{name:'全部关闭',exact:true}).click();await until(()=>tabs().count().then(n=>n===0),'all tabs close');await page.locator('.editor-empty').waitFor();}
@@ -26,8 +27,8 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
  }
  async function save(){await editor().focus();await page.keyboard.press('Control+s');await until(()=>page.locator('.save-status').textContent().then(s=>s==='已保存'),'source saved');}
  async function run(expected){
-  await page.evaluate(()=>window.__output='');await editor().focus();await page.keyboard.press('F9');
-  await until(()=>page.evaluate(s=>window.__output.includes(s),expected),'actual '+expected);await until(()=>page.getByRole('button',{name:/编译并运行/}).isEnabled(),'run ends');
+  await page.evaluate(()=>window.__output='');await editor().focus();await compileAndRun(page,'F9');
+  await until(()=>page.evaluate(s=>window.__output.includes(s),expected),'actual '+expected);await until(()=>page.getByRole('button',{name:/^编译$/}).isEnabled(),'run ends');
  }
  async function importFile(file){await app.evaluate((_,value)=>globalThis.__files=[value],file);await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();await until(()=>button('导入').isEnabled(),'import finishes');}
  async function settings(mode){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('combobox',{name:'保存方式',exact:true}).selectOption(mode);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});}

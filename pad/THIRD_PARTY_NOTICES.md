@@ -28,3 +28,7 @@ Distribution includes the relevant dependency notices. Runtime dependencies are
 bundled with the application; students do not need the development tools.
 
 CLI additionally uses SheetJS CE (Apache-2.0), csv-parse / csv-stringify (MIT), and yauzl (MIT). Their license texts are included in the generated licenses directory.
+
+## Xterm Readline
+
+The inline debug editor adapts xterm-readline 1.3.1 (MIT), revision 0870644ef26f2864b837bc535c2df60a87262a87. Its source, license, pin and LabPad changes are in vendor/xterm-readline. The distributed THIRD_PARTY_LICENSES.txt includes the MIT license.

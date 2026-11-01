@@ -1,11 +1,14 @@
-@top Program { Call* }
+@top Program { (Call | Semicolon)* }
 Call { Name "(" Arguments? ")" }
 Arguments { String (Comma String)* Comma? }
 Comma { "," }
-@skip { space | Comment }
+Semicolon { ";" }
+@skip { space | Comment | BlockComment }
 @tokens {
+  @precedence { BlockComment, Comment }
   space { @whitespace+ }
-  Comment { "#" ![\n\r]* }
+  Comment { "#" ![\n\r]* | "--" ![\n\r]* }
+  BlockComment { "--[[" ( ![\]] | "]" ![\]] )* "]]" }
   Name { $[a-zA-Z_] $[a-zA-Z_0-9]* }
-  String { "\"" ( !["\\\n\r] | "\\" ![\n\r] )* "\"" }
+  String { "\"" ( !["\\\n\r] | "\\" ![\n\r] )* "\"" | "'" ( !['\\\n\r] | "\\" ![\n\r] )* "'" }
 }

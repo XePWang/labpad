@@ -29,7 +29,7 @@ export function restorePackage(files:Record<string,string>):unknown{
  if(!Object.hasOwn(files,'labpad.project.json'))throw new Error('ZIP缺少labpad.project.json。请导入附带项目配置的提交包。');
  const value=JSON.parse(files['labpad.project.json'].replace(/^\uFEFF/,''));const content=(name:string)=>{workspacePath(name);if(!Object.hasOwn(files,name))throw new Error('ZIP缺少文件：'+name);return files[name];};
  if(value.mode==='project'){
-  if(!Array.isArray(value.files))throw new Error('配置缺少files');value.files=value.files.map((f:any)=>({path:f.path,content:content(f.path)}));
+  if(!Array.isArray(value.files))throw new Error('配置缺少files');value.files=value.files.filter((f:any)=>f.path!=='LPMake.txt'||Object.hasOwn(files,'LPMake.txt')).map((f:any)=>({path:f.path,content:content(f.path)}));
  }else{
   if(!Array.isArray(value.problems))throw new Error('配置缺少problems');
   for(const p of value.problems){if(p.sourceFile)p.source=content(p.sourceFile);if(p.versions)p.versions=p.versions.map((v:any)=>({...v,source:content(v.file)}));}

@@ -1,0 +1,530 @@
+import { Terminal, ITerminalAddon, IDisposable, IMarker } from "@xterm/xterm";
+import { Input, InputType, parseInput } from "./keymap";
+import { State } from "./state";
+import { History } from "./history";
+import { Output, Tty } from "./tty";
+import { Highlighter, IdentityHighlighter } from "./highlight";
+
+interface ActiveRead {
+  prompt: string;
+  resolve: (input: string) => void;
+  reject: (e: unknown) => void;
+}
+
+type CheckHandler = (text: string) => boolean;
+type CtrlCHandler = () => void;
+type PauseHandler = (resume: boolean) => void;
+
+export class Readline implements ITerminalAddon {
+  private term: Terminal | undefined;
+  private highlighter: Highlighter = new IdentityHighlighter();
+  private history: History = new History(65536);
+  private activeRead: ActiveRead | undefined;
+  private printingPrompt = false;
+  private pendingKeys: (Input | (() => void))[] = [];
+  private promptMarker: IMarker | undefined;
+  private promptStartCol = 0;
+  private promptRows = 0;
+  private resizePending = false;
+  private disposables: IDisposable[] = [];
+  private watermark = 0;
+  private highWatermark = 10000;
+  private lowWatermark = 1000;
+  private highWater = false;
+  private state: State = new State(
+    ">",
+    this.tty(),
+    this.highlighter,
+    this.history
+  );
+  private checkHandler: CheckHandler = () => true;
+  private ctrlCHandler: CtrlCHandler = () => {
+    return;
+  };
+
+  private pauseHandler: PauseHandler = (resume: boolean) => {
+    return;
+  };
+
+  constructor() {}
+
+  /**
+   * Activate this addon - this function is called by xterm's
+   * loadAddon().
+   *
+   * @param term - The terminal this readline is attached to.
+   */
+
+  // LabPad keeps history in the current debug session and writes process output above input.
+  public resetHistory(bytes: number) { this.history.clear(); this.history.setLimit(bytes); }
+  public setHistoryLimit(bytes: number) { this.history.setLimit(bytes); }
+  public abortRead() {
+    this.history.resetCursor();
+    const read = this.activeRead; this.activeRead = undefined;
+    this.pendingKeys = []; this.printingPrompt = false;
+    this.promptMarker?.dispose(); this.promptMarker = undefined;
+    read?.reject(new Error("Read cancelled"));
+  }
+  public clearOutput() { this.outputMarker?.dispose(); this.outputMarker=undefined; if(this.activeRead)this.state.clearScreen();else this.term?.write('\x1b[2J\x1b[3J\x1b[H'); }
+  public moveWord(left: boolean, remove = false) { const apply=()=>this.state.moveWord(left, remove);if(this.printingPrompt)this.pendingKeys.push(apply);else apply(); }
+  private outputMarker: IMarker | undefined;
+  private outputCol = 0;
+  public writeAbove(text: string): Promise<void> {
+    const term = this.term;
+    if (!term) return Promise.resolve();
+    if (!this.activeRead) return new Promise(done => term.write(text, done));
+    this.printingPrompt = true;
+    return new Promise(done => term.write("", () => {
+      if (!this.activeRead) { this.printingPrompt = false; term.write(text, done); return; }
+      const prompt = this.activeRead.prompt;
+      const marker = this.promptMarker, tty = this.state.getTty();
+      const row = marker && !marker.isDisposed ? marker.line - term.buffer.active.baseY : tty.anchorRow;
+      term.write("\x1b[" + (Math.max(0, Math.min(term.rows - 1, row)) + 1) + ";1H\x1b[J");
+      if (this.outputMarker && !this.outputMarker.isDisposed) {
+        const outputRow = this.outputMarker.line - term.buffer.active.baseY;
+        if (outputRow >= 0) term.write("\x1b[" + (outputRow + 1) + ";" + (this.outputCol + 1) + "H");
+      }
+      term.write(text, () => {
+        this.outputMarker?.dispose(); this.outputMarker = term.registerMarker(0);
+        this.outputCol = Math.min(term.buffer.active.cursorX, term.cols - 1);
+        const redraw = () => this.printPrompt(prompt, next => {
+          this.state.reanchor(next); term.write("", done);
+        });
+        if (term.buffer.active.cursorX > 0) term.write("\r\n", redraw); else redraw();
+      });
+    }));
+  }
+
+  public activate(term: Terminal): void {
+    this.term = term;
+    // A prompt print in flight on a previous terminal never finishes for this
+    // one; drop its bookkeeping so input is not queued forever.
+    this.printingPrompt = false;
+    this.pendingKeys = [];
+    this.resizePending = false;
+    this.promptMarker?.dispose();
+    this.promptMarker = undefined;
+    this.disposables.push(this.term.onData(this.readData.bind(this)));
+    this.disposables.push(
+      this.term.onResize(({ cols, rows }) => {
+        const tty = this.state.getTty();
+        tty.col = cols;
+        tty.row = rows;
+        if (tty.anchorRow >= rows) tty.anchorRow = Math.max(0, rows - 1);
+        if (this.activeRead !== undefined) {
+          if (this.printingPrompt) {
+            this.resizePending = true;
+          } else {
+            this.redrawPrompt();
+          }
+        }
+      })
+    );
+    this.term.attachCustomKeyEventHandler(this.handleKeyEvent.bind(this));
+  }
+
+  /**
+   * Dispose
+   *
+   */
+  public dispose(): void {
+    this.promptMarker?.dispose();
+    this.abortRead(); this.outputMarker?.dispose();
+    this.disposables.forEach((d) => d.dispose());
+  }
+
+  /**
+   * Manually append a line to the top of the readline's history.
+   *
+   * @param text - The text to append to history.
+   */
+  public appendHistory(text: string) {
+    this.history.append(text);
+  }
+
+  /**
+   * Set the highlighter handler for this readline. This is used to
+   * create custom highlighting functionality (e.g. for syntax highlighting
+   * or bracket matching).
+   *
+   * @param highlighter - A handler to handle all highlight callbacks.
+   */
+  public setHighlighter(highlighter: Highlighter) {
+    this.highlighter = highlighter;
+  }
+
+  /**
+   * Set the check callback. This callback is used by readline to determine if input
+   * requires additiona lines when the user presses 'enter'.
+   *
+   * @param fn - A function (string) -> boolean that should return true if the input
+   *             is complete, and false if a line (\n) should be added to the input.
+   */
+  public setCheckHandler(fn: CheckHandler) {
+    this.checkHandler = fn;
+  }
+
+  /**
+   * Set the ctrl-c handler. This function will be called if ctrl-c is encountered
+   * between readline reads. This may be used in circumstances where input from the
+   * user may result in a long running task that can be cancelled.
+   *
+   * @param fn - The ctrl-c handler.
+   */
+  public setCtrlCHandler(fn: CtrlCHandler) {
+    this.ctrlCHandler = fn;
+  }
+
+  /**
+   * Set the callback to be called when the user presses ctrl-s/ctrl-q.
+   *
+   * @param fn - The pause handler
+   */
+  public setPauseHandler(fn: PauseHandler) {
+    this.pauseHandler = fn;
+  }
+
+  /**
+   * writeReady() may be used to implement basic output flow control. This function
+   * will return false if the writes to the terminal initiated by Readline have
+   * reached a highwater mark.
+   *
+   * @returns true if this terminal is accepting more input.
+   */
+  public writeReady(): boolean {
+    return !this.highWater;
+  }
+
+  /**
+   * Write text to the terminal.
+   *
+   * @param text - The text to write to the terminal.
+   */
+  public write(text: string) {
+    if (text === "\n") {
+      text = "\r\n";
+    } else {
+      text = text.replace(/^\n/, "\r\n");
+      text = text.replace(/([^\r])\n/g, "$1\r\n");
+    }
+    const outputLength = text.length;
+    this.watermark += outputLength;
+    if (this.watermark > this.highWatermark) {
+      this.highWater = true;
+    }
+    if (this.term) {
+      this.term.write(text, () => {
+        this.watermark = Math.max(this.watermark - outputLength, 0);
+        if (this.highWater && this.watermark < this.lowWatermark) {
+          this.highWater = false;
+        }
+      });
+    }
+  }
+
+  /**
+   * Write text to the terminal.
+   *
+   * @param text - The text to write to the terminal
+   */
+  public print(text: string) {
+    return this.write(text);
+  }
+
+  /**
+   * Write text to the terminal and append with "\r\n".
+   *
+   * @param text - The text to write to the terminal./
+   * @returns
+   */
+  public println(text: string) {
+    return this.write(text + "\r\n");
+  }
+
+  /**
+   * Get the current line.
+   *
+   * @returns string - The current line
+   */
+  public getLine() {
+    return this.state.buffer();
+  }
+
+  /**
+   * Update the current line.
+   *
+   * @param text - The text to write to the terminal./
+   * @returns
+   */
+  public updateLine(text: string) {
+    return this.state.update(text);
+  }
+
+  /**
+   * Obtain an output interface to this terminal.
+   *
+   * @returns Output
+   */
+  public output(): Output {
+    return this;
+  }
+
+  /**
+   * Obtain a tty interface to this terminal.
+   *
+   * @returns A tty
+   */
+  public tty(): Tty {
+    if (this.term?.options?.tabStopWidth !== undefined) {
+      const anchor = this.term.buffer.active.cursorY;
+      return new Tty(
+        this.term.cols,
+        this.term.rows,
+        this.term.options.tabStopWidth,
+        this.output(),
+        anchor,
+        this.term.buffer.active.cursorX
+      );
+    } else {
+      return new Tty(0, 0, 8, this.output());
+    }
+  }
+
+  /**
+   * Display the given prompt and wait for one line of input from the
+   * terminal. The returned promise will be executed when a line has been
+   * read from the terminal.
+   *
+   * @param prompt The prompt to use.
+   * @returns A promise to be called when the input has been read.
+   */
+  public read(prompt: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (this.term === undefined) {
+        reject("addon is not active");
+        return;
+      }
+      this.activeRead = { prompt, resolve, reject };
+      this.printPrompt(prompt, (tty) => {
+        this.state = new State(
+          prompt,
+          tty,
+          this.highlighter,
+          this.history,
+          () => this.redrawPrompt()
+        );
+        this.state.refresh();
+      });
+    });
+  }
+
+  // Let xterm lay out the prompt, then anchor the editable input at its end.
+  // The prompt itself is no longer part of input redraws.
+  private printPrompt(prompt: string, done: (tty: Tty) => void) {
+    const term = this.term;
+    if (term === undefined) return;
+    this.printingPrompt = true;
+    let startRow = 0;
+    const finish = () => {
+      if (this.term !== term) return;
+      const buffer = term.buffer.active;
+      this.promptRows = (buffer.baseY ?? 0) + buffer.cursorY - startRow;
+      done(this.tty());
+      this.printingPrompt = false;
+      if (this.resizePending) {
+        this.resizePending = false;
+        this.redrawPrompt();
+        return;
+      }
+      const pending = this.pendingKeys;
+      this.pendingKeys = [];
+      for (const key of pending) { if(typeof key==='function')key();else this.readKey(key); }
+    };
+    const emit = () => {
+      const buffer = term.buffer.active;
+      startRow = (buffer.baseY ?? 0) + buffer.cursorY;
+      this.promptStartCol = buffer.cursorX;
+      this.promptMarker?.dispose();
+      this.promptMarker = term.registerMarker?.(0);
+      this.write("\x1b[J" + this.highlighter.highlightPrompt(prompt) + "\x1b[0m");
+      term.write("", () => {
+        // Normalize xterm's pending wrap before sampling the input anchor.
+        if (term.buffer.active.cursorX >= term.cols) {
+          term.write("\r\n", finish);
+        } else {
+          finish();
+        }
+      });
+    };
+    term.write("", () => {
+      if (term.buffer.active.cursorX >= term.cols) {
+        term.write("\r\n", emit);
+      } else {
+        emit();
+      }
+    });
+  }
+
+  // Returns false when there is no active read to redraw a prompt for.
+  private redrawPrompt(): boolean {
+    if (this.term === undefined || this.activeRead === undefined) return false;
+    const tty = this.state.getTty();
+    const marker = this.promptMarker;
+    const row =
+      marker !== undefined && !marker.isDisposed
+        ? marker.line - (this.term.buffer.active.baseY ?? 0)
+        : tty.anchorRow - this.promptRows;
+    const startRow = Math.max(0, Math.min(this.term.rows - 1, row));
+    const startCol = Math.min(this.promptStartCol, this.term.cols - 1);
+    this.term.write(`\x1b[${startRow + 1};${startCol + 1}H`);
+    this.printPrompt(this.activeRead.prompt, (nextTty) =>
+      this.state.reanchor(nextTty)
+    );
+    return true;
+  }
+
+  public handleKeyEvent(event: KeyboardEvent): boolean {
+    if (event.key === "Enter" && event.shiftKey) {
+      if (event.type === "keydown") {
+        this.readKey({
+          inputType: InputType.ShiftEnter,
+          data: ["\r"],
+        });
+      }
+      return false;
+    }
+    return true;
+  }
+
+  private readData(data: string) {
+    const input = parseInput(data);
+    if (!input.length) return;
+    if (
+      input.length > 1 ||
+      (input[0].inputType === InputType.Text && input[0].data.length > 1)
+    ) {
+      this.readPaste(input);
+      return;
+    }
+    this.readKey(input[0]);
+  }
+
+  private readPaste(input: Input[]) {
+    const mappedInput = input.map((it) => {
+      if (it.inputType === InputType.Enter) {
+        return { inputType: InputType.Text, data: ["\n"] };
+      }
+      return it;
+    });
+
+    for (const it of mappedInput) {
+      this.readKey(it);
+    }
+  }
+
+  private readKey(input: Input) {
+    if (this.printingPrompt) {
+      this.pendingKeys.push(input);
+      return;
+    }
+    if (this.activeRead === undefined) {
+      switch (input.inputType) {
+        case InputType.CtrlC:
+          this.ctrlCHandler();
+          break;
+        case InputType.CtrlL:
+        this.outputMarker?.dispose(); this.outputMarker=undefined;
+          this.write("\x1b[H\x1b[2J");
+          break;
+      }
+      return;
+    }
+
+    switch (input.inputType) {
+      case InputType.Text:
+        this.state.editInsert(input.data.join(""));
+        break;
+      case InputType.AltEnter:
+      case InputType.ShiftEnter:
+        this.state.editInsert("\n");
+        break;
+      case InputType.Enter:
+        this.outputMarker?.dispose(); this.outputMarker = undefined;
+        if (this.checkHandler(this.state.buffer())) {
+          this.state.moveCursorToEnd();
+          // Strip any cursor-driven highlight (e.g. matching brackets)
+          // before committing so the line frozen in scrollback is plain.
+          this.state.refreshUnhighlighted();
+          this.term?.write("\r\n");
+          this.history.append(this.state.buffer());
+          this.activeRead?.resolve(this.state.buffer());
+          this.activeRead = undefined;
+        } else {
+          this.state.editInsert("\n");
+        }
+        break;
+      case InputType.CtrlC: {
+        this.state.moveCursorToEnd();
+        this.term?.write("^C\r\n");
+        const prompt = this.activeRead.prompt;
+        this.printPrompt(prompt, (tty) => {
+          this.state = new State(
+            prompt,
+            tty,
+            this.highlighter,
+            this.history,
+            () => this.redrawPrompt()
+          );
+          this.state.refresh();
+        });
+        break;
+      }
+      case InputType.CtrlS:
+        this.pauseHandler(false);
+        break;
+      case InputType.CtrlU:
+        this.state.update("");
+        break;
+      case InputType.CtrlK:
+        this.state.editDeleteEndOfLine();
+        break;
+      case InputType.CtrlQ:
+        this.pauseHandler(true);
+        break;
+      case InputType.CtrlL:
+        this.term?.write("\x1b[H\x1b[2J");
+        this.printPrompt(this.activeRead.prompt, (tty) => this.state.reanchor(tty));
+        break;
+      case InputType.Home:
+      case InputType.CtrlA:
+        this.state.moveCursorHome();
+        break;
+      case InputType.End:
+      case InputType.CtrlE:
+        this.state.moveCursorEnd();
+        break;
+      case InputType.Backspace:
+        this.state.editBackspace(1);
+        break;
+      case InputType.Delete:
+      case InputType.CtrlD:
+        this.state.editDelete(1);
+        break;
+      case InputType.ArrowLeft:
+        this.state.moveCursorBack(1);
+        break;
+      case InputType.ArrowRight:
+        this.state.moveCursorForward(1);
+        break;
+      case InputType.ArrowUp:
+        this.state.moveCursorUp(1);
+        break;
+      case InputType.ArrowDown:
+        this.state.moveCursorDown(1);
+        break;
+      case InputType.UnsupportedControlChar:
+      case InputType.UnsupportedEscape:
+        break;
+    }
+  }
+}

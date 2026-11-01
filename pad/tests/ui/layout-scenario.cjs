@@ -1,3 +1,4 @@
+const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
@@ -17,7 +18,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
  const state=()=>page.evaluate(()=>window.labpad.bootstrap());
  async function prepare(){
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
-  await app.evaluate(({dialog,ipcMain})=>{globalThis.__sizes=[];dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});ipcMain.on('debug:resize',(_event,cols,rows)=>globalThis.__sizes.push({cols,rows}));});
+  await app.evaluate(({dialog,ipcMain})=>{globalThis.__sizes=[];dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:1,checkboxChecked:false}));ipcMain.on('debug:resize',(_event,cols,rows)=>globalThis.__sizes.push({cols,rows}));});
   await page.evaluate(()=>{window.__debug=[];window.labpad.onDebugData(d=>window.__debug.push(d));});
  }
  async function drag(locator,dx,dy){
@@ -27,7 +28,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
  function pass(label){checks.push(label);console.log('PASS '+label);}
  try{
   await prepare();assert.equal(await page.locator('.runbar').count(),0);assert.equal(await page.getByText('程序设计实验 · 本地自测',{exact:true}).count(),0);assert.equal(await page.getByText('原始编译与运行信息',{exact:true}).count(),0);
-  const problem=await page.getByRole('combobox',{name:'题号',exact:true}).boundingBox(),run=await page.getByRole('button',{name:/编译并运行/}).boundingBox();
+  const problem=await page.getByRole('combobox',{name:'题号',exact:true}).boundingBox(),run=await page.getByRole('button',{name:/^编译$/}).boundingBox();
   assert.ok(run.x>=problem.x+problem.width);assert.ok(Math.abs(run.y-problem.y)<12);
   assert.equal(await page.locator('footer').locator(':scope > *').count(),2);assert.equal(await page.locator('footer .compiler-label').count(),0);assert.equal(await page.locator('footer .status-folder').count(),0);assert.equal(await page.locator('.toolbar .compiler-label').count(),0);
   assert.equal(await vertical().getAttribute('role'),'separator');assert.equal(await horizontal().getAttribute('role'),'separator');
@@ -62,7 +63,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   await editor().focus();await page.keyboard.press('Control+Home');const oldHint=await status().textContent();await page.waitForTimeout(9300);assert.notEqual(await status().textContent(),oldHint);
   pass('smaller windows fit without page overflow; idle hints rotate and reduced rows preserve work area');
   await setSource('#include <stdio.h>\nint main(void){int n;puts("ready");fflush(stdout);while(scanf("%d",&n)==1){printf("value=%d\\n",n);fflush(stdout);}return 0;}\n');
-  await page.getByRole('button',{name:/编译并运行/}).click();await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'debug running',150000);
+  await compileAndRun(page);await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'debug running',150000);
   await until(()=>page.evaluate(()=>window.__debug.join('').includes('ready')),'live debug terminal');
   const sizeBefore=await app.evaluate(()=>globalThis.__sizes.at(-1));await drag(horizontal(),0,80);
   await until(async()=>{const size=await app.evaluate(()=>globalThis.__sizes.at(-1));return size&&sizeBefore&&size.rows!==sizeBefore.rows;},'terminal refits after splitter drag');
