@@ -1,3 +1,4 @@
+import {version} from '../package.json';
 import {effectiveCompiler,defaultLpmake,type ProjectBuildOptions} from '../shared/workspace';
 import {directorySnapshot} from '../core/workspace-files';
 import {archiveSnapshot} from '../core/project-archive';
@@ -18,7 +19,7 @@ const platform=process.platform==='win32'?'win':process.platform==='darwin'?'mac
 const resources=process.env.LABPAD_RESOURCES??(existsSync(path.join(__dirname,'resources'))?path.join(__dirname,'resources'):path.resolve(__dirname,'../../../.work'));
 const checks=existsSync(path.join(resources,'checkers','wcmp'+(process.platform==='win32'?'.exe':'')))?path.join(resources,'checkers'):path.join(resources,'checkers',platform+'-'+process.arch);
 const paths={toolchain:path.join(resources,'toolchain'),checkers:checks,processHost:process.platform==='win32'?path.join(checks,'process-host.exe'):undefined};
-const help=`LabPad 命令行 · 0.1.0-dev.8
+const help=`LabPad 命令行 · ${version}
 用法：
   labpad judge --source solution.c --tests problem.io.json --compiler gcc
   labpad judge --source solution.c --tests project.json --problem "Lab 2-1"
