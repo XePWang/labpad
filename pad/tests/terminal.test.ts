@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';import path from 'node:path';import os from 'node:os';
+import {CommandTerminal,commandWords} from '../core/terminal';import {FileService} from '../core/files';
+test('terminal words and workspace commands retain bytes and reject traversal',async()=>{const root=await mkdtemp(path.join(os.tmpdir(),'labpad-shell-'));try{const fs=new FileService(root),calls:any[]=[];const shell=new CommandTerminal(fs,r=>fs.operate(r),async(a,c)=>{calls.push([a,c]);return a;});
+ assert.deepEqual(commandWords('cp "中文 a.c" other.c'),['cp','中文 a.c','other.c']);assert.throws(()=>commandWords('ls | cat'));assert.throws(()=>commandWords('cat "x'));
+ await shell.execute('mkdir "中文 dir"');await shell.execute('cd "中文 dir"');assert.equal((await shell.execute('pwd')).output,'./中文 dir');await shell.execute('touch "a c.txt"');await writeFile(path.join(root,'中文 dir/a c.txt'),Buffer.from([0,128,255,3]));
+ await shell.execute('cp "a c.txt" second.bin');assert.deepEqual(await readFile(path.join(root,'中文 dir/second.bin')),Buffer.from([0,128,255,3]));
+ await assert.rejects(shell.execute('cat second.bin'),/二进制/);await assert.rejects(shell.execute('cd ../..'),/超出/);
+ await shell.execute('cd ..');await writeFile(path.join(root,'LPMake.txt'),'target("root")');await shell.execute('cd "中文 dir"');await assert.rejects(shell.execute('lpmake b'),/当前目录未找到/);
+ await writeFile(path.join(root,'中文 dir/LPMake.txt'),'target("nested")');await shell.execute('LpMaKe b');assert.deepEqual(calls,[['build','中文 dir']]);assert.match((await shell.execute('ll')).output,/second.bin/);
+ await shell.execute('mv second.bin moved.bin');await shell.execute('rm moved.bin');assert.ok(!(await fs.list()).some(f=>f.path.endsWith('moved.bin')));
+ }finally{await rm(root,{recursive:true,force:true});}});
