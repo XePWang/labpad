@@ -14,5 +14,5 @@ const paths:Record<string,string[]>={
  check:['m3.5 8 3 3 6-6']
 };
 </script>
-<template><svg :width="size||16" :height="size||16" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="action-icon"><path v-for="(d,i) in paths[name]||paths.more" :key="i" :d="d" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></template>
+<template><svg :width="size||16" :height="size||16" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="action-icon"><path v-for="(d,i) in paths[name]||paths.more" :key="i" :d="d" :fill="name==='play'?'currentColor':'none'" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></template>
 <style>.action-icon{display:block;flex-shrink:0;pointer-events:none}</style>
