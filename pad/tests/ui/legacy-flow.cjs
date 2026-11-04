@@ -10,7 +10,7 @@ function wrapNativeReply(mock){return async(...args)=>{
  return {...result,response:options.cancelId??result.response};
 };}
 function withFixtures(electron){
- const result=Object.create(electron);result.launch=async options=>{const app=await electron.launch(options);await app.evaluate((_,source)=>{globalThis.__wrapNativeReply=Function('return ('+source+')')();},wrapNativeReply.toString());return app;};return result;
+ const result=Object.create(electron);result.launch=async options=>{const app=await electron.launch(options);if(process.env.LABPAD_TEST_BACKGROUND==='1')await app.evaluate(({app,BrowserWindow})=>{const hide=win=>{win.setFocusable(false);win.webContents.setBackgroundThrottling(false);win.showInactive();};BrowserWindow.getAllWindows().forEach(hide);app.on('browser-window-created',(_,win)=>setImmediate(()=>hide(win)));});await app.evaluate((_,source)=>{globalThis.__wrapNativeReply=Function('return ('+source+')')();},wrapNativeReply.toString());return app;};return result;
 }
 async function compileOnly(page,key){
  await page.evaluate(()=>{if(!window.__flowCounterInstalled){window.__flowCompiles=0;window.labpad.onJudge(e=>{if(e.type==='compilation')window.__flowCompiles++;});window.__flowCounterInstalled=true;}});
