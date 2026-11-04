@@ -7,7 +7,7 @@ export interface DebugLaunch{
 }
 export class NativeDebugger extends EventEmitter{
  state:NativeDebugState={status:'idle',frames:[],scopes:[],variables:[],breakpoints:[],conditionalBreakpoints:false};
- readonly finished:Promise<void>;private finish!:()=>void;private done=false;private connection?:DapConnection;private child?:ChildProcess;private inspection=0;private log='';private disposing=false;
+ readonly finished:Promise<void>;private finish!:()=>void;private done=false;private connection?:DapConnection;private child?:ChildProcess;private inspection=0;private log='';private disposing=false;private disposal?:Promise<void>;
  constructor(){super();this.finished=new Promise(resolve=>this.finish=resolve);}
  private update(value:Partial<NativeDebugState>){this.state={...this.state,...value};this.emit('state',structuredClone(this.state));}
  private end(status:'ended'|'error',message?:string){if(this.done)return;this.done=true;this.inspection++;this.update({status,message:message??this.state.message,frames:[],scopes:[],variables:[]});this.finish();}
@@ -106,11 +106,11 @@ export class NativeDebugger extends EventEmitter{
   this.end('ended','Debugging stopped.');await this.dispose();
  }
  async dispose(){
-  if(this.disposing)return;this.disposing=true;this.connection?.close();this.connection=undefined;
+  if(this.disposal)return this.disposal;this.disposing=true;this.disposal=(async()=>{this.connection?.close();this.connection=undefined;
   const child=this.child;this.child=undefined;
   if(child?.pid){if(child.exitCode===null&&child.signalCode===null){child.kill();await Promise.race([new Promise<void>(r=>child.once('exit',()=>r())),new Promise<void>(r=>setTimeout(r,500))]);}
    await killTree(child.pid).catch(()=>{});
   }
-  this.end('ended');this.removeAllListeners();
+  this.end('ended');this.removeAllListeners();})();return this.disposal;
  }
 }

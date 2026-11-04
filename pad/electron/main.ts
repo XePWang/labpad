@@ -248,7 +248,7 @@ async function nativeFileGuard(lab:string,files:string[]){
  if(files.some(file=>Object.keys(nativeSnapshot).some(source=>under(source,file))))throw Error('文件正在参与调试，请先停止调试，再移动、重命名、删除或覆盖。');
 }
 function emitFileChanges(lab:string,changes:FileChange[],files:import('../shared/workspace').WorkspaceFile[]){const event={id:++fileSequence,lab,changes,files};send('files:changed',event);return event;}
-async function terminalProcess(args:string[],cwd:string,env:NodeJS.ProcessEnv,onExit?:()=>void){
+async function terminalProcess(args:string[],cwd:string,env:NodeJS.ProcessEnv,onExit?:()=>void,reportExit=true){
  if(terminal)throw Error('终端中已有程序正在运行。');
  const session=++debugSession;let pending='',scheduled:ReturnType<typeof setTimeout>|undefined,unacked=0,paused=false;
  const flush=()=>{if(pending){send('debug:data',{session,data:pending});pending='';}scheduled=undefined;};
@@ -257,7 +257,7 @@ async function terminalProcess(args:string[],cwd:string,env:NodeJS.ProcessEnv,on
  const child=pty.spawn(executable,command,{name:'xterm-256color',cols:100,rows:18,cwd,env:Object.fromEntries(Object.entries(env).filter((e):e is [string,string]=>e[1]!==undefined))});terminal=child;
  acknowledge=(id,size)=>{if(id!==session)return;unacked=Math.max(0,unacked-size);if(paused&&unacked<65536){paused=false;child.resume();}};
  const data=child.onData(value=>{pending+=value;unacked+=value.length;if(unacked>262144&&!paused){paused=true;child.pause();}if(!scheduled)scheduled=setTimeout(flush,16);});
- const finished=new Promise<void>(resolve=>{const exit=child.onExit(result=>{if(scheduled)clearTimeout(scheduled);flush();data.dispose();exit.dispose();if(terminal===child){terminal=undefined;acknowledge=undefined;}debugState({status:'exited',message:'退出码 '+result.exitCode});onExit?.();resolve();});});
+ const finished=new Promise<void>(resolve=>{const exit=child.onExit(result=>{if(scheduled)clearTimeout(scheduled);flush();data.dispose();exit.dispose();if(terminal===child){terminal=undefined;acknowledge=undefined;}debugState({status:'exited',...(reportExit?{message:'退出码 '+result.exitCode}:{})});onExit?.();resolve();});});
  debugState({status:'running'});
  return {pid:child.pid,finished,stop:async()=>{if(terminal!==child)return;if(process.platform==='win32')await new Promise<void>(done=>execFile('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>done()));else await killTree(child.pid).catch(()=>{});try{child.kill();}catch{}await finished;}};
 }
@@ -275,14 +275,14 @@ async function beginNative(value:Draft,breakpoints:SourceBreakpoint[]){
    if(prepared.compilation.status!=='success'||abort.signal.aborted)return {started:false,compilation:prepared.compilation};
    nativePrepared=prepared;nativeLab=context.draft.problem.labId;nativeSnapshot={...context.draft.workspace!.files};
    const runDirectory=await mkdtemp(path.join(prepared.directory,'native-'));await copyResources(prepared.resources,runDirectory,prepared.binaryResources);
-   session=nativeSession=new NativeDebugger();session.on('state',()=>send('native:state',nativeView()));session.on('output',data=>send('debug:data',{session:debugSession,data}));session.on('diagnostic',data=>send('native:diagnostic',data));
+   session=nativeSession=new NativeDebugger();session.on('state',()=>{if(!['ended','error'].includes(session!.state.status))send('native:state',nativeView());});session.on('output',data=>send('debug:data',{session:debugSession,data}));session.on('diagnostic',data=>send('native:diagnostic',data));
    const root=storage.workspace.root(nativeLab),env=await compiler.environment(context.options);
    const stopSession=()=>{void session!.stop();};abort.signal.addEventListener('abort',stopSession,{once:true});
-   const finish=session.finished.finally(async()=>{abort.signal.removeEventListener('abort',stopSession);await io?.stop();await session?.dispose();await prepared?.cleanup();nativePrepared=undefined;if(active===finish){active=undefined;controller=undefined;}});
+   const finish=session.finished.finally(async()=>{abort.signal.removeEventListener('abort',stopSession);await io?.stop();await session?.dispose();await prepared?.cleanup();nativePrepared=undefined;if(active===finish){active=undefined;controller=undefined;}send('native:state',nativeView());});
    active=finish;
    await session.start({adapter:path.join(debuggerRoot,'adapter',process.platform==='win32'?'codelldb.exe':'codelldb'),program:prepared.executable,cwd:runDirectory,env,
     sourceMap:prepared.snapshotRoot?{[prepared.snapshotRoot]:root}:undefined,breakpoints:breakpoints.map(b=>({...b,path:path.join(root,workspacePath(b.path))})),
-    runInTerminal:async options=>{io=await terminalProcess(options.args,options.cwd,{...env,...Object.fromEntries(Object.entries(options.env??{}).filter(([,v])=>v!==null)) as Record<string,string>});return {processId:io.pid,shellProcessId:io.pid};}});
+    runInTerminal:async options=>{io=await terminalProcess(options.args,options.cwd,{...env,...Object.fromEntries(Object.entries(options.env??{}).filter(([,v])=>v!==null)) as Record<string,string>},undefined,false);return {processId:io.pid,shellProcessId:io.pid};}});
    return {started:true,compilation:prepared.compilation,sources:nativeSnapshot};
   }catch(error){if(session)await session.stop();else await prepared?.cleanup();throw error;}
  })();
@@ -597,6 +597,7 @@ handle('workspace:file',async(lab:string,action:string,file:string,target?:strin
   try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
  });
  handle('terminal:command',async(value:Draft,text:string)=>{
+ if(active&&nativeSession&&!nativeActive())await active;
  if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error('命令过长。');const d=validateDraft(value),key=d.problem.labId+'\0'+(d.problem.problemId?'lab':'draft');
  if(!terminalShell||terminalShellKey!==key){requireIdle();for(const target of terminalTargets.values())await target.program.cleanup();terminalTargets.clear();terminalShellKey=key;terminalShell=new CommandTerminal(await storage.fileService(d.problem.labId,d.problem.problemId),request=>performFiles(d.problem.labId,d.problem.problemId,request),makeCommand);}
  if(/^[Ll][Pp][Mm][Aa][Kk][Ee]\s+(?:b|build|r|run)\s*$/.test(text)&&await exists(await terminalShell.files.resolve('LPMake.txt',true,terminalShell.cwd))&&!(await programContext(d)).saved)return {cwd:terminalShell.cwd,output:'',needsSave:true};
