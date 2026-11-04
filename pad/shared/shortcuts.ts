@@ -2,8 +2,9 @@ export const shortcutActions=[
  ['run','编译',['F9','Control+Enter']],['save','保存当前',['$mod+KeyS']],['saveAll','保存全部',['$mod+Shift+KeyS']],
  ['format','格式化代码',['Shift+Alt+KeyF']],['close','关闭标签',['Control+F4']],['closeSaved','关闭已保存',['$mod+KeyK KeyU']],
  ['closeAll','关闭全部标签',['$mod+KeyK KeyW']],['next','下一个标签',['Control+Tab']],['previous','上一个标签',['Control+Shift+Tab']],
- ['copyPath','复制路径',['Shift+Alt+KeyC']],['copyRelativePath','复制相对路径',['Control+Shift+Alt+KeyC']],['interrupt','中断调试',['Control+KeyC']],
- ['newSource','新建源码',['$mod+KeyN']],['importSource','导入源码',['$mod+KeyO']],['settings','设置',['$mod+Comma']],['reopen','恢复最近源码',['$mod+Shift+KeyT']]
+ ['copyPath','复制路径',['Shift+Alt+KeyC']],['copyRelativePath','复制相对路径',['Control+Shift+Alt+KeyC']],['interrupt','中断程序',['Control+KeyC']],
+ ['newSource','新建源码',['$mod+KeyN']],['importSource','导入源码',['$mod+KeyO']],['settings','设置',['$mod+Comma']],['reopen','恢复最近源码',['$mod+Shift+KeyT']],
+ ['debugStart','开始 / 继续调试',['F5']],['debugNext','单步跳过',['F10']],['debugInto','单步进入',['F11']],['debugOut','单步跳出',['Shift+F11']],['debugRestart','重启调试',['$mod+Shift+F5']],['debugStop','停止调试',['Shift+F5']]
 ] as const;
 export function macPlatform(platform?:string){return /mac|darwin/i.test(platform??(typeof navigator!=='undefined'?navigator.platform:process.platform));}
 export function defaultShortcuts(platform?:string):Record<string,string[]>{

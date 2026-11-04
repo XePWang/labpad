@@ -111,7 +111,7 @@ test('legacy scratch links become UTF-8 copies once, retain version IDs and leav
   await writeSource(original,source,'GBK / CP936');const originalBytes=await readFile(original);
   const meta={schemaVersion:1,labId:'',problems:{'':{language:'c',starters:{c:source},checks:{},sources:{},activeDocumentId:'legacy-c',documents:[{id:'legacy-c',file:'空项目.c',language:'c',encoding:'GBK / CP936',externalPath:original,starter:source}]}}};
   await writeFile(path.join(storage.root,'.labpad'),JSON.stringify(meta));
-  const docs=await storage.openDocuments('','','c');assert.equal(docs[0].documentId,'legacy-c');assert.equal(docs[0].source,source);assert.notEqual(docs[0].sourceFile,original);assert.equal(path.dirname(docs[0].sourceFile!),storage.root);assert.equal(decodeText(await readFile(docs[0].sourceFile!)).encoding,'UTF-8');
+  const docs=await storage.openDocuments('','','c');assert.equal(docs[0].documentId,'legacy-c');assert.equal(docs[0].source,source);assert.notEqual(docs[0].sourceFile,original);assert.equal(path.dirname(docs[0].sourceFile!),storage.fileRoot(''));assert.equal(decodeText(await readFile(docs[0].sourceFile!)).encoding,'UTF-8');
   await storage.save({...docs[0],source:source+'// 😀\n'});assert.deepEqual(await readFile(original),originalBytes);
   const again=await storage.openDocuments('','','c');assert.equal(again.length,1);assert.equal(again[0].sourceFile,docs[0].sourceFile);assert.match(again[0].source,/😀/);assert.equal((await storage.projectState('','','c')).documents![0].externalPath,undefined);
  }finally{await rm(dir,{recursive:true,force:true});}
@@ -122,7 +122,7 @@ test('saving a legacy version directly adopts a managed file instead of writing 
   const storage=new Storage(path.join(dir,'data'));await storage.init();const original=path.join(dir,'outside.c');await writeFile(original,'// keep original');
   await writeFile(path.join(storage.root,'.labpad'),JSON.stringify({schemaVersion:1,labId:'',problems:{'':{language:'c',starters:{},checks:{},sources:{},documents:[{id:'old',file:'空项目.c',language:'c',encoding:'UTF-8',externalPath:original}]}}}));
   await storage.save({documentId:'old',source:'// edited copy',language:'c',problem:defaultProblem('','')});
-  assert.equal(await readFile(original,'utf8'),'// keep original');const saved=await storage.load('','','c',true);assert.equal(saved.source,'// edited copy');assert.equal(path.dirname(saved.sourceFile!),storage.root);assert.equal((await storage.projectState('','','c')).documents![0].externalPath,undefined);
+  assert.equal(await readFile(original,'utf8'),'// keep original');const saved=await storage.load('','','c',true);assert.equal(saved.source,'// edited copy');assert.equal(path.dirname(saved.sourceFile!),storage.fileRoot(''));assert.equal((await storage.projectState('','','c')).documents![0].externalPath,undefined);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 test('missing legacy originals remain recoverable and are never recreated outside the data directory',async()=>{

@@ -6,7 +6,7 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
  await fs.mkdir(evidence,{recursive:true});
  const launch=()=>electron.launch({executablePath:executable,cwd,args:executable?[]:['.'],chromiumSandbox:true,env:{...process.env,LABPAD_DATA_DIR:data}});
  let app=await launch(),page,menuCaptured=false;
- const state=()=>page.evaluate(()=>window.labpad.bootstrap()),button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.getByRole('tab'),toolbar=()=>page.locator('.toolbar-actions');
+ const state=()=>page.evaluate(()=>window.labpad.bootstrap()),button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.locator('.source-tabs [role=tab]'),toolbar=()=>page.locator('.toolbar-actions');
  const printing=text=>'#include <stdio.h>\nint main(void){puts("'+text+'");return 0;}\n';
  function pass(text){checks.push(text);console.log('PASS '+text);}
  async function prepare(){
@@ -37,13 +37,13 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
   assert.deepEqual((await toolbar().getByRole('button').allTextContents()).slice(0,2),['新建源码','导入']);
   await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入测试点','导入实验项目']);await page.keyboard.press('Escape');
   pass('toolbar places New Source before Import; import menu contains source, standard I/O and project in the requested order');
-  await closeAll();const c=await create('c',true);assert.equal(path.dirname(c.sourcePath),data);await editor().fill(printing('new-c'));await save();await run('new-c');
-  const cSaved=await fs.readFile(c.sourcePath,'utf8');await closeAll();const cpp=await create('cpp',true);assert.equal(path.dirname(cpp.sourcePath),data);assert.notEqual(cpp.sourcePath,c.sourcePath);await editor().fill('#include <iostream>\nint main(){std::cout<<"new-cpp";}\n');await save();await run('new-cpp');assert.equal(await fs.readFile(c.sourcePath,'utf8'),cSaved);
+  await closeAll();const c=await create('c',true);assert.equal(path.dirname(c.sourcePath),path.join(data,'drafts'));await editor().fill(printing('new-c'));await save();await run('new-c');
+  const cSaved=await fs.readFile(c.sourcePath,'utf8');await closeAll();const cpp=await create('cpp',true);assert.equal(path.dirname(cpp.sourcePath),path.join(data,'drafts'));assert.notEqual(cpp.sourcePath,c.sourcePath);await editor().fill('#include <iostream>\nint main(){std::cout<<"new-cpp";}\n');await save();await run('new-cpp');assert.equal(await fs.readFile(c.sourcePath,'utf8'),cSaved);
   pass('empty editor creates physical C/C++ sources with matching templates, saves and runs both without overwriting prior versions');
   await closeAll();await page.locator('.editor-empty').getByRole('button',{name:'新建源码',exact:true}).focus();await page.keyboard.press('ArrowDown');await page.getByRole('menuitem',{name:'C 源码（.c）',exact:true}).waitFor();await page.keyboard.press('Escape');assert.equal(await tabs().count(),0);
   pass('new-source dropdown supports keyboard opening and cancellation without creating a file');
   const original=path.join(temporary,'outside.c'),originalCode=printing('original');await fs.writeFile(original,originalCode);await importFile(original);
-  const copy=(await state()).sourcePath;assert.equal(path.dirname(copy),data);assert.notEqual(copy,original);await editor().fill(printing('copy-manual'));await save();assert.equal(await fs.readFile(original,'utf8'),originalCode);assert.match(await fs.readFile(copy,'utf8'),/copy-manual/);
+  const copy=(await state()).sourcePath;assert.equal(path.dirname(copy),path.join(data,'drafts'));assert.notEqual(copy,original);await editor().fill(printing('copy-manual'));await save();assert.equal(await fs.readFile(original,'utf8'),originalCode);assert.match(await fs.readFile(copy,'utf8'),/copy-manual/);
   await settings('auto');await editor().fill(printing('copy-auto'));await until(()=>fs.readFile(copy,'utf8').then(t=>t.includes('copy-auto')),'automatic copy save');assert.equal(await fs.readFile(original,'utf8'),originalCode);await settings('manual');
   pass('scratch import always creates a managed copy; manual and automatic saves leave the original unchanged');
   await editor().fill(printing('unsaved-same-file'));const before=(await state()).draft.documentId,count=await tabs().count();await importFile(copy);assert.equal(await tabs().count(),count);assert.equal((await state()).draft.documentId,before);assert.match((await state()).draft.source,/unsaved-same-file/);

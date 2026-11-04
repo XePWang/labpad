@@ -8,7 +8,7 @@ export interface LabProblem{templates?:SourceTemplates;problemId:string;title:st
 export interface CheckRecord{fingerprint:string;passed:number;total:number;status:'passed'|'failed'|'cancelled'|'error'|'running';checkedAt:string;compilationStatus?:'success'|'CE'|'cancelled';cases?:CaseResult[]}
 export interface SourceDocument{id:string;file:string;language:Language;encoding:string;externalPath?:string;starter?:string;check?:CheckRecord}
 export interface ProblemState{documents?:SourceDocument[];activeDocumentId?:string;language:Language;starters:Partial<Record<Language,string>>;checks:Partial<Record<Language,CheckRecord>>;sources:Partial<Record<Language,{path:string;encoding:string}>>}
-export interface LabState{buildOptions?:import('./workspace').ProjectBuildOptions;schemaVersion:1;labId:string;order?:string[];problems:Record<string,ProblemState>}
+export interface LabState{view?:{expanded?:string[];sidebarWidth?:number;sidebarCollapsed?:boolean;rightCollapsed?:boolean};buildOptions?:import('./workspace').ProjectBuildOptions;schemaVersion:1;labId:string;order?:string[];problems:Record<string,ProblemState>}
 export function parseLabPackage(value:unknown):LabPackage{
  const p=value as any;
  if(!p||![1,2].includes(p.schemaVersion)||p.kind!=='labpad.project'||(p.mode??'problem-set')!=='problem-set')throw new Error('请选择 kind 为 labpad.project、schemaVersion 为 1 或 2 的题目集 JSON');

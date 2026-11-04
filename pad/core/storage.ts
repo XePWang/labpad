@@ -1,3 +1,6 @@
+import {directorySnapshot,managedBuild} from './workspace-files';
+import {FileService,under,type FileRequest,type FileChange} from './files';
+import {workspacePath} from '../shared/workspace';
 import {WorkspaceStore} from './workspace';
 import {mkdir,readFile,writeFile,rename,access,readdir,cp,stat,mkdtemp,rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
@@ -42,11 +45,11 @@ export class Storage{
  private enqueue<T>(task:()=>Promise<T>){const next=this.tail.then(task,task);this.tail=next.catch(()=>{});return next;}
  private async atomic(file:string,content:string){await writeFileAtomic(file,content,{encoding:'utf8'});}
  async init():Promise<Config>{
-  await mkdir(this.root,{recursive:true});await access(this.root,constants.W_OK);
+  await mkdir(this.root,{recursive:true});await access(this.root,constants.W_OK);await this.migrateDraftDirectory();
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:migrateShortcuts(value.shortcuts)});
+   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,completionEnabled:value.completionEnabled??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:migrateShortcuts(value.shortcuts)});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }
@@ -70,11 +73,12 @@ export class Storage{
  }
  paths(labId:string,problemId:string,language:Language){
   selection(labId,problemId);
-  const dir=problemId?path.join(this.root,'projects',labId):this.root,base=problemId||'空项目';
+  const dir=problemId?path.join(this.root,'projects',labId):path.join(this.root,'drafts'),base=problemId||'空项目';
   return {dir,source:path.join(dir,base+(language==='c'?'.c':'.cpp')),problem:path.join(dir,base+'.json')};
  }
  private statePath(labId:string,problemId:string){return path.join(this.paths(labId,problemId,'c').dir,'.labpad');}
  private async readState(labId:string,problemId:string):Promise<LabState>{
+   if(!problemId)await this.migrateDraftDirectory();
   const file=this.statePath(labId,problemId),id=problemId?labId:'';
   if(!await exists(file))return {schemaVersion:1,labId:id,problems:{}};
   const value=await readJSON(file) as LabState;
@@ -150,19 +154,19 @@ export class Storage{
   });
  }
  documentPath(labId:string,problemId:string,version:SourceDocument){
-  filePart(version.file,'源码文件名');
+  workspacePath(version.file);
   return version.externalPath??path.join(this.paths(labId,problemId,version.language).dir,version.file);
  }
  private async readDocument(labId:string,problemId:string,version:SourceDocument,problem:Problem):Promise<LoadedDraft>{
   const file=this.documentPath(labId,problemId,version);
   const decoded=await exists(file)?decodeText(await readFile(file)):{text:version.starter??defaultSource(version.language),encoding:version.encoding};
-  return {documentId:version.id,source:decoded.text,language:version.language,problem:structuredClone(problem),sourceFile:file,sourceEncoding:decoded.encoding,name:path.basename(file),...(version.externalPath&&!await exists(file)?{warning:'原关联源码无法读取：'+file+'；请重新导入。当前显示初始模板。'}:{})};
+  return {file:version.file,documentId:version.id,source:decoded.text,language:version.language,problem:structuredClone(problem),sourceFile:file,sourceEncoding:decoded.encoding,name:path.basename(file),...(version.externalPath&&!await exists(file)?{warning:'原关联源码无法读取：'+file+'；请重新导入。当前显示初始模板。'}:{})};
  }
  async openDocuments(labId:string,problemId:string,language:Language):Promise<LoadedDraft[]>{
   const legacy=await this.load(labId,problemId,language,true);
   await this.enqueue(async()=>{
    const meta=await this.readState(labId,problemId),state=this.stateFor(meta,problemId,legacy.language);
-   state.documents??=[];
+   const uninitialized=state.documents===undefined;state.documents??=[];
    let migrated=false;
    for(let i=0;i<state.documents.length;i++){
     const old=state.documents[i];if(!old.externalPath||!await exists(old.externalPath))continue;
@@ -171,7 +175,7 @@ export class Storage{
     state.documents[i]=adopted;migrated=true;
    }
    if(migrated){meta.problems={...meta.problems,[problemId]:state};await this.writeState(labId,problemId,meta);}
-   if(!state.documents.length){
+   if(uninitialized){
     for(const lang of ['c','cpp'] as Language[]){
      const p=this.paths(labId,problemId,lang),binding=state.sources[lang];
      if(!await exists(p.source)&&!binding&&lang!==legacy.language)continue;
@@ -221,14 +225,14 @@ export class Storage{
   });
  }
  async newVersion(draft:Draft,fromTemplate=false):Promise<LoadedDraft>{
-  const d=structuredClone(validateDraft(draft));await this.openDocuments(d.problem.labId,d.problem.problemId,d.language);
+  const d=structuredClone(validateDraft(draft));delete d.auxiliary;delete d.sourceFiles;delete d.file;await this.openDocuments(d.problem.labId,d.problem.problemId,d.language);
   return this.enqueue(async()=>{
    const meta=await this.readState(d.problem.labId,d.problem.problemId),state=this.stateFor(meta,d.problem.problemId,d.language);
    if(fromTemplate)d.source=state.starters[d.language]??defaultSource(d.language);
    const version:SourceDocument={id:randomUUID(),file:await this.nextSourceFile(d.problem.labId,d.problem.problemId,d.language,state.documents??[]),language:d.language,encoding:'UTF-8',starter:state.starters[d.language]??defaultSource(d.language)};
    await mkdir(this.paths(d.problem.labId,d.problem.problemId,d.language).dir,{recursive:true});await writeSource(this.documentPath(d.problem.labId,d.problem.problemId,version),d.source);
    state.documents!.push(version);state.activeDocumentId=version.id;state.language=d.language;meta.problems={...meta.problems,[d.problem.problemId]:state};await this.writeState(d.problem.labId,d.problem.problemId,meta);
-   return {...d,documentId:version.id,sourceFile:this.documentPath(d.problem.labId,d.problem.problemId,version),name:version.file,sourceEncoding:'UTF-8'};
+   return {...d,file:version.file,documentId:version.id,sourceFile:this.documentPath(d.problem.labId,d.problem.problemId,version),name:version.file,sourceEncoding:'UTF-8'};
   });
  }
  activateDocument(labId:string,problemId:string,id:string){
@@ -349,8 +353,93 @@ export class Storage{
   if(await exists(this.paths(lab,name,'c').source)||await exists(this.paths(lab,name,'cpp').source))throw new Error('题号与现有源码文件名冲突，请更换题号');
   const draft={source:defaultSource(language),language,problem:defaultProblem(lab,name)};await this.save(draft);return draft;
  }
+
+ private async migrateDraftDirectory(){
+  const dir=path.join(this.root,'drafts'),old=path.join(this.root,'.labpad'),target=path.join(dir,'.labpad');
+  await mkdir(dir,{recursive:true});if(!await exists(old)||await exists(target))return;
+  const meta=await readJSON(old) as LabState;if(meta?.schemaVersion!==1||meta.labId!=='')return;
+  const names=new Set(['空项目.c','空项目.cpp','空项目.json',...Object.values(meta.problems).flatMap(p=>(p.documents??[]).filter(v=>!v.externalPath).map(v=>v.file))]),moved:{from:string;to:string}[]=[];
+  try{for(const name of names){workspacePath(name);const from=path.join(this.root,name),to=path.join(dir,name);if(await exists(from)&&!await exists(to)){await mkdir(path.dirname(to),{recursive:true});await rename(from,to);moved.push({from,to});}}await rename(old,target);}
+  catch(error){for(const item of moved.reverse())await rename(item.to,item.from);throw error;}
+ }
+ fileRoot(lab:string){if(lab)filePart(lab,'项目名称');return lab?path.join(this.root,'projects',lab):path.join(this.root,'drafts');}
+ async fileService(lab:string,problem:string,guard?:(paths:string[])=>Promise<void>){
+  const project=await this.workspace.isProject(lab),root=this.fileRoot(project||problem?lab:'');await mkdir(root,{recursive:true});
+  return new FileService(root,{protected:project?['LPMake.txt']:[],guard,commit:changes=>project?this.reconcileWorkspace(lab,changes):this.reconcileSources(lab,problem,changes)});
+ }
+ private async reconcileWorkspace(lab:string,changes:FileChange[]){
+  const state=await this.workspace.read(lab),translate=(file:string)=>{for(const change of changes)if(change.from&&!change.copied&&under(file,change.from))return change.to?change.to+file.slice(change.from.length):undefined;return file;};
+  const openFiles=(state.openFiles??[]).map(translate).filter((v):v is string=>v!==undefined),activeFile=state.activeFile?translate(state.activeFile):undefined,expanded=(state.expanded??[]).map(translate).filter((v):v is string=>v!==undefined);
+  const starters=state.starters?Object.fromEntries(Object.entries(state.starters).flatMap(([name,text])=>{const next=translate(name);return next?[[next,text]]:[];})):undefined;
+  await this.workspace.update(lab,{openFiles,activeFile,expanded,...(starters?{starters}:{})});
+ }
+ private async reconcileSources(lab:string,problem:string,changes:FileChange[]){
+  const anchor=problem?'_':'',meta=await this.readState(lab,anchor),root=this.paths(lab,problem,'c').dir,present=new Set((await new FileService(root).list()).filter(f=>!f.directory).map(f=>f.path));
+  for(const state of Object.values(meta.problems)){
+   state.documents=(state.documents??[]).flatMap(version=>{
+    for(const change of changes)if(change.replaced&&change.to&&under(version.file,change.to)&&!(change.from&&!change.copied&&under(version.file,change.from))){
+     if(!change.copied||!present.has(version.file))return [];
+    }
+    for(const change of changes)if(change.from&&!change.copied&&under(version.file,change.from)){if(!change.to)return [];const name=change.to+version.file.slice(change.from.length);if(!/\.(c|cpp|cc|cxx)$/i.test(name))return [];return [{...version,file:name,language:(/\.c$/i.test(name)?'c':'cpp') as Language,externalPath:undefined}];}return [version];
+   });
+   if(!state.documents.some(v=>v.id===state.activeDocumentId))state.activeDocumentId=state.documents[0]?.id;
+  }
+  const registered=new Set(Object.values(meta.problems).flatMap(s=>(s.documents??[]).map(v=>v.file))),current=this.stateFor(meta,problem,'c');current.documents??=[];
+  const adopt=async(name:string)=>{
+   const target=path.join(root,name),info=await stat(target);if(info.isDirectory()){if(await managedBuild(target))return;for(const entry of await readdir(target))await adopt(name+'/'+entry);return;}
+   if(!/\.(c|cpp|cc|cxx)$/i.test(name)||registered.has(name))return;
+   const language:Language=/\.c$/i.test(name)?'c':'cpp';
+   current.documents!.push({id:randomUUID(),file:name,language,encoding:decodeText(await readFile(target)).encoding,starter:current.starters[language]??defaultSource(language)});registered.add(name);
+  };
+  for(const change of changes)if(change.to)await adopt(change.to);
+  meta.problems={...meta.problems,[problem]:current};await this.writeState(lab,anchor,meta);
+ }
+ async operateFiles(lab:string,problem:string,request:FileRequest,guard?:(paths:string[])=>Promise<void>){
+  selection(lab,problem);await this.flush();return this.enqueue(async()=>{
+   let value=request;
+   if(request.action==='newFile'&&request.content===undefined&&request.paths.length===1&&/\.(c|cpp|cc|cxx)$/i.test(request.paths[0])){
+    const language:Language=/\.c$/i.test(request.paths[0])?'c':'cpp',project=await this.workspace.isProject(lab),template=project?(await this.workspace.read(lab)).templates?.[language]:this.stateFor(await this.readState(lab,problem?'_':''),problem,language).starters[language];value={...request,content:template??defaultSource(language)};
+   }
+   const service=await this.fileService(lab,problem,guard);return service.operate(value);
+  });
+ }
+ async openFile(lab:string,problem:string,name:string,language:Language='c'):Promise<LoadedDraft>{
+  const service=await this.fileService(lab,problem),target=await service.resolve(name);name=service.relative(name);
+  if(await this.workspace.isProject(lab))return this.workspace.open(lab,name);
+  await this.flush();const anchor=problem?'_':'',meta=await this.readState(lab,anchor);
+  for(const [id,state] of Object.entries(meta.problems))for(const version of state.documents??[])if(version.file===name){const rule=(await this.load(lab,id,version.language)).problem;return this.readDocument(lab,id,version,rule);}
+  if(/\.(c|cpp|cc|cxx)$/i.test(name)){await this.enqueue(()=>this.reconcileSources(lab,problem,[{to:name}]));return this.openFile(lab,problem,name,language);}
+  const bytes=await readFile(target);if(bytes.includes(0)&&!((bytes[0]===255&&bytes[1]===254)||(bytes[0]===254&&bytes[1]===255)))throw Error('这是二进制文件，请在文件管理器中查看。');
+  const decoded=decodeText(bytes),rule=(await this.load(lab,problem,language)).problem;return {file:name,auxiliary:true,documentId:'aux:'+name,name,sourceFile:target,sourceEncoding:decoded.encoding,source:decoded.text,language,problem:rule};
+ }
+
+ async sourceSnapshot(draft:Draft,buffers:Draft[]=[]){
+  const root=this.paths(draft.problem.labId,draft.problem.problemId,'c').dir,snapshot=await directorySnapshot(root),meta=await this.readState(draft.problem.labId,draft.problem.problemId?'_':'');
+  for(const id of Object.keys(meta.problems))delete snapshot.files[(id||'空项目')+'.json'];
+  const state=this.stateFor(meta,draft.problem.problemId,draft.language),version=state.documents?.find(v=>v.id===draft.documentId),file=version?.file??path.basename(this.paths(draft.problem.labId,draft.problem.problemId,draft.language).source);
+  snapshot.files[file]=draft.source;
+  for(const buffer of buffers)if(buffer.auxiliary&&buffer.file&&Object.hasOwn(snapshot.files,buffer.file))snapshot.files[buffer.file]=buffer.source;
+  const versions=new Set(Object.entries(meta.problems).flatMap(([id,state])=>[(id||'空项目')+'.c',(id||'空项目')+'.cpp',...(state.documents??[]).map(version=>version.file)])),required=new Set<string>([file]);
+  const scan=(name:string,seen=new Set<string>())=>{if(seen.has(name))return false;seen.add(name);const text=snapshot.files[name]??'';let dynamic=false;
+   for(const match of text.matchAll(/^\s*#\s*include\b\s*([^\n]+)/gm)){const token=match[1].trim(),literal=/^[<"]([^>"]+)[>"]/.exec(token);if(!literal){dynamic=true;continue;}const included=literal[1].replaceAll('\\','/'),relative=path.posix.normalize(path.posix.join(path.posix.dirname(name),included));
+    for(const target of Object.keys(snapshot.files))if(target.toLowerCase()===relative.toLowerCase()||target.toLowerCase()===included.toLowerCase()||target.toLowerCase().endsWith('/'+included.toLowerCase())){required.add(target);if(scan(target,seen))dynamic=true;}
+   }return dynamic;
+  };
+  let dynamic=scan(file);for(const name of Object.keys(snapshot.files))if(/\.(h|hpp|hh|hxx)$/i.test(name)&&scan(name))dynamic=true;
+  // Other registered versions are independent translation units, unless explicitly included.
+  if(!dynamic)for(const name of versions)if(name!==file&&!required.has(name))delete snapshot.files[name];
+  return {snapshot,file};
+ }
+ async fileView(lab:string){
+  if(await this.workspace.isProject(lab)){const s=await this.workspace.read(lab);return {expanded:s.expanded??[],sidebarWidth:s.sidebarWidth??190,sidebarCollapsed:s.sidebarCollapsed??false,rightCollapsed:s.rightCollapsed??false};}
+  const meta=await this.readState(lab,lab?'_':''),view=meta.view??{};return {expanded:view.expanded??[],sidebarWidth:view.sidebarWidth??190,sidebarCollapsed:view.sidebarCollapsed??true,rightCollapsed:view.rightCollapsed??false};
+ }
+ async saveFileView(lab:string,value:{expanded?:string[];sidebarWidth?:number;sidebarCollapsed?:boolean;rightCollapsed?:boolean}){
+  if(await this.workspace.isProject(lab)){await this.workspace.update(lab,value);return;}
+  return this.enqueue(async()=>{const anchor=lab?'_':'',meta=await this.readState(lab,anchor);meta.view={...meta.view,...value};await this.writeState(lab,anchor,meta);});
+ }
  async copyDataTo(target:string){
-  await this.flush();const names=['projects','空项目.c','空项目.cpp','空项目.json','.labpad',...(await readdir(this.root)).filter(n=>/^空项目\.v\d+\.(c|cpp)$/.test(n))];
+  await this.flush();const names=['projects','drafts','空项目.c','空项目.cpp','空项目.json','.labpad',...(await readdir(this.root)).filter(n=>/^空项目\.v\d+\.(c|cpp)$/.test(n))];
   for(const name of [...names,'config.json'])if(await exists(path.join(target,name)))throw new Error('目标目录已有 LabPad 数据，请选择其他目录，避免覆盖');
   const projects=path.join(this.root,'projects'),relative=path.relative(projects,target);
   if(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)))throw new Error('数据目录不能放在当前 projects 目录内部');

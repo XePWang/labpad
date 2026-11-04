@@ -10,10 +10,10 @@ import {Storage,exportName} from './storage';
 import type {CompilerConfig,Config,Draft,JudgeResult,Language,ExportPreview,ExportProblem,Coverage} from '../shared/types';
 import type {CheckRecord} from '../shared/project-format';
 export type Submission=ExportPreview;
-export interface SubmissionServices{identity(language:Language):Promise<string>;format(source:string,language:Language):Promise<string>}
+export interface SubmissionServices{resolve?(draft:Draft):Promise<{draft:Draft;compiler:CompilerConfig;identity:string}>;identity(language:Language):Promise<string>;format(source:string,language:Language):Promise<string>}
 export function fingerprint(draft:Draft,compiler:CompilerConfig,identity:string){
- const p=draft.problem,options=buildOptionsSignature(draft,compiler),files=draft.workspace?Object.fromEntries(Object.entries(draft.workspace.files).sort(([a],[b])=>a<b?-1:a>b?1:0)):undefined;
- return createHash('sha256').update(JSON.stringify([draft.workspace?'workspace':draft.language,files??draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
+ const p=draft.problem,options=buildOptionsSignature(draft,compiler),snapshot=draft.workspace??draft.sourceFiles,files=snapshot?Object.fromEntries(Object.entries(snapshot.files).sort(([a],[b])=>a<b?-1:a>b?1:0)):undefined;
+ return createHash('sha256').update(JSON.stringify([draft.workspace?'workspace':draft.language,snapshot?[files,Object.entries(snapshot.binaryFiles??{}).sort(([a],[b])=>a<b?-1:a>b?1:0)]:draft.source.replace(/^\uFEFF/,''),p.labId,p.problemId,p.timeLimitMs,p.outputLimitBytes,
   p.comparison,p.testCases.map(t=>[t.id,t.input,t.expectedOutput,t.comparison??p.comparison]),options,identity])).digest('hex');
 }
 export function compilationFingerprint(draft:Draft,compiler:CompilerConfig,identity:string){
@@ -64,7 +64,7 @@ async function testStatus(storage:Storage,draft:Draft,config:Config,identity:str
  return record.passed+'/'+record.total+' 个测试点通过';
 }
 export async function prepareSource(storage:Storage,value:Draft,config:Config,services:SubmissionServices):Promise<Submission>{
- const draft=structuredClone(validateDraft(value)),warnings:string[]=[],status=await testStatus(storage,draft,config,await services.identity(draft.language));
+ const draft=structuredClone(validateDraft(value)),context=await services.resolve?.(draft),warnings:string[]=[],status=await testStatus(storage,context?.draft??draft,context?{...config,compiler:context.compiler}:config,context?.identity??await services.identity(draft.language));
  if(status)warnings.push('尚未全部通过：'+(draft.problem.problemId||'空项目')+'（'+status+'）。');
  const missing=identityWarning(config);if(missing)warnings.push(missing);
  return {kind:'source',name:exportName(draft,config.studentId),labId:draft.problem.labId,files:[{name:exportName(draft,config.studentId),source:draft.source}],warnings};
@@ -106,7 +106,7 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
   if(!same){try{same=(await services.format(draft.source,draft.language)).trim()===(await services.format(starter,draft.language)).trim();}catch{}}
   if(same||!draft.source.trim())unedited.push(label);
   if(!identities.has(draft.language))identities.set(draft.language,await services.identity(draft.language));
-  const status=await testStatus(storage,draft,config,identities.get(draft.language)!);if(status)unpassed.push(label+'（'+status+'）');
+  const context=await services.resolve?.(draft),status=await testStatus(storage,context?.draft??draft,context?{...config,compiler:context.compiler}:config,context?.identity??identities.get(draft.language)!);if(status)unpassed.push(label+'（'+status+'）');
   const n=(counts.get(id)??0)+1;counts.set(id,n);
   const name=exportName(draft,config.studentId).replace(/\.(c|cpp)$/,(ext)=> (n>1?'_v'+n:'')+ext),key=name.normalize('NFC').toLowerCase();
   if(names.has(key))throw new Error('导出文件名冲突：'+name+'。请调整题号或所选版本。');names.add(key);
@@ -122,7 +122,7 @@ export async function prepareProject(storage:Storage,value:Draft,config:Config,s
 export function submissionZip(submission:Submission):Uint8Array{
  const folder=submission.name.replace(/\.zip$/i,''),files:Record<string,Uint8Array>={};
  filePart(folder,'提交文件夹');
- for(const file of submission.files){if(file.name!=='labpad.project.json')workspacePath(file.name);const name=folder+'/'+file.name;if(Object.hasOwn(files,name))throw new Error('重复导出文件：'+file.name);files[name]=strToU8(file.source.replace(/^\uFEFF/,''));}
+ for(const file of submission.files){if(file.name!=='labpad.project.json')workspacePath(file.name);const name=folder+'/'+file.name;if(Object.hasOwn(files,name))throw new Error('重复导出文件：'+file.name);files[name]=file.encoding==='base64'?Buffer.from(file.source,'base64'):strToU8(file.source.replace(/^\uFEFF/,''));}
  return zipSync(files,{level:6});
 }
 
@@ -139,7 +139,7 @@ export async function prepareWorkspaceProject(storage:Storage,current:Draft,conf
  }
  if(!current.problem.testCases.length||!record||record.status!=='passed')warnings.push('尚未全部通过：'+labId+'。请在导出前重新测试。');
  if(missing)warnings.push(missing);
- const files=Object.entries(snapshot.files).map(([name,source])=>({name,source}));
+ const files:Submission['files']=[...Object.entries(snapshot.files).map(([name,source])=>({name,source})),...Object.entries(snapshot.binaryFiles??{}).map(([name,source])=>({name,source,encoding:'base64' as const}))];
  if(!files.some(f=>f.name==='LPMake.txt'))throw new ConfigError('',0,'The project is missing LPMake.txt.','Include LPMake.txt in the project root.');
  if(includeConfig){
   const pkg:any=workspacePackage(labId,snapshot,current.problem,state.templates);pkg.files=pkg.files.map((f:any)=>({path:f.path}));

@@ -47,7 +47,7 @@ export function validateConfig(value:unknown):Config {
  selection(c.currentLab,c.currentProblem);
  if(!['manual','auto'].includes(c.saveMode)||!(c.sourceFile===null||typeof c.sourceFile==='string'))throw new Error('保存设置无效');
  if(!['c','cpp'].includes(c.language))throw new Error('源码语言无效');
- if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean')throw new Error('编辑器设置无效');
+ if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean'||c.completionEnabled!==undefined&&typeof c.completionEnabled!=='boolean')throw new Error('编辑器设置无效');
  validateLayout(c.layout);validateShortcuts(c.shortcuts);
  if(!Number.isFinite(c.zoomFactor)||c.zoomFactor<0.25||c.zoomFactor>4)throw new Error('界面缩放应为 25% 至 400%');
  const b=c.compiler;

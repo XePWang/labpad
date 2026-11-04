@@ -62,7 +62,7 @@ async function gradeStudent(student:Student,problems:Problem[],intake:Intake,com
      for(const flag of spec.ldflags)if(!['-pthread','-s','-static'].includes(flag))throw diagnostic(spec,'add_ldflags',flag,'Linker flag '+JSON.stringify(flag)+' is not allowed by the grading configuration.','Remove this flag or ask the instructor to approve the required link option.');
      if(spec.links.some(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)))throw diagnostic(spec,'add_links',spec.links.find(name=>!/^[A-Za-z0-9_+.-]+$/.test(name)),'A library name contains unsupported characters.','Use a library name such as "m"; do not pass paths or linker flags to add_links().');
     }
-    draft.workspace={files};
+    draft.workspace={files,...(candidate.workspace.binaryFiles?{binaryFiles:candidate.workspace.binaryFiles}:{})};
    }}catch(e){configurationError=e instanceof Error?e.message:String(e);}
    if(configurationError)result={status:'completed',compiler:'',comparison:problem.comparison,cases:[],compilation:{status:'CE',stdout:'',stderr:configurationError,command:[],elapsedMs:0}};
    else if(problem.testCases.length)result=await judge(compiler,draft,config,signal);

@@ -144,13 +144,13 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   assert.equal(await page.locator('.app-shell').getAttribute('data-theme'),'light');
   assert.equal(await editor().evaluate(el=>getComputedStyle(el.closest('.cm-editor')).backgroundColor),'rgb(255, 255, 255)');
   assert.equal(await app.evaluate(({nativeTheme})=>nativeTheme.themeSource),'light');
-  await button('调试').click();assert.equal(await page.locator('.xterm-scrollable-element').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');await button('输出').click();
+  await button('终端').click();assert.equal(await page.locator('.xterm-scrollable-element').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');await button('输出').click();
   assert.equal(await text(),beforeTheme);
   await key('Control+z');await equal('int main(void) {\n    return 0;\n}\n','theme does not reset history');
   await page.screenshot({path:path.join(evidence,'editor-light.png'),fullPage:true});
   await page.getByRole('button',{name:/设置/}).click();await page.screenshot({path:path.join(evidence,'settings-light.png'),fullPage:true});await button('取消').click();
   await settings({'主题':'dark'});assert.equal(await editor().evaluate(el=>getComputedStyle(el.closest('.cm-editor')).backgroundColor),'rgb(30, 30, 30)');
-  await button('调试').click();assert.equal(await page.locator('.xterm-scrollable-element').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(30, 30, 30)');await button('输出').click();
+  await button('终端').click();assert.equal(await page.locator('.xterm-scrollable-element').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(30, 30, 30)');await button('输出').click();
   whitespace=await page.locator('.cm-highlightSpace').first().evaluate(el=>getComputedStyle(el).background);assert.match(whitespace,/0.35/);
   await page.screenshot({path:path.join(evidence,'editor-dark.png'),fullPage:true});
   pass('space dots are rendering-only at 0.35 alpha; light/dark shell/editor keep text, selection history and native theme');

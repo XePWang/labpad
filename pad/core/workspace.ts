@@ -1,3 +1,4 @@
+import {directorySnapshot} from './workspace-files';
 import {independentMake} from './build/plan';
 import {ConfigError} from '../shared/lpmake';
 import {mkdir,readFile,readdir,lstat,rename,rm,writeFile,mkdtemp} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import writeFileAtomic from 'write-file-atomic';
@@ -61,8 +62,9 @@ export class WorkspaceStore{
   const temporary=await mkdtemp(path.join(this.dataRoot,'.workspace-'));
   try{
    const files=pkg?Object.fromEntries(pkg.files.map(f=>[f.path,f.content])):workspaceTemplate(language);
+   const binary=new Set(pkg?.files.filter(f=>f.encoding==='base64').map(f=>f.path)??[]);
    if(pkg?.build.inheritDefaults===true)files['LPMake.txt']=independentMake(files['LPMake.txt'],await this.legacyDefaults());
-   for(const [file,content] of Object.entries(files)){const target=path.join(temporary,workspacePath(file));await mkdir(path.dirname(target),{recursive:true});await writeFile(target,content,'utf8');}
+   for(const [file,content] of Object.entries(files)){const target=path.join(temporary,workspacePath(file));await mkdir(path.dirname(target),{recursive:true});await writeFile(target,binary.has(file)?Buffer.from(content,'base64'):content,'utf8');}
    const first=Object.keys(files).find(f=>/\.(c|cpp|cc|cxx)$/i.test(f))??'LPMake.txt';
    const state:WorkspaceState={schemaVersion:2,mode:'project',labId:lab,tests:{...(pkg?.tests??defaultProblem(lab,'')),labId:lab,problemId:''},templates:pkg?.templates,starters:Object.fromEntries(Object.entries(files).filter(([f])=>/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f))),activeFile:first,openFiles:[first],expanded:[],sidebarWidth:190,sidebarCollapsed:false};
    await writeFile(path.join(temporary,'.labpad-project.json'),JSON.stringify(state,null,2)+'\n');await rename(temporary,root);
@@ -70,7 +72,9 @@ export class WorkspaceStore{
   return this.open(lab,(await this.read(lab)).activeFile!);
  }
  async open(lab:string,file:string):Promise<LoadedDraft>{
-  const state=await this.read(lab),target=await this.path(lab,file),decoded=decodeText(await readFile(target));
+  const state=await this.read(lab),target=await this.path(lab,file),bytes=await readFile(target);
+  if(bytes.includes(0)&&!((bytes[0]===255&&bytes[1]===254)||(bytes[0]===254&&bytes[1]===255)))throw Error('这是二进制文件，请在文件管理器中查看。');
+  const decoded=decodeText(bytes);
   return {file,documentId:'file:'+file,name:file,sourceFile:target,sourceEncoding:decoded.encoding,source:decoded.text,language:/\.(cpp|cc|cxx|hpp|hh)$/i.test(file)?'cpp':'c',problem:state.tests};
  }
  async documents(lab:string){
@@ -79,10 +83,9 @@ export class WorkspaceStore{
   return Promise.all(wanted.map(f=>this.open(lab,f)));
  }
  async snapshot(lab:string,buffers:Draft[]=[]):Promise<WorkspaceSnapshot>{
-  const state=await this.read(lab),entries=await this.list(lab),files:Record<string,string>={};
-  for(const item of entries)if(!item.directory)files[item.path]=decodeText(await readFile(await this.path(lab,item.path))).text;
+  const state=await this.read(lab),snapshot=await directorySnapshot(this.root(lab)),files=snapshot.files;
   for(const d of buffers)if(d.problem.labId===lab&&d.file){workspacePath(d.file);if(!Object.hasOwn(files,d.file))throw new Error('编辑文件已不存在：'+d.file);files[d.file]=d.source;}
-  return {files,...(state.inheritDefaults===true?{inheritDefaults:true}:{})};
+  return {...snapshot,files,...(state.inheritDefaults===true?{inheritDefaults:true}:{})};
  }
  async save(draft:Draft){
   if(!draft.file)throw new Error('请选择项目文件');const lab=draft.problem.labId,target=await this.path(lab,draft.file);

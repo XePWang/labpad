@@ -1,33 +1,41 @@
+import {prepareBuildDirectory} from '../artifacts';
 import {draftPlan,buildOptionsSignature,standaloneSource} from './plan';
-import {mkdir,readFile,writeFile,rm,cp,mkdtemp,readdir,link} from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';import {performance} from 'node:perf_hooks';
+import {mkdir,readFile,writeFile,rm,cp,mkdtemp,readdir,link,rmdir} from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';import {performance} from 'node:perf_hooks';
 import type {Compiler,Prepared} from '../compiler';import {runProcess} from '../process';import {parse,ConfigError} from '../../shared/lpmake';import {resolve} from './resolve';import {workspacePath,uniquePaths,type WorkspaceSnapshot} from '../../shared/workspace';import type {CompilerConfig,Draft,Compilation} from '../../shared/types';
-export async function compileDraft(compiler:Compiler,draft:Draft,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
+export interface BuildLocation{directory:string;owner:string;cwd:string}
+export async function compileDraft(compiler:Compiler,draft:Draft,config:CompilerConfig,signal?:AbortSignal,location?:BuildLocation):Promise<Prepared>{
  config=await compiler.forDraft(draft,config);
- if(!draft.workspace)return compiler.compile(draft.source,draft.language,config,signal);
- return buildWorkspace(compiler,draft.workspace,draft.problem.labId,config,signal);
+ if(!draft.workspace)return compiler.compile(draft.source,draft.language,config,signal,draft.sourceFiles&&draft.file?{snapshot:draft.sourceFiles,file:draft.file}:undefined);
+ return buildWorkspace(compiler,draft.workspace,draft.problem.labId,config,signal,draft,location);
 }
-export async function syncSnapshot(root:string,files:Record<string,string>){
- uniquePaths(Object.keys(files));await mkdir(root,{recursive:true});
+export async function syncSnapshot(root:string,files:Record<string,string>,binaryFiles:Record<string,string>={},pruneKnown?:Set<string>){
+ const entries:Record<string,Buffer>={...Object.fromEntries(Object.entries(files).map(([name,text])=>[name,Buffer.from(text,'utf8')])),...Object.fromEntries(Object.entries(binaryFiles).map(([name,text])=>[name,Buffer.from(text,'base64')]))};
+ uniquePaths([...Object.keys(files),...Object.keys(binaryFiles)]);await mkdir(root,{recursive:true});
  async function prune(dir:string,prefix=''){for(const e of await readdir(dir,{withFileTypes:true})){
-  const rel=prefix+e.name,target=path.join(dir,e.name);if(e.isDirectory()){if(!Object.keys(files).some(f=>f.startsWith(rel+'/')))await rm(target,{recursive:true,force:true});else await prune(target,rel+'/');}
-  else if(!Object.hasOwn(files,rel))await rm(target,{force:true});
+  const rel=prefix+e.name,target=path.join(dir,e.name);if(e.isDirectory()){if(!pruneKnown&&!Object.keys(entries).some(f=>f.startsWith(rel+'/')))await rm(target,{recursive:true,force:true});else{await prune(target,rel+'/');if(pruneKnown)await rmdir(target).catch((e:any)=>{if(!['ENOTEMPTY','EEXIST'].includes(e.code))throw e;});}}
+  else if(!Object.hasOwn(entries,rel)&&(!pruneKnown||pruneKnown.has(rel)))await rm(target,{force:true});
  }}
  await prune(root);
- for(const [name,text] of Object.entries(files)){const file=path.join(root,workspacePath(name));await mkdir(path.dirname(file),{recursive:true});if(await readFile(file,'utf8').catch(()=>undefined)!==text)await writeFile(file,text,'utf8');}
+ for(const [name,bytes] of Object.entries(entries)){const file=path.join(root,workspacePath(name));await mkdir(path.dirname(file),{recursive:true});if(!(await readFile(file).catch(()=>undefined))?.equals(bytes))await writeFile(file,bytes);}
 }
-export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapshot,labId:string,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
+export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapshot,labId:string,config:CompilerConfig,signal?:AbortSignal,context?:Draft,location?:BuildLocation):Promise<Prepared>{
  const started=performance.now(),session=await mkdtemp(path.join(await compiler.session,'project-')),directory=path.join(session,'work'),executable=path.join(session,'bin',process.platform==='win32'?'program.exe':'program'),cleanup=()=>rm(session,{recursive:true,force:true,maxRetries:10,retryDelay:100});await mkdir(directory,{recursive:true});await mkdir(path.dirname(executable),{recursive:true});
  let release:(()=>Promise<void>)|undefined;
  try{
   release=await compiler.cache.acquire(signal);await compiler.cache.trim();signal?.throwIfAborted();
-  const input:Draft={source:'',language:'c',problem:{labId} as Draft['problem'],workspace:snapshot},logical=draftPlan(input,config),identity=await compiler.identityFor(input,config),signature=buildOptionsSignature(input,config),effective={driver:signature.driver,units:[...new Set(logical.units.map(u=>JSON.stringify([u.language,u.args])))],linkLanguage:logical.linkLanguage,linkArgs:logical.linkArgs},key=createHash('sha256').update(JSON.stringify([labId,identity,effective])).digest('hex').slice(0,24);
-  const buildRoot=path.join(compiler.cache.directory,'projects',key),root=path.join(buildRoot,'snapshot'),output=path.join(buildRoot,process.platform==='win32'?'program.exe':'program');
+  const input:Draft=context??{source:'',language:'c',problem:{labId} as Draft['problem'],workspace:snapshot},logical=draftPlan(input,config),identity=await compiler.identityFor(input,config),signature=buildOptionsSignature(input,config),effective={driver:signature.driver,units:[...new Set(logical.units.map(u=>JSON.stringify([u.language,u.args])))],linkLanguage:logical.linkLanguage,linkArgs:logical.linkArgs},key=createHash('sha256').update(JSON.stringify([labId,identity,effective])).digest('hex').slice(0,24);
+  const buildRoot=location?.directory??path.join(compiler.cache.directory,'projects',key),root=path.join(buildRoot,'snapshot'),outputName=logical.target+(process.platform==='win32'?'.exe':''),output=path.join(buildRoot,outputName);
+  const owned=location?await prepareBuildDirectory(buildRoot,location.owner,[
+   'owner.json','link.rsp',outputName,...logical.units.map(u=>'obj/'+u.path+'.o'),...logical.units.map((_,i)=>'link-objects/'+i+'.o'),
+   ...[...Object.keys(snapshot.files),...Object.keys(snapshot.binaryFiles??{})].map(f=>'snapshot/'+f)
+  ]):undefined;
   await mkdir(buildRoot,{recursive:true});await writeFile(path.join(buildRoot,'owner.json'),JSON.stringify({labId}),'utf8');await rm(output,{force:true});
-  await syncSnapshot(root,snapshot.files);
+  await syncSnapshot(root,snapshot.files,snapshot.binaryFiles,owned?new Set(owned.files.filter(f=>f.startsWith('snapshot/')).map(f=>f.slice(9))):undefined);
   if(typeof snapshot.files['LPMake.txt']!=='string')throw new ConfigError('',0,'The build configuration file "LPMake.txt" is missing.','Create LPMake.txt in the project root and add a target() declaration.');
   const plan=await resolve(parse(standaloneSource(input,config)).spec,root,{c:[],cpp:[],link:[]},false,(config as import('./plan').CompilerContext).linkTarget),env=await compiler.environment(config);
   const compilation:Compilation={status:'success',stdout:'',stderr:'',command:[],commands:[],elapsedMs:0};
   const logs:{stdout:string;stderr:string;code:number|null;reason?:string;command:string[]}[]=new Array(plan.units.length);
+  for(const unit of plan.units)await compiler.assertNative(config,unit.language,[...unit.args,...plan.linkArgs]);
   const objects=plan.units.map(u=>path.join(buildRoot,'obj',u.path+'.o'));let next=0;
   const abort=new AbortController(),cancel=()=>abort.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
   async function worker(){while(!abort.signal.aborted){
@@ -48,9 +56,9 @@ export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapsho
    const {program,prefix}=compiler.resolve(config,plan.linkLanguage);
    // A response file preserves argument boundaries and avoids Windows command length limits.
    // ASCII aliases keep MinGW's response-file parser independent of the Windows code page.
-   const aliases=path.join(buildRoot,'link-objects');await rm(aliases,{recursive:true,force:true});await mkdir(aliases);
+   const aliases=path.join(buildRoot,'link-objects');if(!location)await rm(aliases,{recursive:true,force:true});await mkdir(aliases,{recursive:true});
    const linkObjects:string[]=[];
-   for(const [i,object] of objects.entries()){const name=String(i)+'.o';await link(object,path.join(aliases,name));linkObjects.push('link-objects/'+name);}
+   for(const [i,object] of objects.entries()){const name=String(i)+'.o';if(location)await rm(path.join(aliases,name),{force:true});await link(object,path.join(aliases,name));linkObjects.push('link-objects/'+name);}
    const linkArgs=plan.linkArgs.map(arg=>arg.startsWith('-L'+root)?'-Lsnapshot/'+path.relative(root,arg.slice(2)).replaceAll('\\','/'):arg);
    const args=[...linkObjects,...linkArgs,'-o',path.basename(output)],rsp=path.join(buildRoot,'link.rsp');
    await writeFile(rsp,args.map(a=>'"'+a.replaceAll('\\','\\\\').replaceAll('"','\\"')+'"').join('\n'),'utf8');
@@ -59,11 +67,12 @@ export async function buildWorkspace(compiler:Compiler,snapshot:WorkspaceSnapsho
    compilation.stdout+=linked.stdout.toString('utf8');compilation.stderr+=linked.stderr.toString('utf8');if(linked.reason==='cancelled')compilation.status='cancelled';else if(linked.code!==0||linked.reason)compilation.status='CE';
   }
   compilation.command=compilation.commands![0]??[];compilation.elapsedMs=Math.round(performance.now()-started);
-  if(compilation.status==='success')await cp(output,executable);else await rm(output,{force:true});
-  return {directory,executable,compilation,resources:snapshot.files,cleanup};
+  if(compilation.status==='success'){if(!location)await cp(output,executable);}else await rm(output,{force:true});
+  return {directory,executable:location?output:executable,compilation,resources:snapshot.files,binaryResources:snapshot.binaryFiles,snapshotRoot:root,buildDirectory:buildRoot,runDirectory:location?.cwd,cleanup};
  }catch(e){await cleanup();throw e;}finally{await release?.();}
 }
-export async function copyResources(files:Record<string,string>|undefined,directory:string){
+export async function copyResources(files:Record<string,string>|undefined,directory:string,binaryFiles:Record<string,string>={}){
+ for(const [name,base64] of Object.entries(binaryFiles)){const file=path.join(directory,workspacePath(name));await mkdir(path.dirname(file),{recursive:true});await writeFile(file,Buffer.from(base64,'base64'));}
  if(!files)return;for(const [name,text] of Object.entries(files)){
   if(name==='LPMake.txt'||/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(name))continue;
   const file=path.join(directory,workspacePath(name));await mkdir(path.dirname(file),{recursive:true});await writeFile(file,text,'utf8');

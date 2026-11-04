@@ -58,7 +58,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   assert.ok(fits.docWidth<=fits.width+1);assert.ok(fits.docHeight<=fits.height+1);assert.ok((await page.locator('.bottom-panel').boundingBox()).height>50);
   assert.equal((await state()).draft.source,textBefore);
   const casePane=await page.locator('.cases-pane').boundingBox();
-  for(const label of ['题目文件','重新加载','＋ 新增']){const box=await button(label).boundingBox();assert.ok(box.x>=casePane.x&&box.x+box.width<=casePane.x+casePane.width+1,'narrow pane button remains visible: '+label);}
+  await button('更多').click();for(const label of ['题目文件','重新加载','新增测试点'])assert.equal(await page.getByRole('menuitem',{name:label,exact:true}).isVisible(),true);await page.keyboard.press('Escape');
   await page.screenshot({path:path.join(evidence,'layout-compact.png'),fullPage:true});
   await editor().focus();await page.keyboard.press('Control+Home');const oldHint=await status().textContent();await page.waitForTimeout(9300);assert.notEqual(await status().textContent(),oldHint);
   pass('smaller windows fit without page overflow; idle hints rotate and reduced rows preserve work area');
@@ -67,7 +67,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   await until(()=>page.evaluate(()=>window.__debug.join('').includes('ready')),'live debug terminal');
   const sizeBefore=await app.evaluate(()=>globalThis.__sizes.at(-1));await drag(horizontal(),0,80);
   await until(async()=>{const size=await app.evaluate(()=>globalThis.__sizes.at(-1));return size&&sizeBefore&&size.rows!==sizeBefore.rows;},'terminal refits after splitter drag');
-  await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.type('5');await page.keyboard.press('Enter');await until(()=>page.evaluate(()=>window.__debug.join('').includes('value=5')),'terminal remains interactive after resizing');
+  await page.getByRole('textbox',{name:'终端输入',exact:true}).focus();await page.keyboard.type('5');await page.keyboard.press('Enter');await until(()=>page.evaluate(()=>window.__debug.join('').includes('value=5')),'terminal remains interactive after resizing');
   const scrolling=await page.evaluate(()=>({page:document.scrollingElement.scrollTop,shell:document.querySelector('.app-shell').scrollTop}));assert.deepEqual(scrolling,{page:0,shell:0});
   await page.screenshot({path:path.join(evidence,'layout-debug-resized.png'),fullPage:true});await page.getByRole('button',{name:/停止程序/}).click();await until(()=>page.locator('.phase').textContent().then(t=>t.includes('已停止')),'stop debug');
   pass('running PTY receives new terminal dimensions and accepts input after resizing');

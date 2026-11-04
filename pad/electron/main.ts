@@ -1,3 +1,13 @@
+import {directorySnapshot} from '../core/workspace-files';
+import {createHash} from 'node:crypto';
+import {NativeDebugger} from '../core/debug/session';
+import {CommandTerminal} from '../core/terminal';
+import {cleanBuildDirectory} from '../core/artifacts';
+import {draftPlan} from '../core/build/plan';
+import {killTree} from '../core/process';
+import type {SourceBreakpoint} from '../shared/debug';
+import type {Prepared} from '../core/compiler';
+import {FileConflict,under,type FileRequest,type FileChange} from '../core/files';
 import {nativeButtonOrder,type DesktopPlatform} from '../shared/dialog-actions';
 import {previewPlan} from '../core/build/plan';
 import {assertParameters} from '../shared/parameters';
@@ -55,11 +65,12 @@ let warmController:AbortController|undefined,warmTask:Promise<unknown>|undefined
 let debugSession=0,acknowledge:((id:number,size:number)=>void)|undefined;
 let win:BrowserWindow,config:Config,currentDocument:Draft|undefined,documentDirty=false;
 let controller:AbortController|undefined,active:Promise<unknown>|undefined,terminal:IPty|undefined;
+let fileSequence=0;
 let closing=false,initialized=false,saves:Promise<unknown>=Promise.resolve();
 const send=(channel:string,value:unknown)=>{if(win&&!win.isDestroyed())win.webContents.send(channel,value);};
 const debugState=(state:DebugState)=>send('debug:state',state),judgeEvent=(event:JudgeEvent)=>send('judge:event',event);
 function requireIdle(){if(active)throw new Error('请先停止正在运行的任务');}
-async function stop(){controller?.abort();await active;}
+async function stop(){controller?.abort();if(nativeSession&&nativeActive())await nativeSession.stop();await active;}
 async function stopWarmup(){clearTimeout(warmTimer);warmController?.abort();await warmTask?.catch(()=>{});warmTask=undefined;warmController=undefined;}
 function scheduleWarmup(){
  clearTimeout(warmTimer);if(process.env.LABPAD_SKIP_WARMUP||config.compiler.mode!=='builtin')return;
@@ -78,10 +89,20 @@ async function validatePath(value:string,kind:PathKind,allowEmpty=false){
 }
 async function requirePath(value:string,kind:PathKind){const result=await validatePath(value,kind);if(!result.valid)throw new Error(result.message);}
 async function inputIdentity(d:Draft,options:CompilerConfig){return compiler.identityFor(d,options);}
-async function draftOptions(d:Draft){const base=d.file?structuredClone(config.compiler):effectiveCompiler(config.compiler,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);return compiler.forDraft(d,base);}
-async function buildInput(value:Draft){const d=structuredClone(validateDraft(value));if(await storage.workspace.isProject(d.problem.labId))d.workspace=await storage.workspace.snapshot(d.problem.labId,[...openBuffers,d]);return d;}
+async function draftOptions(d:Draft){const base=d.workspace?structuredClone(config.compiler):effectiveCompiler(config.compiler,d.problem.labId?await storage.buildOptions(d.problem.labId):undefined);return compiler.forDraft(d,base);}
+async function targetInput(value:Draft){
+ const d=structuredClone(validateDraft(value));if(!d.auxiliary||await storage.workspace.isProject(d.problem.labId))return d;
+ const state=await storage.projectState(d.problem.labId,d.problem.problemId,d.language),docs=await storage.openDocuments(d.problem.labId,d.problem.problemId,d.language),source=docs.find(v=>v.documentId===state.activeDocumentId)??docs[0];
+ if(!source)throw new Error('请先选择或新建一份 C / C++ 源码。');return {...source,problem:d.problem};
+}
+async function buildInput(value:Draft){
+ const d=await targetInput(value);delete d.sourceFiles;
+ if(await storage.workspace.isProject(d.problem.labId))d.workspace=await storage.workspace.snapshot(d.problem.labId,[...openBuffers,d]);
+ else{delete d.workspace;const data=await storage.sourceSnapshot(d,openBuffers);d.sourceFiles=data.snapshot;d.file=data.file;}
+ return d;
+}
 async function savedBuildInput(value:Draft){
- await saves;const d=structuredClone(validateDraft(value));let saved=true;
+ await saves;const d=await targetInput(value);let saved=true;delete d.sourceFiles;
  if(await storage.workspace.isProject(d.problem.labId)){
   d.workspace=await storage.workspace.snapshot(d.problem.labId,[]);
   for(const buffer of openBuffers)if(buffer.problem.labId===d.problem.labId&&buffer.file&&d.workspace.files[buffer.file]!==buffer.source)saved=false;
@@ -91,6 +112,11 @@ async function savedBuildInput(value:Draft){
   const file=version?storage.documentPath(d.problem.labId,d.problem.problemId,version):storage.paths(d.problem.labId,d.problem.problemId,d.language).source;
   if(!await exists(file))saved=false;
   else{const text=decodeText(await readFile(file)).text;saved=text===d.source;d.source=text;}
+   const data=await storage.sourceSnapshot(d);d.sourceFiles=data.snapshot;d.file=data.file;
+   for(const buffer of openBuffers)if(buffer.problem.labId===d.problem.labId){
+    if(buffer.documentId===d.documentId&&buffer.source!==d.source)saved=false;
+    if(buffer.auxiliary&&buffer.file&&data.snapshot.files[buffer.file]!==buffer.source)saved=false;
+   }
  }
  return {draft:d,saved};
 }
@@ -104,7 +130,7 @@ async function workspaceBootstrap(){
  if(!draft){const source=(await storage.workspace.open(lab,'LPMake.txt'));documents.push(source);draft=source;}
  if(currentDocument?.file&&currentDocument.problem.labId===lab){const current=currentDocument;draft={...draft,...current};const index=documents.findIndex(d=>d.file===current.file);if(index>=0)documents[index]=draft;else documents.push(draft);}else documentDirty=false;
  currentDocument=draft;
- return {...await settingsResult(),draft,documents,sourcePath:draft.sourceFile??null,version:app.getVersion(),...(state.inheritDefaults!==undefined?{warning:'旧版构建配置暂未迁移，请先修复 LPMake.txt 的错误并保存。'}:{}),workspace:{files:await storage.workspace.list(lab),expanded:state.expanded??[],sidebarWidth:state.sidebarWidth??190,sidebarCollapsed:state.sidebarCollapsed??false}};
+ return {...await settingsResult(),draft,documents,sourcePath:draft.sourceFile??null,version:app.getVersion(),...(state.inheritDefaults!==undefined?{warning:'旧版构建配置暂未迁移，请先修复 LPMake.txt 的错误并保存。'}:{}),workspace:{files:await storage.workspace.list(lab),expanded:state.expanded??[],sidebarWidth:state.sidebarWidth??190,sidebarCollapsed:state.sidebarCollapsed??false,rightCollapsed:state.rightCollapsed??false}};
 }
 async function persist(value:Draft):Promise<SaveResult>{
  const snapshot=structuredClone(validateDraft(value)),original=JSON.stringify(snapshot),options=structuredClone(config);
@@ -114,6 +140,12 @@ async function persist(value:Draft):Promise<SaveResult>{
    if(options.formatOnSave&&/\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(snapshot.file))try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+String(e);}
    snapshot.source=await storage.workspace.save(snapshot);if(currentDocument?.documentId===snapshot.documentId&&JSON.stringify(currentDocument)===original){currentDocument=structuredClone(snapshot);documentDirty=false;}
    return {path:await storage.workspace.path(snapshot.problem.labId,snapshot.file),source:snapshot.source,formatWarning};
+  }
+  if(snapshot.auxiliary&&snapshot.file){
+   const service=await storage.fileService(snapshot.problem.labId,snapshot.problem.problemId),target=await service.resolve(snapshot.file);
+   const encoding=(snapshot as LoadedDraft).sourceEncoding??'UTF-8';let source=snapshot.source;
+   if(options.formatOnSave&&/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(snapshot.file))source=await formatter.format(source,snapshot.language,options.indentSize);
+   await writeSource(target,source,encoding);return {path:target,source};
   }
   let formatWarning:string|undefined;
   if(options.formatOnSave){try{snapshot.source=await formatter.format(snapshot.source,snapshot.language,options.indentSize);}catch(e){formatWarning='格式化失败，已保存原文：'+(e instanceof Error?e.message:String(e));}}
@@ -151,9 +183,9 @@ async function bootstrap(){
  const documents=await storage.openDocuments(currentDocument!.problem.labId,currentDocument!.problem.problemId,currentDocument!.language);
  const current=documents.find(d=>d.documentId===currentDocument!.documentId)??currentDocument as LoadedDraft;
  currentDocument={...current,...currentDocument};
- return {...await settingsResult(),draft:structuredClone(currentDocument),documents,sourcePath:current.sourceFile??null,version:app.getVersion()};
+ return {...await settingsResult(),draft:structuredClone(currentDocument),documents,sourcePath:current.sourceFile??null,version:app.getVersion(),workspace:{files:await (await storage.fileService(config.currentLab,config.currentProblem)).list(),...await storage.fileView(config.currentLab)}};
 }
-function submissionServices(){const options=structuredClone(config.compiler);return {identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
+function submissionServices(){const options=structuredClone(config.compiler);return {resolve:async(value:Draft)=>{const draft=await buildInput(value),effective=await draftOptions(draft);return {draft,compiler:effective,identity:await inputIdentity(draft,effective)};},identity:(language:Language)=>compiler.identity(options,language),format:(source:string,language:Language)=>formatter.format(source,language,4)};}
 async function messageBox(options:Electron.MessageBoxOptions){
  const order=nativeButtonOrder(options.buttons?.length??1,options.cancelId??0,process.platform as DesktopPlatform);
  const result=await dialog.showMessageBox(win,{...options,buttons:order.map(i=>options.buttons?.[i]??'确定'),defaultId:order.indexOf(options.defaultId??0),cancelId:order.indexOf(options.cancelId??0)});
@@ -170,7 +202,7 @@ async function startDebug(value:Draft){
  const task=(async()=>{
   let prepared=program,runDirectory:string|undefined,shutdown:Promise<void>|undefined;
   try{
-   runDirectory=await mkdtemp(path.join(prepared.directory,'debug-'));await copyResources(prepared.resources,runDirectory);
+   runDirectory=await mkdtemp(path.join(prepared.directory,'debug-'));await copyResources(prepared.resources,runDirectory,prepared.binaryResources);
    if(prepared.compilation.status==='cancelled'){outcome={status:'stopped'};return;}
    if(prepared.compilation.status==='CE'){outcome={status:'error',message:'编译失败，请查看“输出”页'};return;}
    if(abort.signal.aborted){outcome={status:'stopped'};return;}
@@ -203,6 +235,96 @@ async function startDebug(value:Draft){
  })();
  active=task;void task.finally(()=>{if(active===task){active=undefined;controller=undefined;if(outcome)debugState(outcome);}});
 }
+let nativeSession:NativeDebugger|undefined,nativePrepared:Prepared|undefined,nativeLab='',nativeSnapshot:Record<string,string>={};
+let terminalShell:CommandTerminal|undefined,terminalShellKey='',terminalTargets=new Map<string,{key:string;program:Prepared;checksum:string}>();
+const debuggerRoot=app.isPackaged?path.join(resourceRoot,'debugger'):path.join(resourceRoot,'debuggers',platform+'-'+process.arch);
+const nativeActive=()=>!!nativeSession&&!['ended','error','idle'].includes(nativeSession.state.status);
+function nativeView(){const state=nativeSession?.state??{status:'idle',frames:[],scopes:[],variables:[],breakpoints:[],conditionalBreakpoints:true};const base=storage.workspace.root(nativeLab||config.currentLab);
+ const relative=(file:string|undefined)=>{if(!file)return file;for(const root of [base,nativePrepared?.snapshotRoot])if(root){const rel=path.relative(root,file);if(rel&&!rel.startsWith('..')&&!path.isAbsolute(rel))return rel.split(path.sep).join('/');}return file;};
+ return {...state,frames:state.frames.map(f=>({...f,path:relative(f.path)})),breakpoints:state.breakpoints.map(b=>({...b,path:relative(b.path)!}))};
+}
+async function nativeFileGuard(lab:string,files:string[]){
+ if(!nativeActive()||nativeLab!==lab)return;
+ if(files.some(file=>Object.keys(nativeSnapshot).some(source=>under(source,file))))throw Error('文件正在参与调试，请先停止调试，再移动、重命名、删除或覆盖。');
+}
+function emitFileChanges(lab:string,changes:FileChange[],files:import('../shared/workspace').WorkspaceFile[]){const event={id:++fileSequence,lab,changes,files};send('files:changed',event);return event;}
+async function terminalProcess(args:string[],cwd:string,env:NodeJS.ProcessEnv,onExit?:()=>void){
+ if(terminal)throw Error('终端中已有程序正在运行。');
+ const session=++debugSession;let pending='',scheduled:ReturnType<typeof setTimeout>|undefined,unacked=0,paused=false;
+ const flush=()=>{if(pending){send('debug:data',{session,data:pending});pending='';}scheduled=undefined;};
+ const executable=process.platform==='win32'?compiler.paths.processHost!:'/bin/sh';
+ const command=process.platform==='win32'?['--terminal-no-echo',...args]:['-c','stty -echo || exit 125; exec "$@"','labpad-terminal',...args];
+ const child=pty.spawn(executable,command,{name:'xterm-256color',cols:100,rows:18,cwd,env:Object.fromEntries(Object.entries(env).filter((e):e is [string,string]=>e[1]!==undefined))});terminal=child;
+ acknowledge=(id,size)=>{if(id!==session)return;unacked=Math.max(0,unacked-size);if(paused&&unacked<65536){paused=false;child.resume();}};
+ const data=child.onData(value=>{pending+=value;unacked+=value.length;if(unacked>262144&&!paused){paused=true;child.pause();}if(!scheduled)scheduled=setTimeout(flush,16);});
+ const finished=new Promise<void>(resolve=>{const exit=child.onExit(result=>{if(scheduled)clearTimeout(scheduled);flush();data.dispose();exit.dispose();if(terminal===child){terminal=undefined;acknowledge=undefined;}debugState({status:'exited',message:'退出码 '+result.exitCode});onExit?.();resolve();});});
+ debugState({status:'running'});
+ return {pid:child.pid,finished,stop:async()=>{if(terminal!==child)return;if(process.platform==='win32')await new Promise<void>(done=>execFile('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>done()));else await killTree(child.pid).catch(()=>{});try{child.kill();}catch{}await finished;}};
+}
+async function beginNative(value:Draft,breakpoints:SourceBreakpoint[]){
+ requireIdle();await stopWarmup();const context=await programContext(value);if(!context.draft.workspace)throw Error('断点调试仅用于项目。');if(!context.saved)throw Error('请先保存源码和构建配置。');
+ const plan=draftPlan(context.draft,context.options),optimized=plan.units.some(u=>u.args.some(a=>/^-(O[123s]|Ofast|g0)$/.test(a)));
+ if(optimized||plan.units.some(u=>!u.args.some(a=>/^(-g|-[g]gdb\d*)$/.test(a)))){
+  const answer=await messageBox({type:'warning',title:'检查调试配置',message:'当前参数可能影响断点与变量显示。',detail:'建议在项目构建设置中使用 Debug 模式，并保留 -g、-O0。',buttons:['继续调试','打开构建设置','取消'],defaultId:1,cancelId:2,noLink:true});if(answer.response!==0)return {needsBuild:answer.response===1,started:false};
+ }
+ const abort=new AbortController();controller=abort;
+ const task=(async()=>{
+  let prepared:Prepared|undefined,session:NativeDebugger|undefined,io:Awaited<ReturnType<typeof terminalProcess>>|undefined;
+  try{
+   prepared=await compileDraft(compiler,context.draft,context.options,abort.signal);judgeEvent({type:'compilation',compilation:prepared.compilation});
+   if(prepared.compilation.status!=='success'||abort.signal.aborted)return {started:false,compilation:prepared.compilation};
+   nativePrepared=prepared;nativeLab=context.draft.problem.labId;nativeSnapshot={...context.draft.workspace!.files};
+   const runDirectory=await mkdtemp(path.join(prepared.directory,'native-'));await copyResources(prepared.resources,runDirectory,prepared.binaryResources);
+   session=nativeSession=new NativeDebugger();session.on('state',()=>send('native:state',nativeView()));session.on('output',data=>send('debug:data',{session:debugSession,data}));session.on('diagnostic',data=>send('native:diagnostic',data));
+   const root=storage.workspace.root(nativeLab),env=await compiler.environment(context.options);
+   const stopSession=()=>{void session!.stop();};abort.signal.addEventListener('abort',stopSession,{once:true});
+   const finish=session.finished.finally(async()=>{abort.signal.removeEventListener('abort',stopSession);await io?.stop();await session?.dispose();await prepared?.cleanup();nativePrepared=undefined;if(active===finish){active=undefined;controller=undefined;}});
+   active=finish;
+   await session.start({adapter:path.join(debuggerRoot,'adapter',process.platform==='win32'?'codelldb.exe':'codelldb'),program:prepared.executable,cwd:runDirectory,env,
+    sourceMap:prepared.snapshotRoot?{[prepared.snapshotRoot]:root}:undefined,breakpoints:breakpoints.map(b=>({...b,path:path.join(root,workspacePath(b.path))})),
+    runInTerminal:async options=>{io=await terminalProcess(options.args,options.cwd,{...env,...Object.fromEntries(Object.entries(options.env??{}).filter(([,v])=>v!==null)) as Record<string,string>});return {processId:io.pid,shellProcessId:io.pid};}});
+   return {started:true,compilation:prepared.compilation,sources:nativeSnapshot};
+  }catch(error){if(session)await session.stop();else await prepared?.cleanup();throw error;}
+ })();
+ active=task;try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
+}
+async function makeCommand(action:'help'|'build'|'run'|'clean',cwd:string){
+ if(action==='help')return 'lpmake build / run / clean（b / r / c）';
+ requireIdle();await stopWarmup();const shell=terminalShell!,directory=await shell.files.resolve(cwd),snapshot=await directorySnapshot(directory),draft:Draft={source:'',language:'c',file:'LPMake.txt',workspace:snapshot,problem:currentDocument!.problem};
+ const options=await compiler.forDraft(draft,config.compiler),identity=await compiler.identityFor(draft,options),key=createHash('sha256').update(JSON.stringify([snapshot,identity,draftPlan(draft,options)])).digest('hex'),owner='lpmake:'+cwd,target=path.join(directory,'build');
+ const previous=terminalTargets.get(directory);
+ if(action==='clean'){await previous?.program.cleanup();terminalTargets.delete(directory);await cleanBuildDirectory(target,owner);return '已清理当前配置的构建产物。';}
+ if(action==='build'){
+  terminalTargets.delete(directory);await previous?.program.cleanup();const abort=new AbortController();controller=abort;
+  const task=compileDraft(compiler,draft,options,abort.signal,{directory:target,owner,cwd:directory});active=task;
+  try{const prepared=await task;judgeEvent({type:'compilation',compilation:prepared.compilation});if(prepared.compilation.status!=='success'){await prepared.cleanup();return prepared.compilation.status==='cancelled'?'构建已停止。':'构建失败，请查看“输出”。';}
+   const checksum=createHash('sha256').update(await readFile(prepared.executable)).digest('hex');terminalTargets.set(directory,{key,program:prepared,checksum});return '构建完成：./'+path.posix.join(cwd,'build',path.basename(prepared.executable));
+  }finally{if(active===task){active=undefined;controller=undefined;}}
+ }
+ if(!previous||previous.key!==key||!await exists(previous.program.executable)||createHash('sha256').update(await readFile(previous.program.executable)).digest('hex')!==previous.checksum)throw Error('当前配置尚未构建，或文件已变化。请先执行 lpmake build。');
+ const abort=new AbortController();controller=abort;const io=await terminalProcess([previous.program.executable],directory,await compiler.environment(options)),kill=()=>{void io.stop();};abort.signal.addEventListener('abort',kill,{once:true});
+ const task=io.finished.finally(()=>{abort.signal.removeEventListener('abort',kill);if(active===task){active=undefined;controller=undefined;}});active=task;return '';
+}
+
+async function performFiles(lab:string,problem:string,request:FileRequest){
+ if(!nativeActive())requireIdle();await saves;selection(lab,problem);
+ const service=await storage.fileService(lab,problem);
+ if(request.action==='delete'){
+  const result=await messageBox({type:'warning',title:'删除文件',message:'删除所选的 '+request.paths.length+' 项？',detail:'包含所选文件夹内的文件及未保存的修改。此操作无法撤销。',buttons:['删除','取消'],defaultId:1,cancelId:1,noLink:true});
+  if(result.response!==0)return {id:++fileSequence,lab,changes:[],files:await service.list()};
+ }
+ let result;
+ try{result=await storage.operateFiles(lab,problem,request,files=>nativeFileGuard(lab,request.action==='copy'?files.filter(p=>!request.paths.includes(p)):files));}
+ catch(error){
+  if(!(error instanceof FileConflict))throw error;if(['newFile','newFolder','rename'].includes(request.action))throw Error('该名称已存在，请换一个名称：'+error.files.join('、'));
+  const answer=await messageBox({type:'warning',title:'同名文件',message:'目标位置已有同名文件。',detail:error.files.join('\n')+'\n替换会覆盖目标文件及其中未保存的修改。',buttons:['替换','保留两者','跳过','取消'],defaultId:3,cancelId:3,noLink:true});
+  if(answer.response===3)return {id:++fileSequence,lab,changes:[],files:await service.list()};
+  result=await storage.operateFiles(lab,problem,{...request,conflict:(['replace','keepBoth','skip'] as const)[answer.response]},files=>nativeFileGuard(lab,request.action==='copy'?files.filter(p=>!request.paths.includes(p)):files));
+ }
+ const translate=(d:Draft)=>{if(d.problem.labId!==lab||!d.file)return d;let file=d.file;for(const c of result.changes){if(c.from&&!c.copied&&under(file,c.from)){if(!c.to)return;file=c.to+file.slice(c.from.length);break;}if(c.replaced&&c.to&&under(file,c.to))return;}return {...d,file};};
+ openBuffers=openBuffers.flatMap(d=>{const next=translate(d);return next?[next]:[];});if(currentDocument)currentDocument=translate(currentDocument);
+ const event={...result,lab,id:++fileSequence};send('files:changed',event);return event;
+}
 async function initialize(){
  if(await exists(locationFile)){
   const value=await readJSON(locationFile) as {dataDirectory:string};await requirePath(value.dataDirectory,'directory');storage=new Storage(await realpath(value.dataDirectory));
@@ -214,17 +336,38 @@ async function initialize(){
  handle('bootstrap',bootstrap);handle('draft:save',persist);handle('draft:load',selectDraft);
  handle('draft:reload',async()=>{requireIdle();await saves;currentDocument=undefined;documentDirty=false;return bootstrap();});
  handle('workspace:sources',async(lab:string,text:string)=>{if(typeof text!=='string'||!await storage.workspace.isProject(lab))throw new Error('项目无效');return (await resolveBuild(parseMake(text).spec,storage.workspace.root(lab))).units.map(u=>u.path);});
- handle('workspace:files',(lab:string)=>storage.workspace.list(lab));
- handle('workspace:open',(lab:string,file:string)=>storage.workspace.open(lab,file));
+ handle('workspace:files',async(lab:string)=>(await storage.fileService(lab,config.currentProblem)).list());
+ handle('workspace:open',(lab:string,file:string)=>storage.openFile(lab,config.currentProblem,file,config.language));
  handle('workspace:view',async(lab:string,value:any)=>{
   if(!await storage.workspace.isProject(lab))throw new Error('请选择多文件项目');
-  const update:any={};for(const key of ['activeFile','openFiles','expanded','sidebarWidth','sidebarCollapsed'])if(Object.hasOwn(value,key))update[key]=value[key];
+  const update:any={};for(const key of ['activeFile','openFiles','expanded','sidebarWidth','sidebarCollapsed','rightCollapsed'])if(Object.hasOwn(value,key))update[key]=value[key];
   if(update.openFiles){if(!Array.isArray(update.openFiles))throw new Error('打开文件列表无效');update.openFiles.forEach(workspacePath);}
   if(update.activeFile)workspacePath(update.activeFile);if(update.expanded)update.expanded.forEach(workspacePath);
   if(update.sidebarWidth!==undefined&&(!Number.isFinite(update.sidebarWidth)||update.sidebarWidth<120||update.sidebarWidth>420))throw new Error('侧栏宽度无效');
   await storage.workspace.update(lab,update);
  });
- handle('workspace:file',async(lab:string,action:string,file:string,target?:string,content?:string)=>{
+ handle('files:view',async(lab:string,value:any)=>{
+ const update:any={};for(const key of ['expanded','sidebarWidth','sidebarCollapsed','rightCollapsed'])if(Object.hasOwn(value,key))update[key]=value[key];
+ if(update.expanded){if(!Array.isArray(update.expanded))throw new Error('文件夹列表无效');update.expanded.forEach(workspacePath);}
+ if(update.sidebarWidth!==undefined&&(!Number.isFinite(update.sidebarWidth)||update.sidebarWidth<120||update.sidebarWidth>420))throw new Error('侧栏宽度无效');
+ for(const k of ['sidebarCollapsed','rightCollapsed'])if(update[k]!==undefined&&typeof update[k]!=='boolean')throw new Error('视图状态无效');
+ await storage.saveFileView(lab,update);
+});
+handle('completion:files',async(lab:string,problem:string)=>{
+ const service=await storage.fileService(lab,problem),snapshot=await directorySnapshot(service.root);let includeDirs=['.'];
+ if(snapshot.files['LPMake.txt'])try{includeDirs=parseMake(snapshot.files['LPMake.txt']).spec.includeDirs;}catch{}
+ const files=Object.fromEntries(Object.entries(snapshot.files).filter(([name])=>/\.(h|hpp|hh|hxx)$/i.test(name)));
+ return {files,includeDirs};
+});
+handle('files:context',async(lab:string,problem:string,files:string[],action:string)=>{
+ const service=await storage.fileService(lab,problem),names=files.length?files:[''],paths=await Promise.all(names.map(file=>service.resolve(file)));
+ if(action==='copy'||action==='relative')clipboard.writeText((action==='copy'?paths:names).join('\n'));
+ else if(action==='reveal'){if(files.length)shell.showItemInFolder(paths[0]);else await shell.openPath(paths[0]);}
+ else throw Error('文件操作无效');return paths;
+});
+handle('files:external',async(file:string)=>(await messageBox({type:'question',title:'文件已在外部修改',message:file+' 已被其他程序修改。',detail:'重新加载会替换编辑区中尚未保存的内容。',buttons:['重新加载','保留编辑区内容'],defaultId:1,cancelId:1,noLink:true})).response===0);
+handle('files:operate',performFiles);
+handle('workspace:file',async(lab:string,action:string,file:string,target?:string,content?:string)=>{
   requireIdle();await saves;if(!await storage.workspace.isProject(lab))throw new Error('请选择多文件项目');
   if(action==='reveal'){shell.showItemInFolder(await storage.workspace.path(lab,file));return storage.workspace.list(lab);}
   if(!['newFile','newFolder','rename','delete'].includes(action))throw new Error('文件操作无效');
@@ -261,12 +404,12 @@ async function initialize(){
   handle('source:recent',async(lab:string,problem:string,closed:string[])=>{selection(lab,problem);if(await storage.workspace.isProject(lab)){const files=await storage.workspace.list(lab);const file=closed.map(id=>id.replace(/^file:/,'')).find(f=>files.some(e=>!e.directory&&e.path===f))??files.find(f=>!f.directory)?.path;return file?storage.workspace.open(lab,file):null;}return storage.recentDocument(lab,problem,closed);});
   handle('check:state',async(value:Draft)=>{const d=await buildInput(value),options=await draftOptions(d);return coverage(storage,d,{...config,compiler:options},await inputIdentity(d,options));});
   handle('check:problems',async(value:Draft,buffers:Draft[])=>{
-   const current=validateDraft(value);if(current.file)return {};const project=(await storage.projects()).find(p=>p.labId===current.problem.labId),states:Record<string,string>={};
+   const current=validateDraft(value);if(await storage.workspace.isProject(current.problem.labId))return {};const project=(await storage.projects()).find(p=>p.labId===current.problem.labId),states:Record<string,string>={};
    const identities=new Map<Language,string>();
    for(const id of project?.problems??[]){
-    const d=id===current.problem.problemId?current:buffers.find(b=>b.problem.problemId===id&&b.problem.labId===current.problem.labId)??await storage.load(current.problem.labId,id,'c',true);
+    const value=id===current.problem.problemId?current:buffers.find(b=>b.problem.problemId===id&&b.problem.labId===current.problem.labId)??await storage.load(current.problem.labId,id,'c',true),d=await buildInput(value);
     const options=await draftOptions(d);if(!identities.has(d.language))identities.set(d.language,await compiler.identity(options,d.language));
-    states[id]=(await coverage(storage,d,{...config,compiler:options},identities.get(d.language)!)).state;
+    states[id]=(await coverage(storage,d,{...config,compiler:options},await inputIdentity(d,options))).state;
    }
    return states;
   });
@@ -303,7 +446,7 @@ async function initialize(){
  ipcMain.on('document:state',(event,value:Draft,dirty:boolean)=>{if(event.sender===win.webContents){currentDocument=structuredClone(validateDraft(value));documentDirty=!!dirty;}});
  ipcMain.on('workspace:state',(event,values:Draft[],dirty:boolean)=>{if(event.sender===win.webContents){openBuffers=values.map(d=>structuredClone(validateDraft(d)));documentDirty=!!dirty;}});
  handle('documents:open',async(lab:string,problem:string,language:Language)=>await storage.workspace.isProject(lab)?storage.workspace.documents(lab):storage.openDocuments(lab,problem,language));
- handle('document:activate',async(id:string)=>{if(!currentDocument)throw new Error('尚未打开文件');if(currentDocument.file&&await storage.workspace.isProject(currentDocument.problem.labId)){await storage.workspace.update(currentDocument.problem.labId,{activeFile:currentDocument.file});return;}await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:null};await storage.saveConfig(config);}});
+ handle('document:activate',async(id:string,file?:string)=>{if(!currentDocument)throw new Error('尚未打开文件');if(currentDocument.file&&await storage.workspace.isProject(currentDocument.problem.labId)){await storage.workspace.update(currentDocument.problem.labId,{activeFile:file??currentDocument.file});return;}await storage.activateDocument(currentDocument.problem.labId,currentDocument.problem.problemId,id);const state=await storage.projectState(currentDocument.problem.labId,currentDocument.problem.problemId,currentDocument.language),version=state.documents?.find(v=>v.id===id);if(version){config={...config,language:version.language,sourceFile:null};await storage.saveConfig(config);}});
  handle('source:version',(value:Draft,fromTemplate:boolean)=>{requireIdle();return storage.newVersion(value,fromTemplate===true);});
  handle('clipboard:write',(text:string)=>{if(typeof text!=='string')throw new Error('复制内容无效');clipboard.writeText(text);});
   handle('path:show-file',async(file:string)=>{if(typeof file!=='string'||!path.isAbsolute(file))throw new Error('请选择已保存的源码文件');try{if(!(await stat(file)).isFile())throw new Error();await access(file,constants.R_OK);}catch{throw new Error('文件不存在或无法访问，请先保存源码');}shell.showItemInFolder(file);});
@@ -347,13 +490,14 @@ async function initialize(){
  handle('layout:save',async(value:unknown)=>{const layout=validateLayout(value);await saves;config={...config,layout};await storage.saveConfig(config);return layout;});
  handle('compiler:detect',async()=>{requireIdle();return detectCompilers({cwd:await compiler.session,exclude:[toolchain],processHost:compiler.paths.processHost});});
  handle('compiler:info',(value:CompilerConfig)=>compiler.info(validateConfig({...config,compiler:value}).compiler));
- handle('source:import',async()=>{
+ handle('source:import',async(destination?:string)=>{
   requireIdle();await saves;
   const selected=await dialog.showOpenDialog(win,{title:'导入单文件源码',properties:['openFile'],filters:[{name:'C / C++ 源码',extensions:['c','cpp']}]});
   if(selected.canceled)return null;
   const file=selected.filePaths[0];
   if(await storage.workspace.isProject(config.currentLab)){
-   const name=workspacePath('src/'+path.basename(file)),target=await storage.workspace.path(config.currentLab,name,true),decoded=(await import('../core/storage')).decodeText(await readFile(file));
+   const service=await storage.fileService(config.currentLab,''),relative=path.relative(await realpath(service.root),await realpath(file)),owned=relative&&!relative.startsWith('..')&&!path.isAbsolute(relative);if(owned){const document=await storage.workspace.open(config.currentLab,relative.split(path.sep).join('/'));return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document,reused:true};}
+   const folder=destination?workspacePath(destination):'',name=workspacePath((folder?folder+'/':'')+path.basename(file)),target=await storage.workspace.path(config.currentLab,name,true),decoded=(await import('../core/storage')).decodeText(await readFile(file));
    if(await exists(target)&&await realpath(file)===await realpath(target)){const document=await storage.workspace.open(config.currentLab,name);return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document,reused:true};}
    if(await exists(target)){const choice=await messageBox({type:'question',title:'替换项目文件',message:'“'+name+'”已存在，是否替换？',detail:'当前文件及其未保存修改将被替换。原始导入文件保留。',buttons:['取消','替换'],defaultId:0,cancelId:0,noLink:true});if(choice.response!==1)return null;await writeSource(target,decoded.text);}else await storage.workspace.mutate(config.currentLab,'newFile',name,undefined,decoded.text);
    const document=await storage.workspace.open(config.currentLab,name);currentDocument=document;openBuffers=openBuffers.filter(d=>d.file!==name);
@@ -364,7 +508,7 @@ async function initialize(){
   currentDocument=document;config={...config,sourceFile:null,language:document.language};await storage.saveConfig(config);
   return {source:document.source,encoding:document.sourceEncoding!,path:document.sourceFile!,language:document.language,document};
  });
- handle('problem:save',async(value:unknown)=>{const problem=structuredClone(validateProblem(value));await saves;if(!currentDocument)throw new Error('尚未打开题目');if(currentDocument.file)await storage.workspace.update(problem.labId,{tests:problem});else await storage.save({...currentDocument,problem},false);});
+ handle('problem:save',async(value:unknown)=>{const problem=structuredClone(validateProblem(value));await saves;if(await storage.workspace.isProject(problem.labId))await storage.workspace.update(problem.labId,{tests:problem});else await storage.save({source:'',language:currentDocument?.language??config.language,problem},false);if(currentDocument?.problem.labId===problem.labId&&currentDocument.problem.problemId===problem.problemId)currentDocument.problem=problem;});
  handle('problem:import',async(lab:string,problem:string)=>{
   requireIdle();selection(lab,problem);await saves;
   const current=currentDocument?.problem.labId===lab&&currentDocument.problem.problemId===problem?structuredClone(currentDocument):await storage.load(lab,problem,config.language);
@@ -414,7 +558,7 @@ async function initialize(){
    return {...await bootstrap(),updatedProblems:rules};
   }
   const workspace=value?.mode==='project'?parseWorkspacePackage(value):undefined,lab=workspace??parseLabPackage(value),name=await storage.nextLabName(lab.labId);
-  if(documentDirty||openBuffers.length){const choice=await confirmUnsaved();if(choice==='cancel')return null;if(choice==='save')for(const d of openBuffers.length?openBuffers:currentDocument?[currentDocument]:[])await persist(d);}
+  if(documentDirty){const choice=await confirmUnsaved();if(choice==='cancel')return null;if(choice==='save')for(const d of openBuffers.length?openBuffers:currentDocument?[currentDocument]:[])await persist(d);}
   const imported=workspace?await storage.workspace.create(name,config.language,workspace):undefined;if(imported)await selectDraft(name,'',imported.language);else{const created=await storage.importProject(lab,name);await selectDraft(created.labId,created.problemId,created.language);}
   let editBuild=false;if(workspace?.templateFilled){const answer=await messageBox({type:'info',title:'项目构建配置',message:'原项目未提供 LPMake.txt，已填充默认模板',detail:'可修改源文件匹配、包含目录及编译参数。忽略后仍使用默认模板，构建时可按诊断自行调整。',buttons:['修改配置','忽略'],defaultId:0,cancelId:1,noLink:true});editBuild=answer.response===0;}
   return {...await bootstrap(),...(editBuild?{editBuild:true}:{})};
@@ -429,7 +573,7 @@ async function initialize(){
   if(file.canceled||!file.filePath)return null;const target=file.filePath.endsWith('.json')?file.filePath:file.filePath+'.json';await writeFileAtomic(target,JSON.stringify(content,null,2)+'\n');return target;
  });
  handle('problem:show',async(value:Draft)=>{
-  const d=validateDraft(value);if(d.file){shell.showItemInFolder(storage.workspace.metadata(d.problem.labId));return;}const file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
+  const d=validateDraft(value);if(await storage.workspace.isProject(d.problem.labId)){shell.showItemInFolder(storage.workspace.metadata(d.problem.labId));return;}const file=storage.paths(d.problem.labId,d.problem.problemId,d.language).problem;
   if(!await exists(file))throw new Error('请先保存当前题目，再打开题目文件');shell.showItemInFolder(file);
  });
  handle('compile:state',async(value:Draft)=>{let saved=false;try{saved=(await savedBuildInput(value)).saved;const context=await programContext(value);return {saved,ready:saved&&compiledProgram.matches(context.key)};}catch{return {saved,ready:false};}});
@@ -452,7 +596,39 @@ async function initialize(){
   })();active=task;
   try{return await task;}finally{if(active===task){active=undefined;controller=undefined;}}
  });
- handle('cancel',stop);handle('debug:stop',stop);handle('debug:start',startDebug);
+ handle('terminal:command',async(value:Draft,text:string)=>{
+ if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error('命令过长。');const d=validateDraft(value),key=d.problem.labId+'\0'+(d.problem.problemId?'lab':'draft');
+ if(!terminalShell||terminalShellKey!==key){requireIdle();for(const target of terminalTargets.values())await target.program.cleanup();terminalTargets.clear();terminalShellKey=key;terminalShell=new CommandTerminal(await storage.fileService(d.problem.labId,d.problem.problemId),request=>performFiles(d.problem.labId,d.problem.problemId,request),makeCommand);}
+ if(/^[Ll][Pp][Mm][Aa][Kk][Ee]\s+(?:b|build|r|run)\s*$/.test(text)&&await exists(await terminalShell.files.resolve('LPMake.txt',true,terminalShell.cwd))&&!(await programContext(d)).saved)return {cwd:terminalShell.cwd,output:'',needsSave:true};
+ const result=await terminalShell.execute(text);
+ if(result.filesChanged)emitFileChanges(d.problem.labId,[],await (await storage.fileService(d.problem.labId,d.problem.problemId)).list());
+ return result;
+});
+handle('terminal:complete',async(text:string)=>terminalShell?.complete(text)??['pwd','ls','ll','cd','mkdir','touch','cat','cp','mv','rm','clear','help','lpmake'].filter(v=>v.startsWith(text)));
+handle('native:confirm-restart',async()=>(await messageBox({type:'question',title:'保存并重启',message:'源码或构建配置有未保存的修改。',detail:'保存完成后会停止当前调试，重新编译并启动。',buttons:['保存并重启','取消'],defaultId:0,cancelId:1,noLink:true})).response===0);
+handle('native:start',beginNative);
+handle('native:control',async(action:string)=>{
+ if(!nativeSession||!['continue','pause','next','stepIn','stepOut'].includes(action))throw Error('没有可操作的调试会话。');
+ await nativeSession.control(action as 'continue');return nativeView();
+});
+handle('native:stop',stop);
+handle('native:frame',async(id:number)=>{if(!Number.isSafeInteger(id)||!nativeSession)throw Error('调用帧无效');await nativeSession.selectFrame(id);return nativeView();});
+handle('native:variables',async(ref:number,start=0)=>{if(!Number.isSafeInteger(ref)||ref<1||!nativeSession)throw Error('变量无效');return nativeSession.variables(ref,start);});
+handle('native:watch',async(expression:string)=>{if(typeof expression!=='string'||expression.length>1024||!nativeSession)throw Error('监视表达式无效');return nativeSession.evaluate(expression);});
+handle('native:breakpoints',async(values:SourceBreakpoint[])=>{
+ if(!nativeSession||!nativeActive())return;
+ const base=storage.workspace.root(nativeLab),deferred=openBuffers.filter(d=>d.file&&d.problem.labId===nativeLab&&nativeSnapshot[d.file]!==d.source).map(d=>path.join(base,d.file!));
+ await nativeSession.setBreakpoints(values.map(b=>({...b,path:path.join(base,workspacePath(b.path))})),deferred);return nativeView();
+});
+handle('native:view',async(lab:string,value?:{breakpoints:SourceBreakpoint[];watches:string[]})=>{
+ if(!await storage.workspace.isProject(lab))return {breakpoints:[],watches:[]};
+ if(value){if(!Array.isArray(value.breakpoints)||value.breakpoints.length>256||!Array.isArray(value.watches)||value.watches.length>100)throw Error('调试视图设置无效');
+  const breakpoints=value.breakpoints.map(b=>{workspacePath(b.path);if(!Number.isSafeInteger(b.line)||b.line<1||typeof b.enabled!=='boolean'||b.condition!==undefined&&(typeof b.condition!=='string'||b.condition.length>1024))throw Error('断点设置无效');return {path:b.path,line:b.line,enabled:b.enabled,...(b.condition?{condition:b.condition}:{})};});
+  if(value.watches.some(w=>typeof w!=='string'||w.length>1024))throw Error('监视设置无效');await storage.workspace.update(lab,{debugView:{breakpoints,watches:value.watches}});
+ }
+ return (await storage.workspace.read(lab)).debugView??{breakpoints:[],watches:[]};
+});
+handle('cancel',stop);handle('debug:stop',stop);handle('debug:start',startDebug);
  ipcMain.on('debug:ack',(event,id:number,size:number)=>{if(event.sender===win.webContents&&Number.isSafeInteger(id)&&Number.isSafeInteger(size)&&size>0)acknowledge?.(id,size);});
  ipcMain.on('debug:input',(event,data:unknown)=>{if(event.sender===win.webContents&&typeof data==='string')terminal?.write(data);});
  ipcMain.on('debug:resize',(event,cols:number,rows:number)=>{if(event.sender===win.webContents&&Number.isSafeInteger(cols)&&Number.isSafeInteger(rows)&&cols>0&&rows>0)try{terminal?.resize(Math.min(cols,500),Math.min(rows,200));}catch{}});
@@ -461,7 +637,7 @@ app.whenReady().then(async()=>{
  Menu.setApplicationMenu(Menu.buildFromTemplate([
  ...(process.platform==='darwin'?[{role:'appMenu' as const}]:[]),
  {label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
- {label:'视图',submenu:[{label:'实际大小',accelerator:'CommandOrControl+0',click:()=>{win.webContents.setZoomFactor(1);if(config){config={...config,zoomFactor:1};void storage.saveConfig(config);send('zoom:changed',1);}}},{role:'zoomIn'},{role:'zoomOut'},{role:'togglefullscreen'}]}
+ {label:'视图',submenu:[{label:'实际大小',accelerator:'CommandOrControl+0',click:()=>{win.webContents.setZoomFactor(1);if(config){config={...config,zoomFactor:1};void storage.saveConfig(config);send('zoom:changed',1);}}},{role:'zoomIn'},{role:'zoomOut'},{role:'togglefullscreen',accelerator:process.platform==='darwin'?'Control+Command+F':'Control+Shift+F11'}]}
  ] as Electron.MenuItemConstructorOptions[]));
  const icon=nativeImage.createFromPath(iconPath);if(process.platform==='darwin'&&!icon.isEmpty())app.dock?.setIcon(icon);
  win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:720,title:'LabPad',icon,backgroundColor:'#0c111b',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});

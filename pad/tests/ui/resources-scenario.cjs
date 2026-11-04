@@ -7,7 +7,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
  let page;const samples=[];
  try{
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
-  const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.getByRole('tab'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
+  const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content'),tabs=()=>page.locator('.source-tabs [role=tab]'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
  async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
   const runtime=await app.evaluate(({app})=>({pid:process.pid,profile:app.getPath('userData')}));
   await app.evaluate(({dialog})=>{globalThis.__answer=2;dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:globalThis.__answer,checkboxChecked:false}));});
@@ -24,8 +24,8 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   const owned=(await state()).draft.sourceFile;await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},owned);await importSource();await until(()=>tabs().count().then(n=>n===1),'reopen closed file');await editor().fill(source);await page.keyboard.press('Control+s');
   console.log('PASS close right, close saved/all sequences, cancellation, Ctrl+F4 save and reopen');
   await until(async()=>(await fs.readFile(owned,'utf8'))===source,'original save completed');const beforeDiscard=await fs.readFile(owned,'utf8');await editor().fill(source+'// discarded source');await app.evaluate(()=>globalThis.__answer=1);await menu('全部关闭');await until(()=>tabs().count().then(n=>n===0),'discard and close all');
-  await page.getByRole('button',{name:/新增测试点/}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'空项目.json'),'utf8')).testCases.length===1,'rules saved without a source view');assert.equal(await fs.readFile(owned,'utf8'),beforeDiscard);
-  await page.getByRole('button',{name:'删除测试点',exact:true}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存全部',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'空项目.json'),'utf8')).testCases.length===0,'rules cleared');await importSource();await until(()=>tabs().count().then(n=>n===1),'owned version reopens');
+  await page.getByRole('button',{name:/新增测试点/}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存当前',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'drafts/空项目.json'),'utf8')).testCases.length===1,'rules saved without a source view');assert.equal(await fs.readFile(owned,'utf8'),beforeDiscard);
+  await page.getByRole('button',{name:'删除测试点',exact:true}).click();await button('保存').click();await page.getByRole('menuitem',{name:'保存全部',exact:true}).click();await until(async()=>JSON.parse(await fs.readFile(path.join(data,'drafts/空项目.json'),'utf8')).testCases.length===0,'rules cleared');await importSource();await until(()=>tabs().count().then(n=>n===1),'owned version reopens');
   console.log('PASS saving rules with all source tabs closed never saves discarded source edits');
 
   // Open/close child windows repeatedly; record a user-defined key.
@@ -43,7 +43,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   // Repeated PTY sessions and closing histories should leave no running programs or session output.
   for(let cycle=0;cycle<8;cycle++){
    await editor().fill(source+'// cycle '+cycle);await page.keyboard.press('F7');await until(()=>page.locator('.phase').textContent().then(t=>t.includes('调试运行中')),'debug started');
-   await page.getByRole('textbox',{name:'调试输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'debug stopped');
+   await page.getByRole('textbox',{name:'终端输入',exact:true}).focus();await page.keyboard.press('Control+c');await until(()=>page.locator('.phase').textContent().then(t=>t==='已停止'),'debug stopped');
    await menu('另存为新版本');await until(()=>tabs().count().then(n=>n===2),'new version');await app.evaluate(()=>globalThis.__answer=1);await menu('关闭',1);await until(()=>tabs().count().then(n=>n===1),'version closes');
    const directories=(await fs.readdir(os.tmpdir())).filter(n=>n.startsWith('labpad-runtime-'+runtime.pid+'-'));assert.equal(directories.length,1);
    assert.equal((await fs.readdir(path.join(os.tmpdir(),directories[0]))).filter(n=>n.startsWith('run-')).length,1,'only the current compiled program is retained');
@@ -55,7 +55,7 @@ async function runResourcesScenario(electron,{executable,cwd,evidence}){
   await app.evaluate(()=>globalThis.__answer=0);await page.keyboard.press('Control+s');
   const relocated=path.join(temporary,'relocated');await fs.mkdir(relocated);
   await page.getByRole('button',{name:/设置/}).click();await page.getByRole('textbox',{name:'数据保存位置',exact:true}).fill(relocated);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
-  assert.equal((await state()).dataRoot,await fs.realpath(relocated));assert.ok((await state()).sourcePath.startsWith(relocated));assert.ok((await fs.readdir(relocated)).some(n=>n.startsWith('空项目.v')));assert.ok((await fs.readdir(data)).some(n=>n.startsWith('空项目.v')));
+  assert.equal((await state()).dataRoot,await fs.realpath(relocated));assert.ok((await state()).sourcePath.startsWith(relocated));assert.ok((await fs.readdir(path.join(relocated,'drafts'))).some(n=>n.startsWith('空项目.v')));assert.ok((await fs.readdir(path.join(data,'drafts'))).some(n=>n.startsWith('空项目.v')));
   for(const factor of ['2','0.75','1']){
    await page.getByRole('button',{name:/设置/}).click();await require('./selectors.cjs').zoom(page).selectOption(factor);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()),Number(factor));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

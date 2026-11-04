@@ -1,8 +1,10 @@
+import {snapshotEntries} from './workspace-files';
+import type {WorkspaceSnapshot} from '../shared/workspace';
 import {usedLanguages,standaloneSource,type CompilerContext} from './build/plan';
 import {parse} from '../shared/lpmake';
 import {assertParameters} from '../shared/parameters';
 import {withDefaultStandard} from '../shared/defaults';
-import {mkdtemp,mkdir,writeFile,access,rm,stat,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,access,rm,stat,realpath} from 'node:fs/promises';
 import {CompilerCache} from './cache';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -10,7 +12,7 @@ import {runProcess} from './process';
 import {compilerEnvironment} from './toolchains';
 import type {CompilerConfig,Language,Compilation,Draft} from '../shared/types';
 export interface RuntimePaths {toolchain:string;checkers:string;processHost?:string;cacheDirectory?:string;workDirectory?:string;isolation?:'bubblewrap'|'none'}
-export interface Prepared {resources?:Record<string,string>;compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
+export interface Prepared {resources?:Record<string,string>;binaryResources?:Record<string,string>;snapshotRoot?:string;buildDirectory?:string;runDirectory?:string;compilation:Compilation;executable:string;directory:string;cleanup():Promise<void>}
 export class Compiler {
  private readonly targets=new Map<string,Promise<string>>();
  readonly session:Promise<string>;
@@ -46,6 +48,13 @@ export class Compiler {
   if(r.reason||r.code!==0)throw new Error('无法读取编译器版本：'+r.stderr.toString('utf8'));
   return (config.mode==='builtin'?'内置 Zig ':'自定义 ')+(r.stdout.toString('utf8').split(/\r?\n/)[0]||kind);
  }
+ async assertNative(config:CompilerConfig,language:Language,args:string[]){
+  if(config.mode!=='builtin'&&config.kind!=='zig')return;
+  const program=this.resolve(config,language).program;let marker:any;try{marker=JSON.parse(await readFile(path.join(path.dirname(program),'labpad-native.json'),'utf8'));}catch{return;}
+  if(!marker.nativeOnly)return;
+  const allowed:Record<string,RegExp>={'win-x64':/^x86_64-(?:windows|w64-mingw32|pc-windows)(?:-|$)/,'linux-x64':/^x86_64-(?:unknown-)?linux(?:-|$)/,'mac-arm64':/^(?:aarch64|arm64)-(?:apple-)?(?:macos|darwin)(?:-|$)/};
+  for(let i=0;i<args.length;i++){const arg=args[i];let target:string|undefined;if(arg==='-target'||arg==='--target')target=args[++i];else if(/^--?target=/.test(arg))target=arg.slice(arg.indexOf('=')+1);if(target&&target!=='native'&&!allowed[marker.target]?.test(target))throw Error('内置工具链仅支持本机目标（'+marker.target+'）。交叉编译请在设置中选择完整的自定义 Zig 工具链。');}
+ }
  async forDraft(draft:Draft,config:CompilerConfig):Promise<CompilerContext>{
   if(!draft.workspace)return config;
   let spec:ReturnType<typeof parse>['spec'];try{spec=parse(standaloneSource(draft,config)).spec;}catch{return config;}
@@ -58,7 +67,8 @@ export class Compiler {
   })());
   return {...config,linkTarget:explicit??await this.targets.get(key)};
  }
- async compile(source:string,language:Language,config:CompilerConfig,signal?:AbortSignal):Promise<Prepared>{
+ async compile(source:string,language:Language,config:CompilerConfig,signal?:AbortSignal,input?:{snapshot:WorkspaceSnapshot;file:string}):Promise<Prepared>{
+  await this.assertNative(config,language,[...(language==='c'?config.cArgs:config.cppArgs),...config.linkArgs]);
   assertParameters(language==='c'?config.cArgs:config.cppArgs,language==='c'?'C 参数':'C++ 参数');assertParameters(config.linkArgs,'链接参数');
   const directory=await mkdtemp(path.join(await this.session,'run-'));
   const executable=path.join(directory,process.platform==='win32'?'program.exe':'program');
@@ -67,10 +77,11 @@ export class Compiler {
   try{
    if(config.mode==='builtin'||config.kind==='zig'){release=await this.cache.acquire(signal);await this.cache.trim();}
    signal?.throwIfAborted();
-   const sourcePath=path.join(directory,'main.'+(language==='c'?'c':'cpp'));
-   await writeFile(sourcePath,source.replace(/^\uFEFF/,''),'utf8');
+   if(input)for(const [name,bytes] of Object.entries(snapshotEntries(input.snapshot))){const file=path.join(directory,name);await mkdir(path.dirname(file),{recursive:true});await writeFile(file,bytes);}
+   const sourcePath=path.join(directory,input?.file??'main.'+(language==='c'?'c':'cpp'));
+   await mkdir(path.dirname(sourcePath),{recursive:true});await writeFile(sourcePath,source.replace(/^\uFEFF/,''),'utf8');
    const {program,prefix}=this.resolve(config,language);
-   const args=[...prefix,...withDefaultStandard(language==='c'?config.cArgs:config.cppArgs,language),sourcePath,...config.linkArgs,'-o',executable];
+   const args=[...prefix,...withDefaultStandard(language==='c'?config.cArgs:config.cppArgs,language),'-x',language==='c'?'c':'c++',sourcePath,'-x','none',...config.linkArgs,'-o',executable];
    const r=await runProcess(program,args,{cwd:directory,timeLimitMs:120000,outputLimitBytes:524288,
     signal,env:await this.environment(config),processHost:this.paths.processHost});
    if(r.reason&&r.reason!=='cancelled')throw new Error(r.reason==='timeout'?'编译工具运行超时':'编译工具输出超过上限');
@@ -80,7 +91,7 @@ export class Compiler {
    if(compilation.status==='success'){
     try{await access(executable);}catch{throw new Error('编译器没有生成可执行文件，请检查编译参数');}
    }
-   return {compilation,executable,directory,cleanup};
+   return {compilation,executable,directory,cleanup,...(input?{resources:input.snapshot.files,binaryResources:input.snapshot.binaryFiles,snapshotRoot:directory}:{})};
   }catch(error){await cleanup();throw error;}finally{await release?.();}
  }
  async dispose(){await rm(await this.session,{recursive:true,force:true,maxRetries:10,retryDelay:100});}

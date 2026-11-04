@@ -4,7 +4,7 @@ const until=async(fn,label,timeout=150000)=>{const start=Date.now();while(Date.n
 // Translate that intent to the platform's displayed label; new fixtures choose labels directly.
 function wrapNativeReply(mock){return async(...args)=>{
  const options=args.at(-1),result=await mock(...args);
- const choices={'保存修改':['保存','不保存','取消'],'删除项目文件':['取消','删除'],'删除实验项目':['取消','删除整个项目'],'替换项目文件':['取消','替换'],'导入测试点':['取消','覆盖现有测试点','追加到末尾'],'测试限制':['取消','保留当前限制','采用导入限制'],'确认导入':['取消','导入'],'导入实验项目':['取消','更新测试点','导入副本'],'更新项目测试点':['取消','更新测试点'],'项目构建配置':['修改配置','忽略']};
+ const choices={'保存修改':['保存','不保存','取消'],'删除文件':['取消','删除'],'同名文件':['取消','替换'],'删除项目文件':['取消','删除'],'删除实验项目':['取消','删除整个项目'],'替换项目文件':['取消','替换'],'导入测试点':['取消','覆盖现有测试点','追加到末尾'],'测试限制':['取消','保留当前限制','采用导入限制'],'确认导入':['取消','导入'],'导入实验项目':['取消','更新测试点','导入副本'],'更新项目测试点':['取消','更新测试点'],'项目构建配置':['修改配置','忽略']};
  const label=options.title==='保存后编译'?'保存并编译':choices[options.title]?.[result.response];
  if(label){const position=options.buttons.indexOf(label);if(position<0)throw Error('Missing fixture action '+label);return {...result,response:position};}
  return {...result,response:options.cancelId??result.response};
@@ -22,9 +22,7 @@ async function compileOnly(page,key){
 async function ensureCompiled(page){const state=await page.evaluate(async()=>window.labpad.compileState((await window.labpad.bootstrap()).draft));if(!state.ready)await compileOnly(page);}
 async function compileAndRun(page,key){
  await compileOnly(page,key);
- const all=page.getByRole('button',{name:'运行全部测试点',exact:true});if(!await all.count())return;
- const selected=page.getByRole('button',{name:'运行已选测试点',exact:true}),target=await selected.count()?selected:all;
- if(!await target.isEnabled())return;await target.click();await until(()=>page.getByRole('button',{name:'编译',exact:true}).isEnabled(),'tests finished');
+ const target=page.locator('.cases-heading .run-test-icon');if(!await target.count()||!await target.isEnabled())return;await target.click();await until(()=>page.getByRole('button',{name:'编译',exact:true}).isEnabled(),'tests finished');
 }
 async function runSingle(page,trigger){await ensureCompiled(page);await trigger();}
 async function selectTerminalText(page,text){
