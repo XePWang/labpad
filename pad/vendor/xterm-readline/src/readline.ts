@@ -21,6 +21,8 @@ export class Readline implements ITerminalAddon {
   private history: History = new History(65536);
   private activeRead: ActiveRead | undefined;
   private printingPrompt = false;
+  private promptWaiters: (() => void)[] = [];
+  private finishPromptWaiters() { for (const done of this.promptWaiters.splice(0)) done(); }
   private pendingKeys: (Input | (() => void))[] = [];
   private promptMarker: IMarker | undefined;
   private promptStartCol = 0;
@@ -61,7 +63,7 @@ export class Readline implements ITerminalAddon {
   public abortRead() {
     this.history.resetCursor();
     const read = this.activeRead; this.activeRead = undefined;
-    this.pendingKeys = []; this.printingPrompt = false;
+    this.pendingKeys = []; this.printingPrompt = false; this.finishPromptWaiters();
     this.promptMarker?.dispose(); this.promptMarker = undefined;
     read?.reject(new Error("Read cancelled"));
   }
@@ -70,6 +72,9 @@ export class Readline implements ITerminalAddon {
   private outputMarker: IMarker | undefined;
   private outputCol = 0;
   public writeAbove(text: string): Promise<void> {
+    // Prompt placement reads xterm's parsed cursor position. Wait for its
+    // transaction before taking markers or erasing the editable input.
+    if (this.printingPrompt) return new Promise<void>(done => this.promptWaiters.push(done)).then(() => this.writeAbove(text));
     const term = this.term;
     if (!term) return Promise.resolve();
     if (!this.activeRead) return new Promise(done => term.write(text, done));
@@ -246,6 +251,9 @@ export class Readline implements ITerminalAddon {
    *
    * @returns string - The current line
    */
+  private holdWhileIdle=false;
+  private heldBytes=0;
+  public holdInput(value:boolean){this.holdWhileIdle=value;if(!value){this.pendingKeys=[];this.heldBytes=0;}}
   public getLine() {
     return this.state.buffer();
   }
@@ -336,9 +344,10 @@ export class Readline implements ITerminalAddon {
         this.redrawPrompt();
         return;
       }
-      const pending = this.pendingKeys;
+      const pending = this.pendingKeys;this.heldBytes=0;
       this.pendingKeys = [];
       for (const key of pending) { if(typeof key==='function')key();else this.readKey(key); }
+      this.finishPromptWaiters();
     };
     const emit = () => {
       const buffer = term.buffer.active;
@@ -423,7 +432,8 @@ export class Readline implements ITerminalAddon {
   }
 
   private readKey(input: Input) {
-    if (this.printingPrompt) {
+    if (this.printingPrompt || this.holdWhileIdle && this.activeRead === undefined) {
+      const bytes=new TextEncoder().encode(input.data.join("")).length+8;if((this.heldBytes+=bytes)>1048576){this.heldBytes-=bytes;return;}
       this.pendingKeys.push(input);
       return;
     }
