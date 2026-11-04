@@ -75,3 +75,5 @@ for(const target of targets){
  await writeFile(path.join(output,'build-info.json'),JSON.stringify({target,zig:pin.zigVersion,testlib:pin.testlibRevision},null,2)+'\n');
 }
 console.log('Toolchains and checkers ready.');
+
+if(!checkersOnly){const {prepareDebugger}=await import('./prepare-debugger.mjs');for(const target of targets)await prepareDebugger(target);}

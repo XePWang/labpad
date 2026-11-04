@@ -21,7 +21,7 @@ CP Editor is an interaction and design reference only. No CP Editor code or artw
 - testlib: MIT, https://github.com/MikeMirzayanov/testlib
   The pinned source revision and license are in vendor/testlib/.
 - Zig: https://ziglang.org/
-  The complete toolchain retains its own LICENSE and third-party notices.
+  The native-target toolchain retains its own LICENSE and third-party notices.
   The toolchain as a whole is not relabeled MIT.
 
 Distribution includes the relevant dependency notices. Runtime dependencies are
@@ -31,4 +31,12 @@ CLI additionally uses SheetJS CE (Apache-2.0), csv-parse / csv-stringify (MIT), 
 
 ## Xterm Readline
 
-The inline debug editor adapts xterm-readline 1.3.1 (MIT), revision 0870644ef26f2864b837bc535c2df60a87262a87. Its source, license, pin and LabPad changes are in vendor/xterm-readline. The distributed THIRD_PARTY_LICENSES.txt includes the MIT license.
+The terminal line editor adapts xterm-readline 1.3.1 (MIT), revision 0870644ef26f2864b837bc535c2df60a87262a87. Its source, license, pin and LabPad changes are in vendor/xterm-readline. The distributed THIRD_PARTY_LICENSES.txt includes the MIT license.
+
+## Offline debugger
+
+- CodeLLDB 1.12.3: MIT, https://github.com/vadimcn/codelldb/tree/v1.12.3.
+- Its LLDB/LLVM runtime: Apache-2.0 WITH LLVM-exception.
+- Bundled Python 3.12.7: Python Software Foundation License and included third-party notices.
+
+The pinned downloads are in debuggers.json; license texts are in vendor/codelldb, vendor/llvm and vendor/python, and resources/debugger/licenses.

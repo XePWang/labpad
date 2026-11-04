@@ -27,6 +27,7 @@ while(queue.length){
 }
 sections.push('=== xterm-readline 1.3.1 (MIT; adapted for LabPad) ===\n'+await readFile('vendor/xterm-readline/LICENSE-MIT','utf8'));
 sections.push('=== LLVM clang-format (Apache-2.0 WITH LLVM-exception) ===\n'+await readFile('vendor/llvm/LICENSE.TXT','utf8'));
+for(const [name,file]of [['CodeLLDB 1.12.3 (MIT)','vendor/codelldb/LICENSE'],['Python 3.12.7 (PSF)','vendor/python/LICENSE']])sections.push('=== '+name+' ===\n'+await readFile(file,'utf8'));
 sections.unshift('LabPad third-party notices\n\n'+await readFile('THIRD_PARTY_NOTICES.md','utf8')+'\n\n=== electron-vite-vue ===\n'+await readFile('TEMPLATE-LICENSE','utf8'));
 await mkdir('../.work/build/licenses',{recursive:true});
 await writeFile('../.work/build/licenses/THIRD_PARTY_LICENSES.txt',sections.join('\n\n')+'\n');
