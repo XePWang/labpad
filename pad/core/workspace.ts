@@ -4,7 +4,7 @@ import {ConfigError} from '../shared/lpmake';
 import {mkdir,readFile,readdir,lstat,rename,rm,writeFile,mkdtemp} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import writeFileAtomic from 'write-file-atomic';
 import {workspacePath,workspaceTemplate,parseWorkspacePackage,uniquePaths,type WorkspaceState,type WorkspaceFile,type WorkspaceSnapshot} from '../shared/workspace';
 import {defaultProblem,defaultSource,defaultConfig} from '../shared/defaults';import {filePart,validateProblem} from '../shared/validate';import type {LoadedDraft,Draft,Language,Problem} from '../shared/types';
-import {decodeText,readJSON,exists,writeSource} from './storage';
+import {decodeText,readJSON,exists,sourceBytes} from './storage';
 export class WorkspaceStore{
  private tail:Promise<unknown>=Promise.resolve();
  constructor(readonly dataRoot:string){}
@@ -25,7 +25,7 @@ export class WorkspaceStore{
  }
  private async commitSource(lab:string,target:string,source:string,state:WorkspaceState){
   const oldSource=await readFile(target),oldMetadata=await readFile(this.metadata(lab));
-  try{if(!oldSource.equals(Buffer.from(source,'utf8')))await writeSource(target,source);await this.write(lab,state);}
+  try{const bytes=sourceBytes(source,decodeText(oldSource).encoding);if(!oldSource.equals(bytes))await writeFileAtomic(target,bytes);await this.write(lab,state);}
   catch(error){
    const restore=async(file:string,original:Buffer)=>{const current=await readFile(file).catch(()=>undefined);if(!current?.equals(original))await writeFileAtomic(file,original);};
    const restored=await Promise.allSettled([restore(target,oldSource),restore(this.metadata(lab),oldMetadata)]);
@@ -84,7 +84,12 @@ export class WorkspaceStore{
  }
  async snapshot(lab:string,buffers:Draft[]=[]):Promise<WorkspaceSnapshot>{
   const state=await this.read(lab),snapshot=await directorySnapshot(this.root(lab)),files=snapshot.files;
-  for(const d of buffers)if(d.problem.labId===lab&&d.file){workspacePath(d.file);if(!Object.hasOwn(files,d.file))throw new Error('编辑文件已不存在：'+d.file);files[d.file]=d.source;}
+  for(const d of buffers)if(d.problem.labId===lab&&d.file){
+   workspacePath(d.file);
+   if(Object.hasOwn(files,d.file))files[d.file]=d.source;
+   else if(Object.hasOwn(snapshot.binaryFiles??{},d.file))snapshot.binaryFiles![d.file]=sourceBytes(d.source,decodeText(Buffer.from(snapshot.binaryFiles![d.file],'base64')).encoding).toString('base64');
+   else if(!await exists(await this.path(lab,d.file,true)))throw new Error('编辑文件已不存在：'+d.file);
+  }
   return {...snapshot,files,...(state.inheritDefaults===true?{inheritDefaults:true}:{})};
  }
  async save(draft:Draft){

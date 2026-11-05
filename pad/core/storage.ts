@@ -23,15 +23,16 @@ export function decodeText(bytes:Buffer):{text:string;encoding:string}{
  try{return {text:new TextDecoder('utf-8',{fatal:true}).decode(bytes),encoding:bytes.subarray(0,3).equals(Buffer.from([239,187,191]))?'UTF-8 BOM':'UTF-8'};}
  catch{const text=iconv.decode(bytes,'cp936');if(!iconv.encode(text,'cp936').equals(bytes))throw new Error('无法完整识别文件编码，请先将文件另存为 UTF-8');return {text,encoding:'GBK / CP936'};}
 }
-export async function writeSource(file:string,source:string,encoding='UTF-8'){
+export function sourceBytes(source:string,encoding='UTF-8'){
  const text=source.replace(/^\uFEFF/,''),codec=encoding==='GBK / CP936'?'cp936':encoding==='UTF-16 LE'?'utf16le':encoding==='UTF-16 BE'?'utf16be':'utf8';
  let bytes=iconv.encode(text,codec);
  if(codec==='cp936'&&iconv.decode(bytes,codec)!==text)throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
  if(encoding==='UTF-8 BOM')bytes=Buffer.concat([Buffer.from([239,187,191]),bytes]);
  if(encoding==='UTF-16 LE')bytes=Buffer.concat([Buffer.from([255,254]),bytes]);
  if(encoding==='UTF-16 BE')bytes=Buffer.concat([Buffer.from([254,255]),bytes]);
- await writeFileAtomic(file,bytes);
+ return bytes;
 }
+export async function writeSource(file:string,source:string,encoding='UTF-8'){await writeFileAtomic(file,sourceBytes(source,encoding));}
 export async function readJSON(file:string):Promise<unknown>{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await readFile(file)).replace(/^\uFEFF/,''));}
 export async function exists(file:string){try{await access(file);return true;}catch(e:any){if(e.code==='ENOENT')return false;throw e;}}
 export function exportName(draft:Draft,studentId:string){
@@ -415,10 +416,10 @@ export class Storage{
 
  async sourceSnapshot(draft:Draft,buffers:Draft[]=[]){
   const root=this.paths(draft.problem.labId,draft.problem.problemId,'c').dir,snapshot=await directorySnapshot(root),meta=await this.readState(draft.problem.labId,draft.problem.problemId?'_':'');
-  for(const id of Object.keys(meta.problems))delete snapshot.files[(id||'空项目')+'.json'];
+  for(const id of Object.keys(meta.problems)){delete snapshot.files[(id||'空项目')+'.json'];delete snapshot.binaryFiles?.[(id||'空项目')+'.json'];}
   const state=this.stateFor(meta,draft.problem.problemId,draft.language),version=state.documents?.find(v=>v.id===draft.documentId),file=version?.file??path.basename(this.paths(draft.problem.labId,draft.problem.problemId,draft.language).source);
   snapshot.files[file]=draft.source;
-  for(const buffer of buffers)if(buffer.auxiliary&&buffer.file&&Object.hasOwn(snapshot.files,buffer.file))snapshot.files[buffer.file]=buffer.source;
+  for(const buffer of buffers)if(buffer.auxiliary&&buffer.file){if(Object.hasOwn(snapshot.files,buffer.file))snapshot.files[buffer.file]=buffer.source;else if(Object.hasOwn(snapshot.binaryFiles??{},buffer.file))snapshot.binaryFiles![buffer.file]=sourceBytes(buffer.source,decodeText(Buffer.from(snapshot.binaryFiles![buffer.file],'base64')).encoding).toString('base64');}
   const versions=new Set(Object.entries(meta.problems).flatMap(([id,state])=>[(id||'空项目')+'.c',(id||'空项目')+'.cpp',...(state.documents??[]).map(version=>version.file)])),required=new Set<string>([file]);
   const scan=(name:string,seen=new Set<string>())=>{if(seen.has(name))return false;seen.add(name);const text=snapshot.files[name]??'';let dynamic=false;
    for(const match of text.matchAll(/^\s*#\s*include\b\s*([^\n]+)/gm)){const token=match[1].trim(),literal=/^[<"]([^>"]+)[>"]/.exec(token);if(!literal){dynamic=true;continue;}const included=literal[1].replaceAll('\\','/'),relative=path.posix.normalize(path.posix.join(path.posix.dirname(name),included));

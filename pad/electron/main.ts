@@ -1,4 +1,4 @@
-import {directorySnapshot} from '../core/workspace-files';
+import {directorySnapshot,hasUnsavedSnapshotFiles} from '../core/workspace-files';
 import {createHash} from 'node:crypto';
 import {NativeDebugger} from '../core/debug/session';
 import {CommandTerminal} from '../core/terminal';
@@ -105,7 +105,7 @@ async function savedBuildInput(value:Draft){
  await saves;const d=await targetInput(value);let saved=true;delete d.sourceFiles;
  if(await storage.workspace.isProject(d.problem.labId)){
   d.workspace=await storage.workspace.snapshot(d.problem.labId,[]);
-  for(const buffer of openBuffers)if(buffer.problem.labId===d.problem.labId&&buffer.file&&d.workspace.files[buffer.file]!==buffer.source)saved=false;
+  if(hasUnsavedSnapshotFiles(d.workspace,openBuffers.filter(buffer=>buffer.problem.labId===d.problem.labId)))saved=false;
   if(d.file)d.source=d.workspace.files[d.file]??'';
  }else{
   const state=await storage.projectState(d.problem.labId,d.problem.problemId,d.language),version=state.documents?.find(v=>v.id===d.documentId);
@@ -115,7 +115,7 @@ async function savedBuildInput(value:Draft){
    const data=await storage.sourceSnapshot(d);d.sourceFiles=data.snapshot;d.file=data.file;
    for(const buffer of openBuffers)if(buffer.problem.labId===d.problem.labId){
     if(buffer.documentId===d.documentId&&buffer.source!==d.source)saved=false;
-    if(buffer.auxiliary&&buffer.file&&data.snapshot.files[buffer.file]!==buffer.source)saved=false;
+    if(buffer.auxiliary&&hasUnsavedSnapshotFiles(data.snapshot,[buffer]))saved=false;
    }
  }
  return {draft:d,saved};
@@ -196,7 +196,7 @@ async function confirmUnsaved(){
  return (['save','discard','cancel'] as const)[result.response];
 }
 async function startDebug(value:Draft){
- requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');const d=context.draft,program=compiledProgram.require(context.key),settings={...structuredClone(config),compiler:context.options},abort=new AbortController();controller=abort;
+ requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存参与编译的文件，再编译。');const d=context.draft,program=compiledProgram.require(context.key),settings={...structuredClone(config),compiler:context.options},abort=new AbortController();controller=abort;
  
  let outcome:DebugState|undefined;
  const task=(async()=>{
@@ -577,16 +577,16 @@ handle('workspace:file',async(lab:string,action:string,file:string,target?:strin
   if(!await exists(file))throw new Error('请先保存当前题目，再打开题目文件');shell.showItemInFolder(file);
  });
  handle('compile:state',async(value:Draft)=>{let saved=false;try{saved=(await savedBuildInput(value)).saved;const context=await programContext(value);return {saved,ready:saved&&compiledProgram.matches(context.key)};}catch{return {saved,ready:false};}});
- handle('compile:confirm',async()=>{const result=await messageBox({type:'question',title:'保存后编译',message:'源码或构建配置尚未保存。',detail:'编译使用已保存的文件。',buttons:['保存并编译','取消'],defaultId:0,cancelId:1,noLink:true});return result.response===0;});
+ handle('compile:confirm',async()=>{const result=await messageBox({type:'question',title:'保存后编译',message:'有未保存的修改。',detail:'编译使用已保存的文件。',buttons:['保存并编译','取消'],defaultId:0,cancelId:1,noLink:true});return result.response===0;});
  handle('compile',async(value:Draft)=>{
   requireIdle();await stopWarmup();requireIdle();await compiledProgram.clear();const context=await programContext(value);
-  if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');
+  if(!context.saved)throw new Error('请先保存参与编译的文件，再编译。');
   const abort=new AbortController();controller=abort;
   const task=compiledProgram.compile(context.key,context.draft,context.options,abort.signal);active=task;
   try{const result=await task;judgeEvent({type:'compilation',compilation:result});return result;}finally{if(active===task){active=undefined;controller=undefined;}}
  });
  handle('judge',async(value:Draft,ids?:string[])=>{
-  requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存源码与构建配置，再编译。');const d=context.draft,options=context.options,program=compiledProgram.require(context.key),abort=new AbortController();controller=abort;
+  requireIdle();const context=await programContext(value);if(!context.saved)throw new Error('请先保存参与编译的文件，再编译。');const d=context.draft,options=context.options,program=compiledProgram.require(context.key),abort=new AbortController();controller=abort;
   const task=(async()=>{
    const hash=fingerprint(d,options,await inputIdentity(d,options));
    const previous=await storedCheck(storage,d);

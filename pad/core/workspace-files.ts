@@ -11,6 +11,15 @@ export function snapshotBytes(entries:Record<string,Buffer>):WorkspaceSnapshot{
  }
  return {files,...(Object.keys(binaryFiles).length?{binaryFiles}:{})};
 }
+export function hasUnsavedSnapshotFiles(snapshot:WorkspaceSnapshot,buffers:{file?:string;source:string}[]){
+ for(const {file,source}of buffers){
+  if(!file)continue;
+  if(Object.hasOwn(snapshot.files,file)){if(snapshot.files[file]!==source)return true;}
+  else if(Object.hasOwn(snapshot.binaryFiles??{},file)&&decodeText(Buffer.from(snapshot.binaryFiles![file],'base64')).text!==source)return true;
+ }
+ return false;
+}
+
 export function snapshotEntries(snapshot:WorkspaceSnapshot):Record<string,Buffer>{
  uniquePaths([...Object.keys(snapshot.files),...Object.keys(snapshot.binaryFiles??{})].filter(name=>name!=='labpad.project.json'));
  const entries=Object.fromEntries(Object.entries(snapshot.files).map(([name,text])=>[name,Buffer.from(text,'utf8')]));
