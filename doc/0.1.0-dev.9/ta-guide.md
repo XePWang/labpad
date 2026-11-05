@@ -57,6 +57,8 @@ labId 是实验项目名，problemId 是题号。列表按 problems 顺序显示
 
 示例见 [dual-templates.project.json](../../examples/dual-templates.project.json)。多文件项目也可在顶层提供 templates，用于工具栏“新建源码”；文件树的通用新建文件从空白开始。附带配置的导出包保留两种模板，重新导入后仍可分别新建。
 
+题集按当前源码版本编译；项目由 LPMake.txt 组织构建。文件区可同时查看源码、题目 JSON 与构建日志。手工编辑题目 JSON 后，保存并点击“重新加载”读取新规则。
+
 桌面顶部“编译”与测试点运行是两个动作；CLI judge / grade 仍一次完成编译与送测。新配置统一使用 C17 / C++20；题集和项目的缺省语言标准保持一致。教师显式设置的旧标准继续生效，已有用户配置不自动改写。
 
 ## 3. 多文件项目 JSON 与 LPMake
