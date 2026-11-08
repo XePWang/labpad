@@ -4,7 +4,7 @@
 
 ## 实测结果
 
-以下四套真实工具链均完成 16 组功能验证。测试在 Windows/Linux 原生应用中设置独立编译器路径，通过编辑器保存源码，按 F9 编译，确认实际执行的命令使用所选 C/C++ 编译器。送测、导出和部分调试步骤通过应用 IPC 驱动，终端文本按 Xterm 的实际显示检查。
+以下四套真实工具链均在加入中英界面与紧凑工具栏后的最终发布包上完成 16 组功能验证。测试在 Windows/Linux 原生应用中设置独立编译器路径，通过编辑器保存源码，按 F9 编译，确认实际执行的命令使用所选 C/C++ 编译器。送测、导出和部分调试步骤通过应用 IPC 驱动，终端文本按 Xterm 的实际显示检查。
 
 | 平台 | 工具链 | 结果 |
 | --- | --- | --- |
@@ -50,4 +50,4 @@
 
 自定义编译器必须具有目标平台所需的头文件、链接器和运行库，并与本机架构匹配。当前矩阵覆盖 GNU/Linux 与 MinGW-w64 目标；macOS 自定义编译器没有实机验证。
 
-仓库入口为 pad/tests/ui/rc1-toolchains.spec.ts。LABPAD_TEST_TOOLCHAINS 传入工具链数组，每项包含 name、kind、cPath、cppPath；kind 为 gcc 或 clang。使用实际打包程序运行，保持每套工具链独立数据目录。原生日志、每组检查清单、原始安装路径失败及命令对照保存在 .work/rc1-final-audit。
+仓库入口为 pad/tests/ui/rc1-toolchains.spec.ts。LABPAD_TEST_TOOLCHAINS 传入工具链数组，每项包含 name、kind、cPath、cppPath；kind 为 gcc 或 clang。使用实际打包程序运行，保持每套工具链独立数据目录。原始安装路径失败、命令对照与首轮日志保存在 .work/rc1-final-audit；最终发布包复验日志为 .work/rc1-localization/release-toolchains-linux.log 和 release-toolchains-windows.log。

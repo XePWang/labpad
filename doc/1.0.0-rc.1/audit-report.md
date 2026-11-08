@@ -136,3 +136,6 @@ Linux 与 Windows 均操作真实设置页面，连续四轮切换、两个缓�
 
 
 新增紧凑窗口和诊断检查的原始基线在 new-baselines.log；查找面板零高度记录在 new-expanded.log。最终双端回归与错误输出结构见 [验证记录](verification.md)、[错误输出示例](diagnostic-examples.md)。
+
+
+本轮后续加入中英界面与紧凑工具栏，新增问题与验证记录见 [双语与紧凑布局核验](localization-verification.md)；最终发布包结果见 [验证记录](verification.md)。
