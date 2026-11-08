@@ -909,7 +909,7 @@ async function previewBuild(source: string) {
   return api.buildPreview({ ...snapshot(), file: 'LPMake.txt', source });
 }
 async function previewParameters(options: ProjectBuildOptions) {
-  return api.buildPreview(snapshot(), options, clone(settings.value!.compiler));
+  return api.buildPreview(snapshot(), clone(options), clone(settings.value!.compiler));
 }
 async function editSettingsBuild() {
   buildReturnFocus = document.activeElement as HTMLElement;

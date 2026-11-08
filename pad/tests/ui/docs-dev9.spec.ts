@@ -116,6 +116,8 @@ test('dev9 guide screenshots', async () => {
     const settings = page.getByRole('dialog', { name: '设置', exact: true });
     await settings.locator('summary').filter({ hasText: '高级编译参数' }).click();
     await settings.locator('.parameter-settings').scrollIntoViewIfNeeded();
+    await expect(settings.locator('.parameter-preview')).toContainText('C · main.c');
+    await expect(settings.locator('.source-diagnostic')).toHaveCount(0);
     await shot('dev9-settings');
     await settings.getByRole('combobox', { name: '主题', exact: true }).selectOption('light');
     await settings.getByRole('button', { name: '保存设置', exact: true }).click();
