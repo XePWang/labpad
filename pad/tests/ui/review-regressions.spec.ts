@@ -1,0 +1,87 @@
+import { test, expect, _electron } from '@playwright/test';
+import { withFixtures } from './legacy-flow.cjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+test('explicit target compiles B after activation persistence fails and an auxiliary tab is selected', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-target-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: any[]) => {
+        const options = args.at(-1);
+        return {
+          response: Math.max(0, options.buttons.indexOf('保存并编译')),
+          checkboxChecked: false,
+        };
+      };
+    });
+    const source = await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      if (navigator.platform.includes('Linux'))
+        state.config.compiler = {
+          ...state.config.compiler,
+          mode: 'custom',
+          kind: 'gcc',
+          cPath: '/usr/bin/gcc',
+          cppPath: '/usr/bin/g++',
+        };
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('TargetFixture', 'problem-set');
+      let a = await window.labpad.createProblem('TargetFixture', 'one', 'c');
+      a.source = '#include <stdio.h>\nint main(void){puts("A");return 0;}\n';
+      a.problem.testCases = [{ id: 'one', input: '', expectedOutput: 'B\n' }];
+      await window.labpad.saveDraft(a);
+      a = await window.labpad.loadDraft('TargetFixture', 'one', 'c');
+      const b = await window.labpad.newVersion(
+        { ...a, source: a.source.replace('"A"', '"B"') },
+        false,
+      );
+      await window.labpad.activateDocument(a.documentId!);
+      await window.labpad.loadDraft('TargetFixture', 'one', 'c');
+      await window.labpad.fileOperation('TargetFixture', 'one', {
+        action: 'newFile',
+        paths: ['helper.h'],
+        content: '// header\n',
+      });
+      return { file: b.file!, id: b.documentId! };
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('document:activate');
+      handlers.set('document:activate', (...args: any[]) => {
+        handlers.set('document:activate', original);
+        throw Error('Injected activation write failure');
+      });
+    });
+    await page.locator('.source-tab').filter({ hasText: source.file }).click();
+    await expect(page.getByRole('alert')).toContainText('Injected activation write failure');
+    if (!(await page.locator('.file-tree').isVisible()))
+      await page.getByRole('button', { name: '显示文件', exact: true }).click();
+    await page.locator('.tree-file[data-file="helper.h"]').click();
+    await page.getByRole('button', { name: '编译', exact: true }).click();
+    const run = page.locator('.cases-heading .run-test-icon');
+    await expect(run).toBeEnabled({ timeout: 60000 });
+    const target = (await page.evaluate(() => window.labpad.bootstrap())).draft.target;
+    expect(target?.mode).toBe('problem-set');
+    expect(target?.mode === 'problem-set' && target.documentId).toBe(source.id);
+    await run.click();
+    await expect(page.locator('.verdict.ac')).toHaveCount(1);
+    await expect(page.locator('.actual-output')).toHaveText('B\n');
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

@@ -1,3 +1,4 @@
+import { isSourceFile, sourceLanguage, editorLanguage } from '../shared/file-language';
 import { defaultTypography } from '../shared/typography';
 import { directorySnapshot, managedBuild } from './workspace-files';
 import { FileService, under, type FileRequest, type FileChange } from './files';
@@ -533,7 +534,7 @@ export class Storage {
     file: string,
     forceCopy = false,
   ): Promise<LoadedDraft> {
-    const language: Language = path.extname(file).toLowerCase() === '.cpp' ? 'cpp' : 'c',
+    const language: Language = sourceLanguage(file) ?? 'c',
       decoded = decodeText(await readFile(file)),
       legacy = await this.load(labId, problemId, language);
     await this.openDocuments(labId, problemId, language);
@@ -1006,12 +1007,12 @@ export class Storage {
           if (change.from && !change.copied && under(version.file, change.from)) {
             if (!change.to) return [];
             const name = change.to + version.file.slice(change.from.length);
-            if (!/\.(c|cpp|cc|cxx)$/i.test(name)) return [];
+            if (!isSourceFile(name)) return [];
             return [
               {
                 ...version,
                 file: name,
-                language: (/\.c$/i.test(name) ? 'c' : 'cpp') as Language,
+                language: sourceLanguage(name)! as Language,
                 externalPath: undefined,
               },
             ];
@@ -1034,8 +1035,8 @@ export class Storage {
         for (const entry of await readdir(target)) await adopt(name + '/' + entry);
         return;
       }
-      if (!/\.(c|cpp|cc|cxx)$/i.test(name) || registered.has(name)) return;
-      const language: Language = /\.c$/i.test(name) ? 'c' : 'cpp';
+      if (!isSourceFile(name) || registered.has(name)) return;
+      const language: Language = sourceLanguage(name)!;
       current.documents!.push({
         id: randomUUID(),
         file: name,
@@ -1063,9 +1064,9 @@ export class Storage {
         request.action === 'newFile' &&
         request.content === undefined &&
         request.paths.length === 1 &&
-        /\.(c|cpp|cc|cxx)$/i.test(request.paths[0])
+        isSourceFile(request.paths[0])
       ) {
-        const language: Language = /\.c$/i.test(request.paths[0]) ? 'c' : 'cpp',
+        const language: Language = sourceLanguage(request.paths[0])!,
           project = await this.workspace.isProject(lab),
           template = project
             ? (await this.workspace.read(lab)).templates?.[language]
@@ -1076,6 +1077,45 @@ export class Storage {
       const service = await this.fileService(lab, problem, guard);
       return service.operate(value);
     });
+  }
+  async buildTarget(value: Draft, buffers: Draft[] = []): Promise<Draft> {
+    const draft = structuredClone(validateDraft(value));
+    const project = await this.workspace.isProject(draft.problem.labId);
+    if (draft.target && (draft.target.mode === 'project') !== project)
+      throw new Error('编译目标模式已改变，请重新选择实验。');
+    if (project) return draft;
+    const id =
+      draft.target?.mode === 'problem-set'
+        ? draft.target.documentId
+        : draft.auxiliary
+          ? undefined
+          : draft.documentId;
+    if (!id) {
+      if (draft.auxiliary) throw new Error('请先选择或新建一份 C / C++ 源码。');
+      return draft;
+    }
+    const { labId, problemId } = draft.problem;
+    const state = await this.projectState(labId, problemId, draft.language);
+    const version = state.documents?.find((document) => document.id === id);
+    if (!version || !isSourceFile(version.file))
+      throw new Error('目标源码已不存在或不属于当前题目，请重新选择源码。');
+    const source = await this.readDocument(labId, problemId, version, draft.problem);
+    if (!source.sourceFile || !(await exists(source.sourceFile)))
+      throw new Error('目标源码文件已不存在，请重新选择或导入源码。');
+    const buffer = [draft, ...buffers].find(
+      (item) =>
+        !item.auxiliary &&
+        item.documentId === id &&
+        item.problem.labId === labId &&
+        item.problem.problemId === problemId,
+    );
+    if (buffer?.file && buffer.file !== version.file)
+      throw new Error('目标源码路径已改变，请刷新文件后重试。');
+    return {
+      ...source,
+      source: buffer?.source ?? source.source,
+      target: { mode: 'problem-set', labId, problemId, documentId: id },
+    };
   }
   async openFile(
     lab: string,
@@ -1096,7 +1136,7 @@ export class Storage {
           const rule = (await this.load(lab, id, version.language)).problem;
           return this.readDocument(lab, id, version, rule);
         }
-    if (/\.(c|cpp|cc|cxx)$/i.test(name)) {
+    if (isSourceFile(name)) {
       await this.enqueue(() => this.reconcileSources(lab, problem, [{ to: name }]));
       return this.openFile(lab, problem, name, language);
     }
@@ -1116,7 +1156,7 @@ export class Storage {
       sourceFile: target,
       sourceEncoding: decoded.encoding,
       source: decoded.text,
-      language,
+      language: editorLanguage(name, language),
       problem: rule,
     };
   }

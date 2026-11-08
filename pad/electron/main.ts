@@ -1,3 +1,4 @@
+import { isCodeFile, isHeaderFile, isSourceFile, sourceExtensions } from '../shared/file-language';
 import { directorySnapshot, hasUnsavedSnapshotFiles } from '../core/workspace-files';
 import { createHash } from 'node:crypto';
 import { NativeDebugger } from '../core/debug/session';
@@ -267,13 +268,7 @@ async function draftOptions(d: Draft) {
   return compiler.forDraft(d, base);
 }
 async function targetInput(value: Draft) {
-  const d = structuredClone(validateDraft(value));
-  if (!d.auxiliary || (await storage.workspace.isProject(d.problem.labId))) return d;
-  const state = await storage.projectState(d.problem.labId, d.problem.problemId, d.language),
-    docs = await storage.openDocuments(d.problem.labId, d.problem.problemId, d.language),
-    source = docs.find((v) => v.documentId === state.activeDocumentId) ?? docs[0];
-  if (!source) throw new Error('请先选择或新建一份 C / C++ 源码。');
-  return { ...source, problem: d.problem };
+  return storage.buildTarget(value, openBuffers);
 }
 async function buildInput(value: Draft) {
   const d = await targetInput(value);
@@ -383,7 +378,7 @@ async function persist(value: Draft): Promise<SaveResult> {
     .then(async () => {
       if (snapshot.file && (await storage.workspace.isProject(snapshot.problem.labId))) {
         let formatWarning: string | undefined;
-        if (options.formatOnSave && /\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(snapshot.file))
+        if (options.formatOnSave && isCodeFile(snapshot.file))
           try {
             snapshot.source = await formatter.format(
               snapshot.source,
@@ -415,7 +410,7 @@ async function persist(value: Draft): Promise<SaveResult> {
           target = await service.resolve(snapshot.file);
         const encoding = (snapshot as LoadedDraft).sourceEncoding ?? 'UTF-8';
         let source = snapshot.source;
-        if (options.formatOnSave && /\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(snapshot.file))
+        if (options.formatOnSave && isCodeFile(snapshot.file))
           source = await formatter.format(source, snapshot.language, options.indentSize);
         await writeSource(target, source, encoding);
         return { path: target, source };
@@ -1266,7 +1261,7 @@ async function initialize() {
         includeDirs = parseMake(snapshot.files['LPMake.txt']).spec.includeDirs;
       } catch {}
     const files = Object.fromEntries(
-      Object.entries(snapshot.files).filter(([name]) => /\.(h|hpp|hh|hxx)$/i.test(name)),
+      Object.entries(snapshot.files).filter(([name]) => isHeaderFile(name)),
     );
     return { files, includeDirs };
   });
@@ -1836,7 +1831,7 @@ async function initialize() {
     const selected = await dialog.showOpenDialog(win, {
       title: '导入单文件源码',
       properties: ['openFile'],
-      filters: [{ name: 'C / C++ 源码', extensions: ['c', 'cpp'] }],
+      filters: [{ name: 'C / C++ 源码', extensions: sourceExtensions }],
     });
     if (selected.canceled) return null;
     const file = selected.filePaths[0];
@@ -1899,8 +1894,7 @@ async function initialize() {
         document,
       };
     }
-    if (!['.c', '.cpp'].includes(path.extname(file).toLowerCase()))
-      throw new Error('仅支持 .c / .cpp 单文件');
+    if (!isSourceFile(file)) throw new Error('请选择 C / C++ 源码文件');
     const document = await storage.importSource(config.currentLab, config.currentProblem, file);
     currentDocument = document;
     config = { ...config, sourceFile: null, language: document.language };

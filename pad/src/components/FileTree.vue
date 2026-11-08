@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isCodeFile } from '../../shared/file-language';
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import {
   TreeRoot,
@@ -615,7 +616,7 @@ defineExpose({
                         /><template v-else>{{
                           row.file.path.split('/').pop() === 'LPMake.txt'
                             ? '⚙'
-                            : /\.(c|cpp|cc|cxx|h|hpp)$/i.test(row.file.path)
+                            : isCodeFile(row.file.path)
                               ? 'C'
                               : '·'
                         }}</template></span

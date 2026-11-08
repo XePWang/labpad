@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  isSourceFile,
+  isCodeFile,
+  editorLanguage as languageForFile,
+} from '../shared/file-language';
 import { DialogRoot, DialogContent, DialogTitle } from 'reka-ui';
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
 import { Splitpanes, Pane, type SplitpanesResizedPayload } from 'splitpanes';
@@ -235,13 +240,11 @@ const inactiveSource = computed(
   () =>
     workspaceMode.value &&
     draft.value?.file &&
-    /\.(c|cpp|cc|cxx)$/i.test(draft.value.file) &&
+    isSourceFile(draft.value.file) &&
     includedSources.value !== null &&
     !includedSources.value.includes(draft.value.file),
 );
-const canFormat = computed(
-  () => !draft.value?.file || /\.(c|cpp|cc|cxx|h|hpp|hh)$/i.test(draft.value.file),
-);
+const canFormat = computed(() => !draft.value?.file || isCodeFile(draft.value.file));
 let viewTimer: ReturnType<typeof setTimeout> | undefined;
 const rightCollapsed = ref(false),
   rightTab = ref<'tests' | 'debug'>('tests'),
@@ -696,7 +699,7 @@ async function commitTreeEdit(form: WorkspaceEdit) {
     action: form.action,
     paths: [form.action === 'rename' ? form.file : form.name],
     ...(form.action === 'rename' ? { destination: form.name } : {}),
-    ...(form.action === 'newFile' && !/\.(c|cpp|cc|cxx)$/i.test(form.name) ? { content: '' } : {}),
+    ...(form.action === 'newFile' && !isSourceFile(form.name) ? { content: '' } : {}),
   });
   if (changed !== make) {
     let makeTab = tabs.value.find((t) => t.document.file === 'LPMake.txt');
@@ -818,7 +821,36 @@ let pauseSave = true,
   saveTail: Promise<unknown> = Promise.resolve(),
   saveTimer: ReturnType<typeof setTimeout> | undefined;
 const disposers: (() => void)[] = [];
-const snapshot = () => clone(draft.value!);
+const targetSourceId = ref<string>();
+const editorLanguage = computed(() => {
+  let forced: 'c' | 'cpp' | undefined;
+  if (workspaceMode.value) {
+    const make = tabs.value.find((tab) => tab.document.file === 'LPMake.txt');
+    try {
+      forced = parse(make?.document.source ?? '').spec.language;
+    } catch {}
+  }
+  const target = tabs.value.find((tab) => tab.id === targetSourceId.value)?.document;
+  return languageForFile(
+    draft.value?.file,
+    target?.language ?? draft.value?.language ?? 'c',
+    forced,
+  );
+});
+const snapshot = (): Draft => {
+  const value = clone(draft.value!);
+  if (isCodeFile(value.file ?? '')) value.language = editorLanguage.value;
+  if (workspaceMode.value) value.target = { mode: 'project', labId: value.problem.labId };
+  else if (targetSourceId.value)
+    value.target = {
+      mode: 'problem-set',
+      labId: value.problem.labId,
+      problemId: value.problem.problemId,
+      documentId: targetSourceId.value,
+    };
+  else delete value.target;
+  return value;
+};
 const passed = computed(
   () => Object.values(results.value).filter((c) => c.verdict === 'AC').length,
 );
@@ -926,12 +958,10 @@ async function refreshChecks() {
 function locateFailed() {
   const index = draft.value!.problem.testCases.findIndex((t) => failedIds.value.includes(t.id));
   if (index >= 0)
-    document
-      .getElementById('test-case-' + index)
-      ?.scrollIntoView({
-        block: 'nearest',
-        behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
-      });
+    document.getElementById('test-case-' + index)?.scrollIntoView({
+      block: 'nearest',
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    });
 }
 async function recentSource() {
   const document = await api.recentSource(
@@ -1057,6 +1087,11 @@ function replaceDraft(
     revision: 0,
     status: '已保存',
   }));
+  targetSourceId.value = !value.auxiliary
+    ? value.documentId
+    : value.target?.mode === 'problem-set'
+      ? value.target.documentId
+      : documents.find((document) => !document.auxiliary)?.documentId;
   activeId.value = value.documentId ?? tabs.value[0]?.id ?? '';
   documentEpoch.value = activeId.value;
   draft.value = { ...clone(value), documentId: activeId.value };
@@ -1093,6 +1128,7 @@ function activateTab(id: string, focus = true) {
   pauseSave = true;
   const problem = clone(draft.value!.problem);
   activeId.value = id;
+  if (!tab.document.auxiliary) targetSourceId.value = id;
   draft.value = { ...clone(tab.document), problem };
   sourcePath.value = tab.document.sourceFile ?? null;
   documentEpoch.value = id;
@@ -1395,14 +1431,10 @@ async function formatCode() {
   formatting.value = true;
   const id = revision,
     size = config.value!.indentSize,
-    language = draft.value!.language;
+    language = editorLanguage.value;
   try {
     const formatted = await api.formatCode(draft.value!.source, language, size);
-    if (
-      id !== revision ||
-      size !== config.value!.indentSize ||
-      language !== draft.value!.language
-    ) {
+    if (id !== revision || size !== config.value!.indentSize || language !== editorLanguage.value) {
       notice.value = '代码或缩进设置已改变，请重新格式化';
       return;
     }
@@ -1490,13 +1522,7 @@ function showCompilation(c: Compilation) {
 const compileDirty = computed(() =>
   workspaceMode.value
     ? tabs.value.some((t) => t.dirty)
-    : tabs.value.some(
-        (t) =>
-          t.dirty &&
-          (t.document.auxiliary ||
-            t.id === activeId.value ||
-            (activeTab.value?.document.auxiliary && !t.document.auxiliary)),
-      ),
+    : tabs.value.some((t) => t.dirty && (t.document.auxiliary || t.id === targetSourceId.value)),
 );
 async function compile() {
   clearTimeout(saveTimer);
@@ -1649,7 +1675,7 @@ async function saveSettings() {
       oldRoot = dataRoot.value,
       oldCompiler = compilerLabel.value;
     const languageChanged =
-      !workspaceMode.value && settings.value!.language !== draft.value!.language;
+      !workspaceMode.value && settings.value!.language !== editorLanguage.value;
     const reloadNeeded = settingsRoot.value !== dataRoot.value || languageChanged;
     if (reloadNeeded && !(await beforeChange())) return;
     const result = await api.saveConfig(
@@ -2385,7 +2411,7 @@ onBeforeUnmount(() => {
                       ref="editor"
                       v-model="draft.source"
                       :file="draft.file"
-                      :language="draft.language"
+                      :language="editorLanguage"
                       :completion-enabled="config.completionEnabled"
                       :completion-files="completionFiles"
                       :debug-enabled="workspaceMode"

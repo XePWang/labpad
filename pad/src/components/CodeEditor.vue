@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isCodeFile, isLpmake } from '../../shared/file-language';
 import { fallbackTextStyle, type TextStyle } from '../typography';
 import { Prec } from '@codemirror/state';
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
@@ -87,7 +88,8 @@ const lpLanguage = LRLanguage.define({
   languageData: { commentTokens: { line: '#', block: { open: '--[[', close: ']]' } } },
 });
 function language() {
-  return props.file?.split('/').pop() === 'LPMake.txt'
+  if (props.file && !isLpmake(props.file) && !isCodeFile(props.file)) return [];
+  return isLpmake(props.file ?? '')
     ? new LanguageSupport(lpLanguage, [
         lpLanguage.data.of({
           autocomplete: (context: any) => {
@@ -166,8 +168,8 @@ function debugExtensions() {
 function completions() {
   if (
     props.completionEnabled === false ||
-    props.file?.split('/').pop() === 'LPMake.txt' ||
-    (props.file && !/\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(props.file))
+    isLpmake(props.file ?? '') ||
+    (props.file && !isCodeFile(props.file))
   )
     return [];
   return completionExtension((context) =>

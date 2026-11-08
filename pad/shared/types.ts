@@ -73,7 +73,12 @@ export interface Config {
   zoomFactor: number;
   shortcuts: Record<string, string[]>;
 }
+export type BuildTarget =
+  | { mode: 'problem-set'; labId: string; problemId: string; documentId: string }
+  | { mode: 'project'; labId: string };
 export interface Draft {
+  /** Explicit execution target; auxiliary editor tabs do not change it. */
+  target?: BuildTarget;
   sourceFiles?: WorkspaceSnapshot;
   auxiliary?: boolean;
   file?: string;
@@ -328,9 +333,7 @@ export interface Bridge {
   compilerInfo(config: CompilerConfig): Promise<string>;
   detectCompilers(): Promise<DetectedCompiler[]>;
   saveLayout(layout: LayoutConfig): Promise<LayoutConfig>;
-  importSource(
-    destination?: string,
-  ): Promise<{
+  importSource(destination?: string): Promise<{
     source: string;
     language: Language;
     encoding: string;

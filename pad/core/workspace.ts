@@ -1,6 +1,7 @@
+import { isSourceFile, isCodeFile, editorLanguage } from '../shared/file-language';
 import { directorySnapshot } from './workspace-files';
 import { independentMake } from './build/plan';
-import { ConfigError } from '../shared/lpmake';
+import { ConfigError, parse } from '../shared/lpmake';
 import { mkdir, readFile, readdir, lstat, rename, rm, writeFile, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -173,16 +174,14 @@ export class WorkspaceStore {
           'utf8',
         );
       }
-      const first = Object.keys(files).find((f) => /\.(c|cpp|cc|cxx)$/i.test(f)) ?? 'LPMake.txt';
+      const first = Object.keys(files).find((f) => isSourceFile(f)) ?? 'LPMake.txt';
       const state: WorkspaceState = {
         schemaVersion: 2,
         mode: 'project',
         labId: lab,
         tests: { ...(pkg?.tests ?? defaultProblem(lab, '')), labId: lab, problemId: '' },
         templates: pkg?.templates,
-        starters: Object.fromEntries(
-          Object.entries(files).filter(([f]) => /\.(c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(f)),
-        ),
+        starters: Object.fromEntries(Object.entries(files).filter(([f]) => isCodeFile(f))),
         activeFile: first,
         openFiles: [first],
         expanded: [],
@@ -210,6 +209,12 @@ export class WorkspaceStore {
     )
       throw Error('这是二进制文件，请在文件管理器中查看。');
     const decoded = decodeText(bytes);
+    let forced: Language | undefined;
+    try {
+      forced = parse(await readFile(await this.path(lab, 'LPMake.txt'), 'utf8')).spec.language;
+    } catch {
+      /* A broken build configuration must remain editable. */
+    }
     return {
       file,
       documentId: 'file:' + file,
@@ -217,7 +222,7 @@ export class WorkspaceStore {
       sourceFile: target,
       sourceEncoding: decoded.encoding,
       source: decoded.text,
-      language: /\.(cpp|cc|cxx|hpp|hh)$/i.test(file) ? 'cpp' : 'c',
+      language: editorLanguage(file, 'c', forced),
       problem: state.tests,
     };
   }
