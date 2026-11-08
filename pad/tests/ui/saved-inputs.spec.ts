@@ -111,19 +111,45 @@ for (const language of ['c', 'cpp'] as const)
       await ready.click();
       await expect(page.locator('.verdict.ac')).toHaveCount(1);
 
+      await expect(compileButton).toBeEnabled();
       // The current JSON is an auxiliary editor document, not a C translation unit.
       await page.locator('.source-tabs [role=tab]').filter({ hasText: 'warmup 2-1.json' }).click();
+      await expect(page.locator('.source-tab.active')).toContainText('warmup 2-1.json');
       await compile();
+      await app.evaluate(({ ipcMain }) => {
+        const handlers = (ipcMain as any)._invokeHandlers;
+        const original = handlers.get('judge');
+        (globalThis as any).__saveJudgeHeld = false;
+        handlers.set('judge', async (...args: any[]) => {
+          const result = await original(...args);
+          (globalThis as any).__saveJudgeHeld = true;
+          await new Promise<void>((resolve) => {
+            (globalThis as any).__releaseSaveJudge = resolve;
+          });
+          handlers.set('judge', original);
+          return result;
+        });
+      });
       await ready.click();
       await expect(page.locator('.verdict.ac')).toHaveCount(1);
       console.log(
         'PASS compiling while the rule JSON tab is active resolves the current saved C version',
       );
 
-      await page
+      await expect.poll(() => app.evaluate(() => (globalThis as any).__saveJudgeHeld)).toBe(true);
+      await expect(compileButton).toBeDisabled();
+      const sourceTab = page
         .locator('.source-tabs [role=tab]')
-        .filter({ hasText: 'Lab 2-2.' + language })
-        .click();
+        .filter({ hasText: 'Lab 2-2.' + language });
+      await sourceTab.dispatchEvent('click');
+      await expect(page.locator('.source-tab.active')).toContainText('warmup 2-1.json');
+      console.log(
+        'PASS an AC event does not unlock file selection before the judge response; the JSON tab stays active',
+      );
+      await app.evaluate(() => (globalThis as any).__releaseSaveJudge());
+      await expect(compileButton).toBeEnabled();
+      await sourceTab.click();
+      await expect(page.locator('.source-tab.active')).toContainText('Lab 2-2.' + language);
       await page.evaluate(async () => {
         const s = await window.labpad.bootstrap();
         s.config.formatOnSave = true;
@@ -135,7 +161,25 @@ for (const language of ['c', 'cpp'] as const)
       );
       await page.getByRole('button', { name: '保存', exact: true }).click();
       await page.getByRole('menuitem', { name: '保存当前', exact: true }).click();
-      await expect(page.locator('.source-tab.active .tab-dirty')).toHaveCount(0);
+      try {
+        await expect(page.locator('.source-tab.active .tab-dirty')).toHaveCount(0);
+      } catch (failure) {
+        const state = await page.evaluate(() => window.labpad.bootstrap());
+        console.log(
+          'SAVE_FAILURE_STATE',
+          JSON.stringify({
+            language,
+            alerts: await page.getByRole('alert').allTextContents(),
+            tabs: await page.locator('.source-tab').allTextContents(),
+            phase: await page.locator('.phase').textContent(),
+            format: await page.locator('.format-button').textContent(),
+            editor: await editor.textContent(),
+            savedSource: state.draft.source,
+            documentId: state.draft.documentId,
+          }),
+        );
+        throw failure;
+      }
       await compile();
       await ready.click();
       await expect(page.locator('.verdict.ac')).toHaveCount(1);
@@ -162,6 +206,7 @@ for (const language of ['c', 'cpp'] as const)
         'PASS save-and-compile saves once and compiles; cancel starts no compiler and changes no file',
       );
     } finally {
+      await app.evaluate(() => (globalThis as any).__releaseSaveJudge?.()).catch(() => {});
       await app
         .evaluate(({ dialog }) => {
           dialog.showMessageBox = async (...args: any[]) => {
