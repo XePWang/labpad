@@ -373,7 +373,8 @@ async function workspaceBootstrap() {
   }
   if (currentDocument?.file && currentDocument.problem.labId === lab) {
     const current = currentDocument;
-    draft = { ...draft, ...current };
+    const fresh = await storage.workspace.open(lab, current.file!);
+    draft = { ...fresh, source: current.source, problem: current.problem, target: current.target };
     const index = documents.findIndex((d) => d.file === current.file);
     if (index >= 0) documents[index] = draft;
     else documents.push(draft);
@@ -1268,14 +1269,19 @@ async function initialize() {
     const service = await storage.fileService(lab, problem),
       snapshot = await directorySnapshot(service.root);
     let includeDirs = ['.'];
+    let forcedLanguage: Language | undefined;
     if (snapshot.files['LPMake.txt'])
       try {
-        includeDirs = parseMake(snapshot.files['LPMake.txt']).spec.includeDirs;
+        const spec = parseMake(snapshot.files['LPMake.txt']).spec;
+        includeDirs = spec.includeDirs;
+        forcedLanguage = spec.language;
       } catch {}
     const files = Object.fromEntries(
       Object.entries(snapshot.files).filter(([name]) => isHeaderFile(name)),
     );
-    return { files, includeDirs };
+    for (const [name, bytes] of Object.entries(snapshot.binaryFiles ?? {}))
+      if (isHeaderFile(name)) files[name] = decodeText(Buffer.from(bytes, 'base64')).text;
+    return { scope: service.root, files, includeDirs, forcedLanguage };
   });
   handle('files:context', async (lab: string, problem: string, files: string[], action: string) => {
     const service = await storage.fileService(lab, problem),

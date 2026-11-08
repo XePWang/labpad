@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { CompletionFiles } from '../shared/types';
+import { isHeaderFile } from '../shared/file-language';
 import {
   idle,
   finish,
@@ -339,17 +341,18 @@ const executionLine = computed(() =>
 const conditionDialog = ref<{ path: string; line: number; value: string }>();
 let debugPrefsTimer: ReturnType<typeof setTimeout> | undefined,
   loadingDebugPrefs = false;
-const completionContext = ref<{ files: Record<string, string>; includeDirs: string[] }>({
+const completionContext = ref<CompletionFiles>({
   files: {},
   includeDirs: ['.'],
 });
 let completionTimer: ReturnType<typeof setTimeout> | undefined;
 const completionFiles = computed(() => ({
+  ...completionContext.value,
   files: {
     ...completionContext.value.files,
     ...Object.fromEntries(
       tabs.value
-        .filter((t) => t.document.file && /\.(h|hpp|hh|hxx)$/i.test(t.document.file))
+        .filter((t) => t.document.file && isHeaderFile(t.document.file))
         .map((t) => [t.document.file!, t.document.source]),
     ),
   },
@@ -930,11 +933,11 @@ let pauseSave = true,
 const disposers: (() => void)[] = [];
 const targetSourceId = ref<string>();
 const editorLanguage = computed(() => {
-  let forced: 'c' | 'cpp' | undefined;
+  let forced = workspaceMode.value ? completionContext.value.forcedLanguage : undefined;
   if (workspaceMode.value) {
     const make = tabs.value.find((tab) => tab.document.file === 'LPMake.txt');
     try {
-      forced = parse(make?.document.source ?? '').spec.language;
+      if (make) forced = parse(make.document.source).spec.language;
     } catch {}
   }
   const target = tabs.value.find((tab) => tab.id === targetSourceId.value)?.document;

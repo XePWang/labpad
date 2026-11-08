@@ -1,6 +1,7 @@
-import { syntaxTree } from '@codemirror/language';
+import { syntaxTree, ensureSyntaxTree } from '@codemirror/language';
+import { visibleDeclarations, declaredNames, includeDirectives, type Candidate } from './symbols';
+import type { Tree } from '@lezer/common';
 import { cppLanguage } from '@codemirror/lang-cpp';
-import type { SyntaxNode } from '@lezer/common';
 import {
   autocompletion,
   completionStatus,
@@ -20,10 +21,8 @@ import {
 import { keymap, ViewPlugin } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { indentMore, indentLess } from '@codemirror/commands';
-export interface CompletionFiles {
-  files: Record<string, string>;
-  includeDirs: string[];
-}
+import type { CompletionFiles } from '../../shared/types';
+export type { CompletionFiles } from '../../shared/types';
 const keywordsC =
   'auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while _Alignas _Alignof _Atomic _Bool _Complex _Generic _Imaginary _Noreturn _Static_assert _Thread_local'.split(
     ' ',
@@ -113,85 +112,8 @@ const standard: Record<string, string[]> = {
     'std::to_string(value)',
   ],
 };
-function scope(node: SyntaxNode) {
-  for (let p = node.parent; p; p = p.parent)
-    if (
-      [
-        'CompoundStatement',
-        'ForStatement',
-        'ClassSpecifier',
-        'StructSpecifier',
-        'NamespaceDefinition',
-      ].includes(p.name)
-    )
-      return p;
-  return undefined;
-}
-export function declarations(text: string, pos = text.length): Completion[] {
-  const tree = cppLanguage.parser.parse(text),
-    result: Completion[] = [];
-  tree.iterate({
-    enter(ref) {
-      const node = ref.node;
-      if (
-        !['Identifier', 'TypeIdentifier', 'FieldIdentifier'].includes(node.name) ||
-        node.from > pos
-      )
-        return;
-      let p = node.parent,
-        owner: SyntaxNode | undefined,
-        param = false;
-      while (p) {
-        if (/Expression$|ArgumentList|InitializerList|BinaryExpression|Number|String/.test(p.name))
-          return;
-        if (p.name === 'InitDeclarator' && node.from !== (p.firstChild?.from ?? -1)) return;
-        if (p.name === 'ParameterDeclaration') {
-          owner = p;
-          param = true;
-          break;
-        }
-        if (
-          ['Declaration', 'TypeDefinition', 'FunctionDefinition', 'Enumerator'].includes(p.name)
-        ) {
-          owner = p;
-          break;
-        }
-        if (
-          ['StructSpecifier', 'ClassSpecifier', 'EnumSpecifier'].includes(p.name) &&
-          p.getChild('TypeIdentifier')?.from === node.from
-        ) {
-          owner = p;
-          break;
-        }
-        p = p.parent;
-      }
-      if (!owner) return;
-      let boundary = scope(owner);
-      if (param) {
-        let f = owner.parent;
-        while (f && f.name !== 'FunctionDefinition') f = f.parent;
-        if (!f) return;
-        boundary = f;
-      }
-      if (boundary && (pos < boundary.from || pos > boundary.to)) return;
-      const label = text.slice(node.from, node.to);
-      if (!/^[A-Za-z_]\w*$/.test(label)) return;
-      const functionName =
-        (owner.name === 'FunctionDefinition' && !param) ||
-        node.parent?.name === 'FunctionDeclarator';
-      result.push({
-        label,
-        type: functionName ? 'function' : owner.name === 'TypeDefinition' ? 'type' : 'variable',
-        detail: text
-          .slice(owner.from, Math.min(owner.to, owner.from + 180))
-          .split('{')[0]
-          .trim(),
-      });
-    },
-  });
-  for (const match of text.slice(0, pos).matchAll(/^\s*#\s*define\s+([A-Za-z_]\w*)/gm))
-    result.push({ label: match[1], type: 'constant', detail: 'macro' });
-  return result;
+export function declarations(text: string, pos: number, tree: Tree): Completion[] {
+  return visibleDeclarations(tree, text, pos);
 }
 const normalize = (value: string) => {
   const parts: string[] = [];
@@ -204,63 +126,122 @@ const normalize = (value: string) => {
   }
   return parts.join('/');
 };
+const headerCache = new Map<
+  string,
+  { symbols: Candidate[]; includes: { name: string; quoted: boolean }[] }
+>();
+let cacheCharacters = 0,
+  cacheScope: string | undefined;
+function headerData(text: string) {
+  const cached = headerCache.get(text);
+  if (cached) {
+    headerCache.delete(text);
+    headerCache.set(text, cached);
+    return cached;
+  }
+  const tree = cppLanguage.parser.parse(text);
+  const entry = {
+    symbols: declaredNames(tree, text)
+      .filter((symbol) => !symbol.scope)
+      .map((symbol) => ({
+        label: symbol.qualified,
+        qualified: symbol.qualified,
+        type: symbol.type,
+        detail: symbol.detail,
+        boost: 1,
+      })),
+    includes: includeDirectives(tree, text),
+  };
+  if (text.length <= 1048576) {
+    headerCache.set(text, entry);
+    cacheCharacters += text.length;
+    while (headerCache.size > 64 || cacheCharacters > 1048576) {
+      const oldest = headerCache.keys().next().value!;
+      cacheCharacters -= oldest.length;
+      headerCache.delete(oldest);
+    }
+  }
+  return entry;
+}
 export function includedOptions(
   source: string,
   file: string,
   context: CompletionFiles,
-): Completion[] {
-  const options: Completion[] = [],
+  tree = cppLanguage.parser.parse(source),
+  upto = source.length,
+): Candidate[] {
+  if (context.scope !== cacheScope) {
+    headerCache.clear();
+    cacheCharacters = 0;
+    cacheScope = context.scope;
+  }
+  const options: Candidate[] = [],
     seen = new Set<string>(),
     headers = new Set<string>();
-  function visit(text: string, current: string) {
-    for (const match of text.matchAll(/^\s*#\s*include\s*([<"])([^>"]+)[>"]/gm)) {
-      const name = match[2],
-        base = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
-      const paths = [...(match[1] === '"' ? [base] : []), ...context.includeDirs, ''].map((dir) =>
-        normalize(dir + '/' + name),
+  function visit(includes: { name: string; quoted: boolean }[], current: string) {
+    for (const include of includes) {
+      const base = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
+      const paths = [...(include.quoted ? [base] : []), ...context.includeDirs, ''].map(
+        (directory) => normalize(directory + '/' + include.name),
       );
-      const local = paths.find((p) => p !== undefined && Object.hasOwn(context.files, p));
+      const local = paths.find((name) => name !== undefined && Object.hasOwn(context.files, name));
       if (local !== undefined) {
         if (seen.has(local)) continue;
         seen.add(local);
-        const text = context.files[local];
-        options.push(...declarations(text));
-        visit(text, local);
-      } else headers.add(name);
+        const entry = headerData(context.files[local]);
+        options.push(...entry.symbols);
+        visit(entry.includes, local);
+      } else headers.add(include.name);
     }
   }
-  visit(source, file);
+  visit(includeDirectives(tree, source, upto), file);
   for (const header of headers) {
     const mapped =
       header.startsWith('c') && standard[header.slice(1) + '.h'] ? header.slice(1) + '.h' : header;
     for (const signature of standard[mapped] ?? []) {
-      const label = signature.slice(0, signature.indexOf('('));
+      const bare = signature.slice(0, signature.indexOf('('));
+      const label = mapped !== header && !bare.includes('::') ? 'std::' + bare : bare;
       options.push({
         label,
+        qualified: label,
         type: 'function',
         detail: signature,
         info: '#include <' + header + '>',
+        boost: 0,
       });
     }
   }
   return options;
 }
+
 export function sourceCompletions(
   context: CompletionContext,
   file: string,
   files: CompletionFiles,
   language: 'c' | 'cpp',
 ) {
-  const node = syntaxTree(context.state).resolveInner(context.pos, -1);
-  if (/Comment|String|CharLiteral/.test(node.name)) return null;
-  const word = context.matchBefore(/(?:std::)?[A-Za-z_]\w*/);
-  if (!word && !context.explicit) return null;
-  const text = context.state.doc.toString(),
-    options: Completion[] = [
-      ...(language === 'c' ? keywordsC : keywordsCpp).map((label) => ({ label, type: 'keyword' })),
-      ...includedOptions(text.slice(0, context.pos), file, files),
-      ...declarations(text, context.pos),
-    ];
+  const tree = ensureSyntaxTree(context.state, context.pos, 8) ?? syntaxTree(context.state);
+  let node = tree.resolveInner(context.pos, -1);
+  for (let current: typeof node | null = node; current; current = current.parent)
+    if (/Comment|String|CharLiteral/.test(current.name)) return null;
+  const word = context.matchBefore(/[A-Za-z_]\w*/);
+  const start = word?.from ?? context.pos;
+  const before = context.state.sliceDoc(Math.max(0, start - 512), start);
+  if (/(?:\.|->)\s*$/.test(before)) return null;
+  const qualifier = before.match(/((?:[A-Za-z_]\w*::)+)$/)?.[1];
+  if (!word && !context.explicit && !qualifier) return null;
+  const text = context.state.doc.toString();
+  const options: Candidate[] = [
+    ...visibleDeclarations(tree, text, context.pos),
+    ...includedOptions(text, file, files, tree, context.pos),
+    ...(qualifier
+      ? []
+      : (language === 'c' ? keywordsC : keywordsCpp).map((label) => ({
+          label,
+          type: 'keyword',
+          boost: -5,
+        }))),
+  ];
   const indent = '\t',
     snippets = [
       snippetCompletion('if (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
@@ -321,15 +302,35 @@ export function sourceCompletions(
       type: 'keyword',
     }),
   );
-  const unique = new Map<string, Completion>();
-  for (const option of options) unique.set(option.label, option);
-  for (const s of snippets) unique.set(s.label, s);
+  const unique = new Map<string, Candidate>();
+  const candidates = qualifier
+    ? options
+        .filter((option) => (option.qualified ?? option.label).startsWith(qualifier))
+        .map((option) => ({
+          ...option,
+          label: (option.qualified ?? option.label).slice(qualifier.length),
+        }))
+    : [...options, ...snippets.map((option) => ({ ...option, boost: -5 }))];
+  for (const option of candidates) {
+    const previous = unique.get(option.label);
+    if (
+      !previous ||
+      (option.boost ?? 0) > (previous.boost ?? 0) ||
+      (option.apply && !previous.apply && (option.boost ?? 0) === (previous.boost ?? 0))
+    )
+      unique.set(option.label, option);
+  }
+  const prefix = word?.text ?? '';
   return {
-    from: word?.from ?? context.pos,
-    options: [...unique.values()],
-    validFor: /^(?:std::)?\w*$/,
+    from: start,
+    options: [...unique.values()].map((option) => ({
+      ...option,
+      boost: Math.min(99, (option.boost ?? 0) + (prefix && option.label === prefix ? 80 : 0)),
+    })),
+    validFor: /^\w*$/,
   };
 }
+
 export function completionExtension(
   source: (context: CompletionContext) => ReturnType<typeof sourceCompletions>,
 ) {

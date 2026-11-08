@@ -600,3 +600,85 @@ test('stopping during compile preflight prevents a delayed response from launchi
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+test('completion ranks locals, accepts atomically and respects namespaces and forced language', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-completion-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('CompletionFixture', 'problem-set');
+      await window.labpad.createProblem('CompletionFixture', 'one', 'cpp');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    const editor = page.locator('.cm-content'),
+      labels = page.locator('.cm-tooltip-autocomplete .cm-completionLabel');
+    const source = () => page.evaluate(async () => (await window.labpad.bootstrap()).draft.source);
+    const prefix = 'int main(void){\n int count=0;\n co';
+    await editor.fill(prefix);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+/');
+    await expect(labels.first()).toHaveText('count');
+    await page.keyboard.press('Enter');
+    expect(await source()).not.toMatch(/\n\s*count\s*$/);
+    await editor.fill(prefix);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+/');
+    await expect(labels.first()).toHaveText('count');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    expect(await source()).toMatch(/\n\s*count$/);
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    expect(await source()).toBe(prefix);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+/');
+    await expect(labels.first()).toHaveText('count');
+    await page.keyboard.press('Tab');
+    expect(await source()).toMatch(/\n\s*count$/);
+    await editor.fill('#include <algorithm>\nint main(){ std::');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+/');
+    await expect(labels.filter({ hasText: /^sort$/ })).toHaveCount(1);
+    expect(await labels.allTextContents()).not.toContain('const');
+    expect(await labels.allTextContents()).not.toContain('for');
+    await page.locator('.cm-tooltip-autocomplete li').filter({ hasText: 'sort' }).click();
+    expect(await source()).toContain('std::sort');
+    expect(await source()).not.toContain('std::std::');
+    await page.evaluate(async () => {
+      await window.labpad.createLab('ForcedFixture', 'project');
+      const make = await window.labpad.workspaceOpen('ForcedFixture', 'LPMake.txt');
+      make.source += '\nset_language("c++")\n';
+      await window.labpad.saveDraft(make);
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    const main = page.locator('.source-tab').filter({ hasText: 'main.c' });
+    if (await main.count()) await main.click();
+    else {
+      if (!(await page.locator('.file-tree').isVisible()))
+        await page.getByRole('button', { name: '显示文件', exact: true }).click();
+      await page.locator('.tree-file[data-file="main.c"]').click();
+    }
+    const active = (await page.evaluate(() => window.labpad.bootstrap())).draft;
+    expect(active.file).toBe('main.c');
+    expect(active.language).toBe('cpp');
+    await editor.fill('clas');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+/');
+    await expect(labels.filter({ hasText: /^class$/ })).toHaveCount(1);
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

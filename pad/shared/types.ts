@@ -76,6 +76,12 @@ export interface Config {
 export type BuildTarget =
   | { mode: 'problem-set'; labId: string; problemId: string; documentId: string }
   | { mode: 'project'; labId: string };
+export interface CompletionFiles {
+  scope?: string;
+  files: Record<string, string>;
+  includeDirs: string[];
+  forcedLanguage?: Language;
+}
 export interface Draft {
   /** Explicit execution target; auxiliary editor tabs do not change it. */
   target?: BuildTarget;
@@ -234,10 +240,7 @@ export interface Bridge {
   onNativeState(callback: (state: import('./debug').NativeDebugState) => void): () => void;
   onNativeDiagnostic(callback: (data: string) => void): () => void;
 
-  completionFiles(
-    lab: string,
-    problem: string,
-  ): Promise<{ files: Record<string, string>; includeDirs: string[] }>;
+  completionFiles(lab: string, problem: string): Promise<CompletionFiles>;
   fileContext(
     lab: string,
     problem: string,
