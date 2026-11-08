@@ -1113,6 +1113,8 @@ function enqueueSave(input: Draft, id: number) {
       const current = tabs.value.find((t) => t.id === value.documentId);
       if (current) {
         current.savedSource = result.source;
+        current.missing = false;
+        current.document.missing = false;
         current.document.sourceFile = result.path;
         if (current.revision === id || current.document.source === result.source) {
           current.document.source = result.source;
@@ -1203,9 +1205,10 @@ function replaceDraft(
     id: d.documentId!,
     document: clone(d),
     savedSource: d.source,
-    dirty: false,
+    missing: d.missing,
+    dirty: !!d.missing,
     revision: 0,
-    status: '已保存',
+    status: d.missing ? '未保存' : '已保存',
   }));
   targetSourceId.value = !value.auxiliary
     ? value.documentId
@@ -1216,7 +1219,7 @@ function replaceDraft(
   documentEpoch.value = activeId.value;
   draft.value = { ...clone(value), documentId: activeId.value };
   sourcePath.value = file ?? value.sourceFile ?? null;
-  dirty.value = false;
+  dirty.value = tabs.value.some((tab) => tab.dirty);
   rulesDirty.value = false;
   savedRules = JSON.stringify(value.problem);
   revision++;
@@ -1231,7 +1234,7 @@ function replaceDraft(
   results.value = {};
   diffOpen.value = {};
   finished.value = false;
-  saveStatus.value = '已保存';
+  saveStatus.value = tabs.value.find((tab) => tab.id === activeId.value)?.status ?? '已保存';
   setIdle('ready');
   pauseSave = false;
   recordState();
@@ -1406,9 +1409,10 @@ function addDocument(document: LoadedDraft) {
       id: document.documentId!,
       document: clone(document),
       savedSource: document.source,
-      dirty: false,
+      missing: document.missing,
+      dirty: !!document.missing,
       revision: 0,
-      status: '已保存',
+      status: document.missing ? '未保存' : '已保存',
     });
   const was = fileBusy.value;
   fileBusy.value = false;

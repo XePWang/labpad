@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { Storage } from '../core/storage';
@@ -112,6 +112,43 @@ test('workspace editor honors forced source language and opens hxx as C++', asyn
     const make = await storage.workspace.open('Fixture', 'LPMake.txt');
     await storage.workspace.save({ ...make, source: make.source + '\nset_language("c++")\n' });
     assert.equal((await storage.workspace.open('Fixture', draft.file!)).language, 'cpp');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('first startup materializes its default source and a missing live buffer remains recoverable', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-startup-'));
+  try {
+    const storage = new Storage(root);
+    await storage.init();
+    const documents = await storage.openDocuments('', '', 'c');
+    const draft = documents[0];
+    assert.ok((await stat(draft.sourceFile!)).isFile());
+    assert.equal(draft.missing, false);
+    await rm(draft.sourceFile!);
+    const [reopened] = await storage.openDocuments('', '', 'c');
+    assert.equal(reopened.missing, true);
+    const target = {
+      mode: 'problem-set' as const,
+      labId: '',
+      problemId: '',
+      documentId: reopened.documentId!,
+    };
+    const helper = {
+      ...reopened,
+      auxiliary: true,
+      file: 'notes.txt',
+      documentId: 'aux:notes',
+      target,
+    };
+    await assert.rejects(storage.buildTarget(helper), /源码文件已不存在/);
+    const buffered = { ...reopened, source: 'int main(void){return 3;}', target };
+    assert.equal((await storage.buildTarget(helper, [buffered])).source, buffered.source);
+    await assert.rejects(stat(draft.sourceFile!));
+    await storage.save(buffered);
+    assert.ok((await stat(draft.sourceFile!)).isFile());
+    assert.equal((await storage.openDocuments('', '', 'c'))[0].missing, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

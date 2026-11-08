@@ -404,7 +404,8 @@ export class Storage {
     problem: Problem,
   ): Promise<LoadedDraft> {
     const file = this.documentPath(labId, problemId, version);
-    const decoded = (await exists(file))
+    const present = await exists(file);
+    const decoded = present
       ? decodeText(await readFile(file))
       : { text: version.starter ?? defaultSource(version.language), encoding: version.encoding };
     return {
@@ -415,6 +416,7 @@ export class Storage {
       problem: structuredClone(problem),
       sourceFile: file,
       sourceEncoding: decoded.encoding,
+      missing: !present,
       name: path.basename(file),
       ...(version.externalPath && !(await exists(file))
         ? { warning: '原关联源码无法读取：' + file + '；请重新导入。当前显示初始模板。' }
@@ -462,6 +464,10 @@ export class Storage {
             await mkdir(p.dir, { recursive: true });
             await writeSource(path.join(p.dir, file), source);
           } else if (await exists(p.source)) source = decodeText(await readFile(p.source)).text;
+          else {
+            await mkdir(p.dir, { recursive: true });
+            await writeSource(p.source, source);
+          }
           state.documents.push({
             id: randomUUID(),
             file,
@@ -1111,8 +1117,6 @@ export class Storage {
     if (!version || !isSourceFile(version.file))
       throw new Error('目标源码已不存在或不属于当前题目，请重新选择源码。');
     const source = await this.readDocument(labId, problemId, version, draft.problem);
-    if (!source.sourceFile || !(await exists(source.sourceFile)))
-      throw new Error('目标源码文件已不存在，请重新选择或导入源码。');
     const buffer = [draft, ...buffers].find(
       (item) =>
         !item.auxiliary &&
@@ -1120,6 +1124,10 @@ export class Storage {
         item.problem.labId === labId &&
         item.problem.problemId === problemId,
     );
+    if ((!source.sourceFile || !(await exists(source.sourceFile))) && !buffer)
+      throw new Error('目标源码文件已不存在，请重新选择或导入源码。');
+    // A live buffer can be explicitly saved to restore a missing file. Compile still
+    // checks savedBuildInput and requires save confirmation before executing it.
     if (buffer?.file && buffer.file !== version.file)
       throw new Error('目标源码路径已改变，请刷新文件后重试。');
     return {

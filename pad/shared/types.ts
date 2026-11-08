@@ -95,6 +95,7 @@ export interface Draft {
   problem: Problem;
 }
 export interface LoadedDraft extends Draft {
+  missing?: boolean;
   sourceFile?: string;
   sourceEncoding?: string;
   warning?: string;
