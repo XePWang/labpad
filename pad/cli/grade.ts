@@ -7,7 +7,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {stringify} from 'csv-stringify/sync';
 import {parse} from 'csv-parse/sync';
 import lockfile from 'proper-lockfile';
-import writeFileAtomic from 'write-file-atomic';
+import writeFileAtomic from '../core/atomic-file';
 import {retainVersions} from './versions';
 import {parseWorkspacePackage} from '../shared/workspace';
 import {parse as parseMake,diagnostic,ConfigError} from '../shared/lpmake';

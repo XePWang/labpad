@@ -1,4 +1,4 @@
-import {mkdir,readFile,readdir,lstat,rm,rmdir} from 'node:fs/promises';import path from 'node:path';import writeFileAtomic from 'write-file-atomic';
+import {mkdir,readFile,readdir,lstat,rm,rmdir} from 'node:fs/promises';import path from 'node:path';import writeFileAtomic from './atomic-file';
 import {workspacePath} from '../shared/workspace';
 export interface BuildManifest{schemaVersion:1;kind:'labpad.build';owner:string;files:string[]}
 export async function buildManifest(directory:string):Promise<BuildManifest|undefined>{

@@ -7,7 +7,7 @@ import { ConfigError, parse } from '../shared/lpmake';
 import { mkdir, readFile, readdir, lstat, rename, rm, writeFile, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import writeFileAtomic from 'write-file-atomic';
+import writeFileAtomic from './atomic-file';
 import {
   workspacePath,
   workspaceTemplate,

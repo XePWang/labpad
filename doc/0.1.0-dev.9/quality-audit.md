@@ -48,3 +48,11 @@ Windows 和 Linux 原生窗口各通过 7 项异步与补全流程。探针包�
 扩大故障检查后，测试点更新事务也复现了清理错误掩盖写入失败；现保留 ENOSPC、原规则及后续重试能力。完整回归还发现本轮清理辅助函数把 Promise 值作为参数传给 proper-lockfile 的释放函数，已改为零参数调用并补断言；格式化保留同一文档编辑后的提示，跨文档迟到结果继续失效。
 
 相关核心 19/19、完整核心 175/175、最终 Linux 桌面 53/53 通过。Windows、归档与 CLI 的最终结果统一记入 M4。
+
+## M4 扩大 Windows 实测后发现的保存边界
+
+原生成品全流程出现原子重命名的 EPERM：一次发生于调试启动前的项目元数据写入，一次使源码保存保留未保存标记。现将所有 write-file-atomic 调用收进 core/atomic-file.ts，继续使用原库的同步、权限与原子替换机制；只对 Windows 的 rename + EPERM/EACCES/EBUSY 最多重试四次，等待合计 750 ms。整次保存含重试共用按文件队列，失败不会毒化下一次保存，也不删除或改权限来绕过失败。
+
+错误类别参考 [VS Code 文件系统实现](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/node/diskFileSystemProvider.ts)。没有认定某个安全软件为本机具体原因。三个核心故障用例验证顺序、持续失败、原字节、临时文件回收及后续重试；完整核心 178/178 通过。Windows 成品直接注入 fs.rename 错误，并与原失败场景一起通过四项回归。
+
+另一处 Windows 夹具在首次规则文件创建前就读取文件，已改为仅在 ENOENT 时继续等候；内容及原源码保持断言不变。

@@ -48,7 +48,7 @@ import {
 import type { IPty } from 'node-pty';
 import { createRequire } from 'node:module';
 import { Compiler } from '../core/compiler';
-import writeFileAtomic from 'write-file-atomic';
+import writeFileAtomic from '../core/atomic-file';
 import { parse as parseMake } from '../shared/lpmake';
 import { resolve as resolveBuild } from '../core/build/resolve';
 import { compileDraft, copyResources, clearWorkspaceCache } from '../core/build';

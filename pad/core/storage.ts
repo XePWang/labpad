@@ -24,7 +24,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import iconv from 'iconv-lite';
-import writeFileAtomic from 'write-file-atomic';
+import writeFileAtomic from './atomic-file';
 import { migrateShortcuts } from '../shared/shortcuts';
 import { defaultConfig, defaultProblem, defaultSource } from '../shared/defaults';
 import {
