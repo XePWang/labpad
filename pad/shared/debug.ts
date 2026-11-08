@@ -32,6 +32,7 @@ export interface DebugScope {
 export type NativeDebugStatus =
   'idle' | 'starting' | 'running' | 'paused' | 'ended' | 'error' | 'stop-failed';
 export interface NativeDebugState {
+  inspectionId?: string;
   scope?: string;
   status: NativeDebugStatus;
   processId?: number;

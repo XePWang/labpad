@@ -2334,26 +2334,15 @@ async function initialize() {
       emitFileChanges(draft.problem.labId, [], await shell.files.list(), shell.files.root);
     return { ...result, scope: shell.files.root };
   });
-  handle(
-    'terminal:complete',
-    async (text: string) =>
-      terminalShell?.complete(text) ??
-      [
-        'pwd',
-        'ls',
-        'll',
-        'cd',
-        'mkdir',
-        'touch',
-        'cat',
-        'cp',
-        'mv',
-        'rm',
-        'clear',
-        'help',
-        'lpmake',
-      ].filter((value) => value.startsWith(text)),
-  );
+  handle('terminal:complete', async (text: string, expected?: { scope: string; cwd: string }) => {
+    const shell = terminalShell;
+    if (!shell) return [];
+    const current = await shell.context();
+    if (expected && (expected.scope !== current.scope || expected.cwd !== current.cwd)) return [];
+    const values = await shell.complete(text);
+    if (shell !== terminalShell || shell.cwd !== current.cwd) return [];
+    return values;
+  });
   handle(
     'native:confirm-restart',
     async () =>
@@ -2385,14 +2374,14 @@ async function initialize() {
     await nativeSession.selectFrame(id);
     return nativeView();
   });
-  handle('native:variables', async (ref: number, start = 0) => {
+  handle('native:variables', async (ref: number, start = 0, inspectionId?: string) => {
     if (!Number.isSafeInteger(ref) || ref < 1 || !nativeSession) throw Error('变量无效');
-    return nativeSession.variables(ref, start);
+    return nativeSession.variables(ref, start, inspectionId);
   });
-  handle('native:watch', async (expression: string) => {
+  handle('native:watch', async (expression: string, inspectionId?: string) => {
     if (typeof expression !== 'string' || expression.length > 1024 || !nativeSession)
       throw Error('监视表达式无效');
-    return nativeSession.evaluate(expression);
+    return nativeSession.evaluate(expression, inspectionId);
   });
   handle('native:breakpoints', async (values: SourceBreakpoint[]) => {
     if (!nativeSession || !nativeActive()) return;

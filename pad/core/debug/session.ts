@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { DapConnection, type DapMessage } from './connection';
 import { killTree } from '../process';
 import type {
@@ -23,6 +24,7 @@ export interface DebugLaunch {
   }) => Promise<{ processId: number; shellProcessId?: number }>;
 }
 export class NativeDebugger extends EventEmitter {
+  private readonly sessionId = randomUUID();
   state: NativeDebugState = {
     status: 'idle',
     frames: [],
@@ -44,8 +46,15 @@ export class NativeDebugger extends EventEmitter {
     super();
     this.finished = new Promise((resolve) => (this.finish = resolve));
   }
+  private get inspectionId() {
+    return this.sessionId + ':' + this.inspection;
+  }
+  private assertInspection(id: string) {
+    if (this.state.status !== 'paused' || id !== this.inspectionId)
+      throw Error('Debug context has changed. Refresh variables in the current paused frame.');
+  }
   private update(value: Partial<NativeDebugState>) {
-    this.state = { ...this.state, ...value };
+    this.state = { ...this.state, ...value, inspectionId: this.inspectionId };
     this.emit('state', structuredClone(this.state));
   }
   private end(status: 'ended' | 'error', message?: string) {
@@ -205,8 +214,13 @@ export class NativeDebugger extends EventEmitter {
       return;
     }
     if (message.event === 'stopped') {
+      const epoch = ++this.inspection;
       this.update({
         status: 'paused',
+        selectedFrameId: undefined,
+        frames: [],
+        scopes: [],
+        variables: [],
         threadId: body.threadId,
         message: body.description ?? body.text ?? body.reason,
       });
@@ -216,7 +230,7 @@ export class NativeDebugger extends EventEmitter {
           startFrame: 0,
           levels: 40,
         });
-        if (this.state.status !== 'paused') return;
+        if (this.state.status !== 'paused' || epoch !== this.inspection) return;
         const frames: DebugFrame[] = (stack.stackFrames ?? []).map((f: any) => ({
           id: f.id,
           name: f.name,
@@ -227,7 +241,7 @@ export class NativeDebugger extends EventEmitter {
         this.update({ frames });
         if (frames[0]) await this.selectFrame(frames[0].id);
       } catch (error) {
-        if (this.state.status === 'paused')
+        if (this.state.status === 'paused' && epoch === this.inspection)
           this.update({ message: error instanceof Error ? error.message : String(error) });
       }
     }
@@ -235,27 +249,35 @@ export class NativeDebugger extends EventEmitter {
   async selectFrame(id: number) {
     if (this.state.status !== 'paused') throw Error('The program is not paused.');
     const epoch = ++this.inspection;
-    const result = await this.connection!.request('scopes', { frameId: id });
-    if (epoch !== this.inspection || this.state.status !== 'paused') return;
-    const scopes = (result.scopes ?? []).map((s: any) => ({
-      name: s.name,
-      variablesReference: s.variablesReference,
-      expensive: !!s.expensive,
-    }));
-    this.update({ selectedFrameId: id, scopes, variables: [] });
-    const first = scopes.find((s: any) => !s.expensive) ?? scopes[0];
-    if (first) {
-      const variables = await this.variables(first.variablesReference);
-      if (epoch === this.inspection && this.state.status === 'paused') this.update({ variables });
+    this.update({ selectedFrameId: id, scopes: [], variables: [] });
+    try {
+      const result = await this.connection!.request('scopes', { frameId: id });
+      if (epoch !== this.inspection || this.state.status !== 'paused') return;
+      const scopes = (result.scopes ?? []).map((s: any) => ({
+        name: s.name,
+        variablesReference: s.variablesReference,
+        expensive: !!s.expensive,
+      }));
+      this.update({ selectedFrameId: id, scopes, variables: [] });
+      const first = scopes.find((s: any) => !s.expensive) ?? scopes[0];
+      if (first) {
+        const variables = await this.variables(first.variablesReference);
+        if (epoch === this.inspection && this.state.status === 'paused') this.update({ variables });
+      }
+    } catch (error) {
+      if (epoch === this.inspection && this.state.status === 'paused') throw error;
     }
   }
-  async variables(reference: number, start = 0): Promise<DebugVariable[]> {
-    if (this.state.status !== 'paused') throw Error('The program is not paused.');
+
+  async variables(reference: number, start = 0, expected?: string): Promise<DebugVariable[]> {
+    const inspection = expected ?? this.inspectionId;
+    this.assertInspection(inspection);
     const result = await this.connection!.request('variables', {
       variablesReference: reference,
       start,
       count: 100,
     });
+    this.assertInspection(inspection);
     return (result.variables ?? []).slice(0, 100).map((v: any) => ({
       name: v.name,
       value: v.value,
@@ -266,8 +288,9 @@ export class NativeDebugger extends EventEmitter {
       evaluateName: v.evaluateName,
     }));
   }
-  async evaluate(expression: string): Promise<DebugVariable> {
-    if (this.state.status !== 'paused') throw Error('The program is not paused.');
+  async evaluate(expression: string, expected?: string): Promise<DebugVariable> {
+    const inspection = expected ?? this.inspectionId;
+    this.assertInspection(inspection);
     // Watch refreshes read expressions only; user functions and mutation are explicit debugger operations.
     if (
       !expression.trim() ||
@@ -279,6 +302,7 @@ export class NativeDebugger extends EventEmitter {
       frameId: this.state.selectedFrameId,
       context: 'watch',
     });
+    this.assertInspection(inspection);
     return {
       name: expression,
       value: value.result,

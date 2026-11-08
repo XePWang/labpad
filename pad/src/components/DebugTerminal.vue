@@ -27,6 +27,8 @@ let terminal: Terminal | undefined,
   fit: FitAddon,
   observer: ResizeObserver,
   generation = 0,
+  inputEpoch = 0,
+  completionRequest = 0,
   executing = false,
   outputTail = Promise.resolve();
 let fitFrame: number | undefined;
@@ -148,14 +150,40 @@ function key(event: KeyboardEvent) {
   if (event.type !== 'keydown' || event.isComposing) return true;
   if (event.key === 'Tab' && !props.running && props.execute) {
     event.preventDefault();
-    const before = readline?.getLine() ?? '';
-    void window.labpad.terminalComplete(before).then((values) => {
-      if (readline?.getLine() !== before) return;
-      if (values.length === 1) readline.updateLine(values[0]);
-      else if (values.length) void write(values.join('  ') + '\r\n');
-    });
+    if (executing || !readline) return false;
+    const line = readline;
+    const before = line.getLine();
+    const id = ++completionRequest;
+    const epoch = inputEpoch;
+    const session = generation;
+    const context = { scope: props.context ?? '', cwd: cwd.value };
+    const current = () =>
+      id === completionRequest &&
+      epoch === inputEpoch &&
+      session === generation &&
+      context.scope === (props.context ?? '') &&
+      context.cwd === cwd.value &&
+      !props.running &&
+      !executing &&
+      !!props.execute &&
+      readline === line &&
+      line.getLine() === before;
+    void window.labpad
+      .terminalComplete(before, context)
+      .then((values) => {
+        if (!current()) return;
+        if (values.length === 1) line.updateLine(values[0]);
+        else if (values.length) void write(values.join('  ') + '\r\n');
+      })
+      .catch((error) => {
+        if (current())
+          void write((error instanceof Error ? error.message : String(error)) + '\r\n');
+      });
     return false;
   }
+  // Cursor movement, submission and history navigation invalidate earlier completions,
+  // even if later editing returns to exactly the same text.
+  inputEpoch++;
   const selected = terminal?.getSelection() || '',
     command = terminalCommand(
       event,
@@ -210,6 +238,9 @@ onMounted(() => {
   terminal.loadAddon(readline);
   terminal.attachCustomKeyEventHandler(key);
   terminal.open(host.value!);
+  terminal.onData(() => {
+    inputEpoch++;
+  });
   terminal.textarea?.setAttribute('aria-label', '终端输入');
   observer = new ResizeObserver(() => {
     if (host.value?.offsetWidth) {
@@ -240,7 +271,10 @@ watch(
 let lastContext = props.context;
 watch(
   () => props.epoch,
-  () => readline?.resetHistory(props.historyBytes),
+  () => {
+    inputEpoch++;
+    readline?.resetHistory(props.historyBytes);
+  },
 );
 watch(
   () => props.historyBytes,

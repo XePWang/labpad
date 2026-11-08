@@ -1,18 +1,30 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, onBeforeUnmount } from 'vue';
 import type { DebugVariable } from '../../shared/debug';
 import ActionIcon from './ActionIcon.vue';
-const props = defineProps<{ values: DebugVariable[]; enabled: boolean }>();
+const props = defineProps<{
+  values: DebugVariable[];
+  enabled: boolean;
+  context?: string;
+  inspectionId?: string;
+}>();
 const expanded = ref<Record<number, DebugVariable[]>>({}),
   errors = ref<Record<number, string>>({}),
   loading = ref<Record<number, boolean>>({});
+let epoch = 0;
 watch(
-  () => props.values,
+  () => [props.context, props.inspectionId, props.values, props.enabled],
   () => {
+    epoch++;
     expanded.value = {};
     errors.value = {};
+    loading.value = {};
   },
+  { flush: 'sync' },
 );
+onBeforeUnmount(() => {
+  epoch++;
+});
 async function toggle(value: DebugVariable) {
   const id = value.variablesReference;
   if (expanded.value[id]) {
@@ -22,15 +34,20 @@ async function toggle(value: DebugVariable) {
   await more(value, 0);
 }
 async function more(value: DebugVariable, start: number) {
-  const id = value.variablesReference;
+  if (!props.enabled || loading.value[value.variablesReference]) return;
+  const id = value.variablesReference,
+    request = epoch;
   loading.value[id] = true;
+  delete errors.value[id];
   try {
-    const list = await window.labpad.nativeVariables(id, start);
-    expanded.value[id] = start ? [...expanded.value[id], ...list] : list;
-  } catch (e) {
-    errors.value[id] = e instanceof Error ? e.message : String(e);
+    const list = await window.labpad.nativeVariables(id, start, props.inspectionId);
+    if (request === epoch && props.enabled)
+      expanded.value[id] = start ? [...(expanded.value[id] ?? []), ...list] : list;
+  } catch (error) {
+    if (request === epoch && props.enabled)
+      errors.value[id] = error instanceof Error ? error.message : String(error);
   } finally {
-    loading.value[id] = false;
+    if (request === epoch) loading.value[id] = false;
   }
 }
 </script>
@@ -56,7 +73,12 @@ async function more(value: DebugVariable, start: number) {
         {{ errors[value.variablesReference] }}
       </p>
       <template v-if="expanded[value.variablesReference]"
-        ><DebugVariables :values="expanded[value.variablesReference]" :enabled="enabled" /><button
+        ><DebugVariables
+          :values="expanded[value.variablesReference]"
+          :enabled="enabled"
+          :context="context"
+          :inspection-id="inspectionId"
+        /><button
           v-if="
             expanded[value.variablesReference].length <
             (value.indexedVariables ?? value.namedVariables ?? 0)

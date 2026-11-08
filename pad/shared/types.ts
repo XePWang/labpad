@@ -220,7 +220,7 @@ export interface Bridge {
     draft: Draft,
     text: string,
   ): Promise<TerminalContext & { output: string; clear?: boolean; needsSave?: boolean }>;
-  terminalComplete(text: string): Promise<string[]>;
+  terminalComplete(text: string, context?: TerminalContext): Promise<string[]>;
   nativeStart(
     draft: Draft,
     breakpoints: import('./debug').SourceBreakpoint[],
@@ -235,8 +235,12 @@ export interface Bridge {
   ): Promise<import('./debug').NativeDebugState>;
   nativeStop(): Promise<void>;
   nativeFrame(id: number): Promise<import('./debug').NativeDebugState>;
-  nativeVariables(reference: number, start?: number): Promise<import('./debug').DebugVariable[]>;
-  nativeWatch(expression: string): Promise<import('./debug').DebugVariable>;
+  nativeVariables(
+    reference: number,
+    start?: number,
+    inspectionId?: string,
+  ): Promise<import('./debug').DebugVariable[]>;
+  nativeWatch(expression: string, inspectionId?: string): Promise<import('./debug').DebugVariable>;
   nativeBreakpoints(
     values: import('./debug').SourceBreakpoint[],
   ): Promise<import('./debug').NativeDebugState | undefined>;

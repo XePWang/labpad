@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import type { NativeDebugState, SourceBreakpoint, DebugVariable } from '../../shared/debug';
 import DebugVariables from './DebugVariables.vue';
 import ActionIcon from './ActionIcon.vue';
@@ -23,11 +23,22 @@ const expression = ref(''),
   watchValues = ref<DebugVariable[]>([]),
   watchErrors = ref<Record<string, string>>({}),
   selectedScope = ref(0),
-  scopeVariables = ref<DebugVariable[]>([]);
+  scopeVariables = ref<DebugVariable[]>([]),
+  scopeError = ref('');
 const paused = computed(() => props.state.status === 'paused');
-let watchEpoch = 0;
+const inspectionContext = computed(
+  () =>
+    props.state.inspectionId ??
+    [props.state.scope, props.state.status, props.state.selectedFrameId].join(':'),
+);
+let watchEpoch = 0,
+  scopeEpoch = 0;
+onBeforeUnmount(() => {
+  watchEpoch++;
+  scopeEpoch++;
+});
 watch(
-  () => [props.state.status, props.state.selectedFrameId, props.watches] as const,
+  () => [inspectionContext.value, props.watches] as const,
   async () => {
     const epoch = ++watchEpoch;
     watchValues.value = [];
@@ -35,7 +46,7 @@ watch(
     if (!paused.value) return;
     for (const text of props.watches) {
       try {
-        const value = await window.labpad.nativeWatch(text);
+        const value = await window.labpad.nativeWatch(text, props.state.inspectionId);
         if (epoch !== watchEpoch) return;
         watchValues.value.push(value);
       } catch (e) {
@@ -44,24 +55,37 @@ watch(
       }
     }
   },
-  { deep: true, immediate: true },
+  { deep: true, immediate: true, flush: 'sync' },
 );
 watch(
-  () => [props.state.scopes, props.state.variables],
+  () => [inspectionContext.value, props.state.scopes, props.state.variables],
   () => {
+    scopeEpoch++;
+    scopeError.value = '';
     selectedScope.value =
       props.state.scopes.find((s) => !s.expensive)?.variablesReference ??
       props.state.scopes[0]?.variablesReference ??
       0;
     scopeVariables.value = props.state.variables;
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 );
 async function changeScope() {
+  const epoch = ++scopeEpoch,
+    inspection = inspectionContext.value;
+  const scope = selectedScope.value;
+  const current = () =>
+    epoch === scopeEpoch &&
+    paused.value &&
+    inspection === inspectionContext.value &&
+    scope === selectedScope.value;
+  scopeVariables.value = [];
+  scopeError.value = '';
   try {
-    scopeVariables.value = await window.labpad.nativeVariables(selectedScope.value);
-  } catch {
-    scopeVariables.value = [];
+    const values = await window.labpad.nativeVariables(scope, 0, props.state.inspectionId);
+    if (current()) scopeVariables.value = values;
+  } catch (error) {
+    if (current()) scopeError.value = error instanceof Error ? error.message : String(error);
   }
 }
 function addWatch() {
@@ -116,8 +140,15 @@ function toggle(index: number) {
           </option>
         </select>
       </summary>
-      <DebugVariables v-if="paused" :values="scopeVariables" :enabled="paused" />
+      <DebugVariables
+        v-if="paused"
+        :values="scopeVariables"
+        :enabled="paused"
+        :context="inspectionContext + ':' + selectedScope"
+        :inspection-id="state.inspectionId"
+      />
       <p v-else class="debug-placeholder">暂停后查看变量。</p>
+      <p v-if="scopeError" class="field-error">{{ scopeError }}</p>
     </details>
     <details open>
       <summary>监视</summary>
@@ -135,6 +166,8 @@ function toggle(index: number) {
         <DebugVariables
           :values="watchValues.filter((v) => v.name === text)"
           :enabled="paused"
+          :context="inspectionContext"
+          :inspection-id="state.inspectionId"
         /><code v-if="!watchValues.some((v) => v.name === text)">{{ text }}</code
         ><button
           class="icon-action"
