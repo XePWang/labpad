@@ -1,5 +1,6 @@
 import { remapPath } from '../shared/file-changes';
-import { readFile, lstat, readdir, utimes } from 'node:fs/promises';
+import { lstat, readdir, utimes } from 'node:fs/promises';
+import { readFileLimited } from './read-file';
 import path from 'node:path';
 import { FileService, type FileRequest, type FileChange } from './files';
 import { decodeText } from './storage';
@@ -114,8 +115,11 @@ export class CommandTerminal {
       exact(1, 20);
       const chunks = [];
       for (const name of words) {
-        const bytes = await readFile(await resolve(name));
-        if (bytes.length > 1024 ** 2) throw Error('文件超过 1 MB，请在编辑区中查看。');
+        const bytes = await readFileLimited(
+          await resolve(name),
+          1024 ** 2,
+          '文件超过 1 MB，请在编辑区中查看。',
+        );
         if (bytes.includes(0) && !([254, 255].includes(bytes[0]) && [254, 255].includes(bytes[1])))
           throw Error('这是二进制文件，请在文件管理器中查看。');
         chunks.push(decodeText(bytes).text);
