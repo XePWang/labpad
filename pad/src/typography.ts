@@ -6,6 +6,7 @@ export interface TextStyle {
   family: string;
   fontSize: number;
   lineHeight: number;
+  terminalLineHeight: number;
   letterSpacing: number;
 }
 
@@ -13,6 +14,7 @@ export const fallbackTextStyle: TextStyle = {
   family: 'monospace',
   fontSize: 14,
   lineHeight: 1.7,
+  terminalLineHeight: 1.3,
   letterSpacing: 0,
 };
 
@@ -74,10 +76,16 @@ export async function prepareTypography(preferences: Typography) {
   context.font = profile.englishSize + 'px ' + family;
   const latinWidth = Math.max(context.measureText('W').width, context.measureText('M').width);
   const chineseWidth = context.measureText('中').width;
+  const latinMetrics = context.measureText('W');
+  const glyphHeight = latinMetrics.fontBoundingBoxAscent + latinMetrics.fontBoundingBoxDescent;
+  const lineHeightPx = Math.max(profile.englishSize, profile.chineseSize) * 1.7;
   const style: TextStyle = {
     family,
     fontSize: profile.englishSize,
-    lineHeight: (Math.max(profile.englishSize, profile.chineseSize) * 1.7) / profile.englishSize,
+    lineHeight: lineHeightPx / profile.englishSize,
+    // Xterm scales measured glyph height; CSS scales font size. Normalize the
+    // option to the same pixel line box without changing Xterm's renderer.
+    terminalLineHeight: Math.max(1, lineHeightPx / (glyphHeight || profile.englishSize)),
     // Xterm keeps a fixed cell grid. Reserve enough width for two-cell Chinese glyphs.
     letterSpacing: Math.max(0, Math.ceil(chineseWidth / 2 - latinWidth)),
   };

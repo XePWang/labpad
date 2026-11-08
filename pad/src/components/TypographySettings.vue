@@ -75,7 +75,7 @@ watch([error, loading], () => emit('valid', !error.value && !loading.value), { i
       />
     </datalist>
     <p>
-      用于代码编辑器、补全提示和终端。JetBrains Mono
+      用于代码编辑器、补全提示、终端、输出和测试点输入输出。JetBrains Mono
       已内置；其他字体需在本机安装，英文字体建议选择等宽字体。
     </p>
     <p v-if="error" class="field-error" role="alert">{{ error }}</p>

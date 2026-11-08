@@ -455,7 +455,7 @@ export class Storage {
             binding = state.sources[lang];
           if (!(await exists(p.source)) && !binding && lang !== legacy.language) continue;
           let file = path.basename(p.source),
-            source = defaultSource(lang);
+            source = state.starters[lang] ?? defaultSource(lang);
           if (binding) {
             source = (await exists(binding.path))
               ? decodeText(await readFile(binding.path)).text

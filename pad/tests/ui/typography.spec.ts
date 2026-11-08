@@ -105,7 +105,7 @@ test('offline fonts stay consistent in editor, completion and terminal', async (
     await page.locator('.terminal-viewport textarea').focus();
     await page.keyboard.insertText('pwd');
     await page.keyboard.press('Enter');
-    await expect.poll(() => page.locator('.xterm-rows').innerText()).toContain('./ > pwd');
+    await expect.poll(() => page.locator('.xterm-rows').innerText()).toContain('> pwd');
     await page.locator('.terminal-viewport textarea').focus();
     await page.keyboard.insertText('中文ab');
     await page.keyboard.press('ArrowLeft');

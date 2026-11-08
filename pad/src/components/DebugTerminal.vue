@@ -29,6 +29,16 @@ let terminal: Terminal | undefined,
   generation = 0,
   executing = false,
   outputTail = Promise.resolve();
+let fitFrame: number | undefined;
+function refit() {
+  if (fitFrame !== undefined) cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = undefined;
+    if (!terminal || !host.value?.offsetWidth) return;
+    fit.fit();
+    window.labpad.debugResize(terminal.cols, terminal.rows);
+  });
+}
 const cwd = ref('');
 const interactive = () => props.running || !!props.execute;
 const win = /^win/i.test(navigator.platform);
@@ -54,7 +64,7 @@ async function readLoop(id: number) {
   while (interactive() && id === generation && readline) {
     try {
       const program = props.running,
-        text = await readline.read(program ? '> ' : (cwd.value ? './' + cwd.value : './') + ' > ');
+        text = await readline.read(program || !cwd.value ? '> ' : cwd.value + '> ');
       if (id !== generation || !interactive()) return;
       if (program) {
         if (props.running) window.labpad.debugInput(text.replace(/\r?\n/g, '\r') + '\r');
@@ -187,7 +197,7 @@ onMounted(() => {
     cursorInactiveStyle: 'none',
     scrollback: props.scrollback,
     fontSize: (props.textStyle ?? fallbackTextStyle).fontSize,
-    lineHeight: (props.textStyle ?? fallbackTextStyle).lineHeight,
+    lineHeight: (props.textStyle ?? fallbackTextStyle).terminalLineHeight,
     letterSpacing: (props.textStyle ?? fallbackTextStyle).letterSpacing,
     fontFamily: (props.textStyle ?? fallbackTextStyle).family,
     theme: colors(),
@@ -203,8 +213,7 @@ onMounted(() => {
   terminal.textarea?.setAttribute('aria-label', '终端输入');
   observer = new ResizeObserver(() => {
     if (host.value?.offsetWidth) {
-      fit.fit();
-      window.labpad.debugResize(terminal!.cols, terminal!.rows);
+      refit();
     }
   });
   observer.observe(host.value!);
@@ -244,10 +253,9 @@ watch(
     const s = value ?? fallbackTextStyle;
     terminal.options.fontFamily = s.family;
     terminal.options.fontSize = s.fontSize;
-    terminal.options.lineHeight = s.lineHeight;
+    terminal.options.lineHeight = s.terminalLineHeight;
     terminal.options.letterSpacing = s.letterSpacing;
-    fit?.fit();
-    window.labpad.debugResize(terminal.cols, terminal.rows);
+    refit();
   },
 );
 watch(
@@ -265,6 +273,7 @@ watch(
 onBeforeUnmount(() => {
   generation++;
   observer?.disconnect();
+  if (fitFrame !== undefined) cancelAnimationFrame(fitFrame);
   readline?.abortRead();
   terminal?.dispose();
 });
@@ -299,9 +308,15 @@ defineExpose({
   height: 100%;
   overflow: hidden;
 }
-.terminal-viewport {
+.debug-terminal {
   padding: 6px 10px;
   box-sizing: border-box;
+}
+/* Xterm 6 owns scrolling inside .xterm-scrollable-element. The legacy outer
+   viewport CSS otherwise adds native scrollbars and exposes a black strip. */
+.debug-terminal .xterm .xterm-viewport {
+  overflow: hidden;
+  background: var(--editor);
 }
 .debug-terminal .xterm {
   height: 100%;

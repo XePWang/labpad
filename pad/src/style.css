@@ -484,10 +484,6 @@ p {
 .diff-view {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font:
-    12px/1.6 Consolas,
-    'Microsoft YaHei',
-    monospace;
   background: #0d1623;
   padding: 9px 10px;
   margin: 0 12px 12px;
@@ -566,11 +562,6 @@ p {
   overflow: auto;
   margin: 0;
   padding: 14px 20px;
-  font:
-    12px/1.6 'Cascadia Code',
-    Consolas,
-    'Microsoft YaHei',
-    monospace;
   color: #a6bad1;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -930,4 +921,20 @@ footer {
 .bottom-heading > .diagnostic-counts {
   margin-left: auto;
   margin-right: 14px;
+}
+
+.output-log,
+.io-pair textarea,
+.actual-output,
+.diff-view {
+  font-family: var(--code-font-family, monospace);
+  font-size: var(--code-font-size, 14px);
+  line-height: var(--code-line-height, 1.7);
+}
+
+.io-pair textarea {
+  min-height: max(
+    64px,
+    calc(var(--code-font-size, 14px) * var(--code-line-height, 1.7) * 2 + 16px)
+  );
 }

@@ -1115,6 +1115,12 @@ function enqueueSave(input: Draft, id: number) {
         current.savedSource = result.source;
         current.missing = false;
         current.document.missing = false;
+        if (activeId.value === current.id && draft.value && 'missing' in draft.value) {
+          const wasPaused = pauseSave;
+          pauseSave = true;
+          delete draft.value.missing;
+          pauseSave = wasPaused;
+        }
         current.document.sourceFile = result.path;
         if (current.revision === id || current.document.source === result.source) {
           current.document.source = result.source;
@@ -2358,7 +2364,15 @@ async function foldRight(collapsed: boolean) {
 }
 </script>
 <template>
-  <div class="app-shell" :data-theme="config?.theme || 'dark'">
+  <div
+    class="app-shell"
+    :data-theme="config?.theme || 'dark'"
+    :style="{
+      '--code-font-family': textStyle.family,
+      '--code-font-size': textStyle.fontSize + 'px',
+      '--code-line-height': textStyle.lineHeight,
+    }"
+  >
     <header class="brandbar">
       <div class="brand">
         <span class="brand-mark">L<span>↗</span></span

@@ -181,7 +181,7 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
     await page.locator('.toolbar').waitFor();
     await page.getByRole('button', { name: '终端', exact: true }).click();
     const rows = page.locator('.xterm-rows');
-    await expect(rows).toContainText('./inner >');
+    await expect(rows).toContainText('inner>');
     await page.getByRole('combobox', { name: '题号', exact: true }).click();
     await page.getByRole('option').filter({ hasText: 'two' }).click();
     await expect(page.getByRole('combobox', { name: '题号', exact: true })).toContainText('two');
@@ -189,11 +189,11 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
       window.labpad.terminalContext((await window.labpad.bootstrap()).draft),
     );
     expect(context.cwd).toBe('inner');
-    await expect(rows).toContainText('./inner >');
+    await expect(rows).toContainText('inner>');
     const input = page.locator('.xterm-helper-textarea');
     await input.focus();
     await page.keyboard.type('touch ');
-    await expect(rows).toContainText('./inner > touch');
+    await expect(rows).toContainText('inner> touch');
     await page.evaluate(() =>
       window.labpad.fileOperation('TerminalFixture', 'two', {
         action: 'rename',
@@ -201,7 +201,7 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
         destination: 'renamed',
       }),
     );
-    await expect(rows).toContainText('./renamed > touch');
+    await expect(rows).toContainText('renamed> touch');
     await page.keyboard.type('marker.txt');
     await page.keyboard.press('Enter');
     await expect
@@ -250,7 +250,7 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
           .filter(Boolean)
           .at(-1),
       )
-      .toBe('./ >');
+      .toBe('>');
     await page.keyboard.type('pwd');
     await page.keyboard.press('Enter');
     await expect.poll(() => app.evaluate(() => (globalThis as any).__lateStarted)).toBe(true);
@@ -267,7 +267,7 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
           .filter(Boolean)
           .at(-1),
       )
-      .toBe('./ >');
+      .toBe('>');
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
     await app.close().catch(() => {});
