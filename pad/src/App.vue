@@ -62,6 +62,7 @@ import type {
   EditorCursor,
   LayoutConfig,
   LoadedDraft,
+  SaveResult,
   TestState,
 } from '../shared/types';
 const api = window.labpad,
@@ -1113,10 +1114,12 @@ function recordState() {
     },
   );
 }
-function enqueueSave(input: Draft, id: number) {
+function enqueueSave(input: Draft, id: number): Promise<SaveResult> {
   const value = input;
   const tab = tabs.value.find((t) => t.id === value.documentId);
   if (!tab) return Promise.reject(new Error('请先新建或导入源码'));
+  if (tab.document.ruleFile && !tab.dirty)
+    return Promise.resolve({ path: tab.document.sourceFile ?? '', source: tab.savedSource });
   if (tab.document.ruleFile && rulesDirty.value)
     return Promise.reject(new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。'));
   tab.status = '保存中…';
