@@ -882,13 +882,6 @@ footer {
   gap: 12px;
   flex-wrap: wrap;
 }
-.app-shell button.primary:disabled {
-  background: var(--panel);
-  border-color: var(--border);
-  color: var(--muted);
-  opacity: 1;
-  cursor: default;
-}
 .bottom-heading .small-actions {
   align-items: center;
 }
@@ -900,14 +893,6 @@ footer {
   gap: 8px;
 }
 
-.app-shell[data-theme='dark'] {
-  --action-bg: #0e639c;
-  --action-hover: #1177bb;
-}
-.app-shell[data-theme='light'] {
-  --action-bg: #0067c0;
-  --action-hover: #005fb8;
-}
 .case-selection {
   display: flex;
 }

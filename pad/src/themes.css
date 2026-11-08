@@ -15,6 +15,8 @@
   --muted: #969696;
   --secondary: #b3b3b3;
   --accent: #007acc;
+  --action-bg: #0e639c;
+  --action-hover: #1177bb;
   --editor: #1e1e1e;
   --add-bg: #17412b;
   --add: #b5e9bd;
@@ -38,6 +40,8 @@
   --muted: #6b6b6b;
   --secondary: #424242;
   --accent: #007acc;
+  --action-bg: #0067c0;
+  --action-hover: #005fb8;
   --editor: #ffffff;
   --add-bg: #ddf5da;
   --add: #17672b;
@@ -80,23 +84,30 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
-.app-shell[data-theme] button {
+:is(.app-shell, .export-dialog)[data-theme] button {
   background: var(--raised);
   color: var(--text);
   border-color: var(--border);
 }
-.app-shell[data-theme] button:hover:not(:disabled) {
+:is(.app-shell, .export-dialog)[data-theme] button:hover:not(:disabled) {
   background: var(--input);
   border-color: var(--accent);
 }
-.app-shell[data-theme] button.primary:not(:disabled) {
+:is(.app-shell, .export-dialog)[data-theme] button.primary:not(:disabled) {
   background: var(--action-bg);
   border-color: var(--action-bg);
   color: white;
 }
-.app-shell[data-theme] button.primary:hover:not(:disabled) {
+:is(.app-shell, .export-dialog)[data-theme] button.primary:hover:not(:disabled) {
   background: var(--action-hover);
   border-color: var(--action-hover);
+}
+:is(.app-shell, .export-dialog)[data-theme] button.primary:disabled {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--muted);
+  opacity: 1;
+  cursor: default;
 }
 .app-shell[data-theme]
   :is(

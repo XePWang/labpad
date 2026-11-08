@@ -364,11 +364,6 @@ defineExpose({
   color: var(--text);
   border: 1px solid var(--border);
 }
-.export-dialog button.primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
 .export-chevron {
   flex-shrink: 0;
   color: var(--muted);
