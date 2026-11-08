@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -47,7 +48,7 @@ test('offline fonts stay consistent in editor, completion and terminal', async (
         .evaluate((el) => getComputedStyle(el).fontSize),
     ).toBe('14px');
     await page.keyboard.press('Escape');
-    await page.locator('.settings-button').click();
+    await openSettings(page);
     await expect(page.getByLabel('英文字体', { exact: true })).toHaveValue('JetBrains Mono');
     await page.getByRole('spinbutton', { name: '英文字号', exact: true }).fill('18');
     await page.getByRole('spinbutton', { name: '中文字号', exact: true }).fill('26');
@@ -112,7 +113,7 @@ test('offline fonts stay consistent in editor, completion and terminal', async (
     await page.keyboard.press('Backspace');
     await page.keyboard.press('Enter');
     await expect.poll(() => page.locator('.xterm-rows').innerText()).toContain('未知命令：中文b');
-    await page.locator('.settings-button').click();
+    await openSettings(page);
     const customLatin = process.platform === 'win32' ? 'Consolas' : 'DejaVu Sans Mono';
     const customChinese = process.platform === 'win32' ? 'Microsoft YaHei' : 'Noto Sans CJK SC';
     await page.getByLabel('英文字体', { exact: true }).fill(customLatin);
@@ -131,7 +132,7 @@ test('offline fonts stay consistent in editor, completion and terminal', async (
     });
     expect(smallerChinese).toBeGreaterThan(10);
     expect(smallerChinese).toBeLessThan(14);
-    await page.locator('.settings-button').click();
+    await openSettings(page);
     await page.getByLabel('英文字体', { exact: true }).fill('LabPad missing font fixture');
     await expect(page.locator('.typography-settings .field-error')).toContainText('未找到英文字体');
     await expect(page.getByRole('button', { name: '保存设置', exact: true })).toBeDisabled();

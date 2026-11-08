@@ -158,7 +158,7 @@ async function closeApplication(app) {
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async (...args) => {
         const options = args.at(-1),
-          discard = options.buttons.indexOf('不保存');
+          discard = options.buttons.findIndex(label => label === '不保存' || label === 'Don’t Save');
         return {
           response: discard >= 0 ? discard : (options.cancelId ?? 0),
           checkboxChecked: false,

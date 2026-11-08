@@ -962,5 +962,21 @@
   "step": "step",
   "pause": "pause",
   "entry": "entry",
-  "exception": "exception"
+  "exception": "exception",
+  "Ln {0} · Col {1}": "Ln {0} · Col {1}",
+  " · {0} selected": " · {0} selected",
+  "{0} · Spaces: {1}": "{0} · Spaces: {1}",
+  "Build Settings · {0}": "Build Settings · {0}",
+  "Current Experiment · {0}": "Current Experiment · {0}",
+  "{0} problems · {1} source files": "{0} problems · {1} source files",
+  "{0} source files · {1}": "{0} source files · {1}",
+  "About LabPad": "About LabPad",
+  "Services": "Services",
+  "Hide LabPad": "Hide LabPad",
+  "Hide Others": "Hide Others",
+  "Show All": "Show All",
+  "Quit LabPad": "Quit LabPad",
+  "Preferences": "Preferences",
+  "C (.c)": "C (.c)",
+  "C++ (.cpp)": "C++ (.cpp)"
 }

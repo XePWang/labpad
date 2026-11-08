@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron } from '@playwright/test';
 import { withFixtures } from './legacy-flow.cjs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -113,7 +114,7 @@ test('sidebars preserve state and focus, share motion settings and use the same 
       throw e;
     }
     for (const theme of ['dark', 'light']) {
-      await page.locator('.settings-button').click();
+      await openSettings(page);
       await page.getByRole('combobox', { name: '主题', exact: true }).selectOption(theme);
       await page.getByRole('button', { name: '保存设置', exact: true }).click();
       await expect(page.locator('.settings-dialog')).toHaveCount(0);

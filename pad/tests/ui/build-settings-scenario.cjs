@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {project}=require('./selectors.cjs');
@@ -7,7 +8,7 @@ async function runBuildSettingsScenario(electron,{executable,cwd,evidence}){
  let app,page;const button=name=>page.getByRole('button',{name,exact:true}),settings=()=>page.getByRole('dialog',{name:'设置',exact:true}),build=()=>page.locator('.build-settings'),panel=()=>page.locator('.parameter-settings'),field=name=>panel().getByRole('textbox',{name,exact:true}),scope=()=>panel().getByRole('combobox',{name:'参数来源',exact:true}),editor=()=>page.locator('.cm-content'),state=()=>page.evaluate(()=>window.labpad.bootstrap());
  const pass=(id,label)=>{groups.push({id,label});console.log('PASS PS'+id+' '+label);};
  async function menu(name,item){await button(name).click();await page.getByRole('menuitem',{name:item,exact:true}).click();}
- async function openSettings(){await button('⚙ 设置').click();await settings().waitFor();await settings().locator('summary').filter({hasText:/^高级编译参数$/}).click();await panel().waitFor();}
+ async function openSettings(){await openApplicationSettings(page);await settings().waitFor();await settings().locator('summary').filter({hasText:/^高级编译参数$/}).click();await panel().waitFor();}
  async function cancelSettings(){await settings().getByRole('button',{name:'取消',exact:true}).click();await until(()=>settings().count().then(n=>n===0),'settings closed');}
  async function saveSettings(){await settings().getByRole('button',{name:'保存设置',exact:true}).click();await until(()=>settings().count().then(n=>n===0),'settings saved');}
  async function openBuild(){await page.getByRole('combobox',{name:'实验项目',exact:true}).click();await page.getByRole('menuitem',{name:'构建设置…',exact:true}).click();await build().waitFor();}

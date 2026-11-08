@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -116,7 +117,7 @@ test('current release guide screenshots', async () => {
       .locator('.build-settings')
       .getByRole('button', { name: '取消', exact: true })
       .click();
-    await page.getByRole('button', { name: '⚙ 设置', exact: true }).click();
+    await openSettings(page);
     const settings = page.getByRole('dialog', { name: '设置', exact: true });
     await settings.locator('summary').filter({ hasText: '高级编译参数' }).click();
     await settings.locator('.parameter-settings').scrollIntoViewIfNeeded();

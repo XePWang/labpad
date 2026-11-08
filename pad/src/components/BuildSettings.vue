@@ -152,7 +152,7 @@ function fallback(language: 'c' | 'cpp') {
           :aria-label="t('Project Build Settings')"
         >
           <DialogTitle as-child
-            ><h2>{{ t('Build Settings ·') }}{{ lab }}</h2></DialogTitle
+            ><h2>{{ t('Build Settings · {0}', lab) }}</h2></DialogTitle
           >
           <p>
             {{ compilerLabel

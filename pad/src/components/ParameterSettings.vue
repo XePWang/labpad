@@ -101,7 +101,7 @@ onBeforeUnmount(() => {
         :disabled="workspace"
       >
         <option v-if="!workspace" value="global">{{ t('Global Defaults') }}</option>
-        <option v-if="lab" value="project">{{ t('Current Experiment ·') }}{{ lab }}</option>
+        <option v-if="lab" value="project">{{ t('Current Experiment · {0}', lab) }}</option>
       </select></label
     >
     <template v-if="workspace"

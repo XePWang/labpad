@@ -160,7 +160,7 @@ defineExpose({
             }}
           </p>
           <div v-if="!workspace" class="export-summary">
-            <span>{{ topics }}{{ t('problems ·') }}{{ drafts.length }}{{ t('source files') }}</span>
+            <span>{{ t('{0} problems · {1} source files', topics, drafts.length) }}</span>
             <div>
               <button :disabled="loading" @click="all(true)">{{ t('Select All') }}</button
               ><button :disabled="loading" @click="all(false)">{{ t('Deselect All') }}</button>
@@ -236,7 +236,7 @@ defineExpose({
           ><ul class="export-warnings">
             <li v-for="warning in preview.warnings" :key="warning">{{ warning }}</li>
           </ul>
-          <p>{{ preview.files.length }}{{ t('source files ·') }}{{ preview.name }}</p>
+          <p>{{ t('{0} source files · {1}', preview.files.length, preview.name) }}</p>
           <button v-if="missingIdentity" :disabled="loading" @click="emit('settings')">
             {{ t('Open Settings') }}
           </button></template

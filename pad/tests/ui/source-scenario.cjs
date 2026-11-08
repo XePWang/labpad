@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 async function until(fn,label,timeout=150000){const started=Date.now();while(Date.now()-started<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,70));}throw Error('Timeout: '+label);}
@@ -31,7 +32,7 @@ async function runSourceScenario(electron,{executable,cwd,evidence}){
   await until(()=>page.evaluate(s=>window.__output.includes(s),expected),'actual '+expected);await until(()=>page.getByRole('button',{name:/^编译$/}).isEnabled(),'run ends');
  }
  async function importFile(file){await app.evaluate((_,value)=>globalThis.__files=[value],file);await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();await until(()=>button('导入').isEnabled(),'import finishes');}
- async function settings(mode){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('combobox',{name:'保存方式',exact:true}).selectOption(mode);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});}
+ async function settings(mode){await openApplicationSettings(page);await page.getByRole('combobox',{name:'保存方式',exact:true}).selectOption(mode);await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});}
  try{
   await prepare();assert.equal(await button('打开源码').count(),0);assert.equal(await button('导入源码').count(),0);
   assert.deepEqual((await toolbar().getByRole('button').allTextContents()).slice(0,2),['新建源码','导入']);

@@ -14,6 +14,15 @@ test('language switches search and settings without changing source or query', a
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByLabel('界面语言', { exact: true }).selectOption('en-US');
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+    await expect(page.locator('.toolbar .problem-trigger')).toHaveText(['<None>', '<None>']);
+    expect(
+      await page.locator('.cm-search').evaluate((node) => {
+        const box = node.getBoundingClientRect();
+        const front = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return !!front?.closest('.modal-backdrop');
+      }),
+    ).toBe(true);
+
     await expect(page.locator('.cm-search input[name=search]')).toHaveAttribute(
       'placeholder',
       'Find',

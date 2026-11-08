@@ -2612,7 +2612,24 @@ async function initialize() {
 function installApplicationMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+      ...(process.platform === 'darwin'
+        ? [
+            {
+              label: 'LabPad',
+              submenu: [
+                { role: 'about' as const, label: localize('About LabPad') },
+                { type: 'separator' as const },
+                { role: 'services' as const, label: localize('Services') },
+                { type: 'separator' as const },
+                { role: 'hide' as const, label: localize('Hide LabPad') },
+                { role: 'hideOthers' as const, label: localize('Hide Others') },
+                { role: 'unhide' as const, label: localize('Show All') },
+                { type: 'separator' as const },
+                { role: 'quit' as const, label: localize('Quit LabPad') },
+              ],
+            },
+          ]
+        : []),
       {
         label: localize('Edit'),
         submenu: [

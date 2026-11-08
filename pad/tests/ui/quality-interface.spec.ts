@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect } from '@playwright/test';
 import { qualityFixture as fixture } from './quality-fixture';
 import { project } from './selectors.cjs';
@@ -57,7 +58,7 @@ test('shared modal actions maintain platform order, keyboard focus and cancellat
       await page.keyboard.press('Escape');
       await expect(root).toHaveCount(0);
     }
-    await page.locator('.settings-button').click();
+    await openSettings(page);
     await actions(page.locator('.settings-dialog'), '保存设置', '取消');
     await project(page).selectOption('@new:lab');
     const create = page.locator('.create-dialog');
@@ -161,7 +162,7 @@ test('all sixteen zoom presets retain reachable modal actions and the selected z
       await page.reload();
       await page.locator('.toolbar').waitFor();
       console.log('ZOOM_BEGIN ' + percent);
-      await page.locator('.settings-button').click();
+      await openSettings(page);
       const dialog = page.locator('.settings-dialog');
       const size = await dialog.evaluate((el) => {
         const r = el.getBoundingClientRect();
@@ -227,7 +228,7 @@ test('1280x720 windows keep UI fonts separate from opposite code-size extremes',
         english + 'px',
       );
       await page.keyboard.press('Escape');
-      await page.locator('.settings-button').click();
+      await openSettings(page);
       expect(
         await page.locator('.settings-dialog').evaluate((el) => getComputedStyle(el).fontFamily),
       ).not.toContain('LabPad Latin');

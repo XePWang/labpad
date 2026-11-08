@@ -3087,9 +3087,13 @@ async function foldRight(collapsed: boolean) {
                         class="build-excluded"
                         :title="membershipMessage"
                         >{{ t('Check LPMake') }}</span
-                      ><span v-else
-                        >{{ draft.language === 'c' ? 'C' : 'C++' }}{{ t('· Spaces:')
-                        }}{{ config.indentSize }}</span
+                      ><span v-else>{{
+                        t(
+                          '{0} · Spaces: {1}',
+                          draft.language === 'c' ? 'C' : 'C++',
+                          config.indentSize,
+                        )
+                      }}</span
                       ><span>{{
                         config.saveMode === 'auto' ? t('Auto Save') : t('Manual Save')
                       }}</span>
@@ -3457,10 +3461,10 @@ async function foldRight(collapsed: boolean) {
           >
         </div>
         <span class="cursor-position" :aria-label="t('Cursor Position')"
-          >{{ t('Ln') }}{{ cursor.line }}{{ t('· Col') }}{{ cursor.column
-          }}<span v-if="cursor.selectionChars"
-            >{{ t('· Selected') }}{{ cursor.selectionChars }}</span
-          ></span
+          >{{ t('Ln {0} · Col {1}', cursor.line, cursor.column)
+          }}<span v-if="cursor.selectionChars">{{
+            t(' · {0} selected', cursor.selectionChars)
+          }}</span></span
         >
       </footer>
     </template>
@@ -3482,7 +3486,7 @@ async function foldRight(collapsed: boolean) {
           >
             <div class="settings-title">
               <div>
-                <span class="eyebrow">PREFERENCES</span
+                <span class="eyebrow">{{ t('Preferences') }}</span
                 ><DialogTitle as-child
                   ><h2 id="settings-title">{{ t('Settings') }}</h2></DialogTitle
                 >
@@ -3560,8 +3564,8 @@ async function foldRight(collapsed: boolean) {
                   ><label
                     >{{ t('Source Language')
                     }}<select v-model="settings.language" :aria-label="t('Source Language')">
-                      <option value="c">C（.c）</option>
-                      <option value="cpp">C++（.cpp）</option>
+                      <option value="c">{{ t('C (.c)') }}</option>
+                      <option value="cpp">{{ t('C++ (.cpp)') }}</option>
                     </select></label
                   ><label
                     >{{ t('Tab / Indent Size')

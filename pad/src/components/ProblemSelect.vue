@@ -32,13 +32,8 @@ const emit = defineEmits<{ (e: 'select', value: string): void }>();
     @update:model-value="emit('select', String($event) === '@none' ? '' : String($event))"
   >
     <SelectTrigger class="problem-trigger" :data-value="value" :aria-label="t('Problem')"
-      ><SelectValue /><svg
-        width="14"
-        height="14"
-        viewBox="0 0 14 14"
-        fill="none"
-        aria-hidden="true"
-      >
+      ><SelectValue>{{ value || noneLabel }}</SelectValue
+      ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <path
           d="m3 5 4 4 4-4"
           stroke="currentColor"

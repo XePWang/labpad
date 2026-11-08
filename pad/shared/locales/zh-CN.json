@@ -962,5 +962,21 @@
   "step": "单步",
   "pause": "暂停",
   "entry": "入口",
-  "exception": "异常"
+  "exception": "异常",
+  "Ln {0} · Col {1}": "行 {0} · 列 {1}",
+  " · {0} selected": " · 已选 {0}",
+  "{0} · Spaces: {1}": "{0} · 空格：{1}",
+  "Build Settings · {0}": "构建设置 · {0}",
+  "Current Experiment · {0}": "当前实验项目 · {0}",
+  "{0} problems · {1} source files": "{0} 题 · {1} 个源码",
+  "{0} source files · {1}": "{0} 个源码 · {1}",
+  "About LabPad": "关于 LabPad",
+  "Services": "服务",
+  "Hide LabPad": "隐藏 LabPad",
+  "Hide Others": "隐藏其他应用",
+  "Show All": "全部显示",
+  "Quit LabPad": "退出 LabPad",
+  "Preferences": "首选项",
+  "C (.c)": "C（.c）",
+  "C++ (.cpp)": "C++（.cpp）"
 }

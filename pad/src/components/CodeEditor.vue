@@ -500,6 +500,11 @@ defineExpose({
 <template><div ref="host" class="code-editor" data-testid="editor"></div></template>
 
 <style>
+/* Keep CodeMirror's own panel layers below application dialogs and portals. */
+.code-editor {
+  isolation: isolate;
+}
+
 /* Keep the native search panel separate from application form layout. */
 
 .code-editor .cm-search label {

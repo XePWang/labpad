@@ -58,7 +58,7 @@ async function runLayoutScenario(electron,{executable,cwd,evidence}){
   assert.ok(fits.docWidth<=fits.width+1);assert.ok(fits.docHeight<=fits.height+1);assert.ok((await page.locator('.bottom-panel').boundingBox()).height>50);
   assert.equal((await state()).draft.source,textBefore);
   const casePane=await page.locator('.cases-pane').boundingBox();
-  await button('更多').click();for(const label of ['题目文件','重新加载','新增测试点'])assert.equal(await page.getByRole('menuitem',{name:label,exact:true}).isVisible(),true);await page.keyboard.press('Escape');
+  await page.locator('.cases-heading').getByRole('button',{name:'更多',exact:true}).click();for(const label of ['题目文件','重新加载','新增测试点'])assert.equal(await page.getByRole('menuitem',{name:label,exact:true}).isVisible(),true);await page.keyboard.press('Escape');
   await page.screenshot({path:path.join(evidence,'layout-compact.png'),fullPage:true});
   await editor().focus();await page.keyboard.press('Control+Home');const oldHint=await status().textContent();await page.waitForTimeout(9300);assert.notEqual(await status().textContent(),oldHint);
   pass('smaller windows fit without page overflow; idle hints rotate and reduced rows preserve work area');

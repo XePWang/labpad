@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect } from '@playwright/test';
 import { qualityFixture } from './quality-fixture';
 import { compileOnly } from './legacy-flow.cjs';
@@ -141,7 +142,7 @@ for (const tool of tools)
           await window.labpad.saveConfig(b.config, b.dataRoot);
         });
         await reload();
-        await page.locator('.settings-button').click();
+        await openSettings(page);
         await page
           .getByRole('combobox', { name: '编译器使用方式', exact: true })
           .selectOption('custom');

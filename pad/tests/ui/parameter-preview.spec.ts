@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron } from '@playwright/test';
 import { withFixtures } from './legacy-flow.cjs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -33,7 +34,7 @@ for (const mode of ['problem-set', 'project'] as const)
       await page.reload();
       await page.locator('.toolbar').waitFor();
       const before = await page.evaluate(() => window.labpad.bootstrap());
-      await page.locator('.settings-button').click();
+      await openSettings(page);
       const settings = page.getByRole('dialog', { name: '设置', exact: true });
       await settings.locator('summary').filter({ hasText: '高级编译参数' }).click();
       const panel = settings.locator('.parameter-settings'),

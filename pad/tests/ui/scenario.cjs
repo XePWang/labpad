@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -29,7 +30,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
  }
  async function files(paths){await app.evaluate((_,v)=>globalThis.__files=v,paths);}
  async function answer(value){await app.evaluate((_,v)=>globalThis.__answer=v,value);}
- async function settings(){await page.getByRole('button',{name:/设置/}).click();await page.getByRole('dialog',{name:'设置',exact:true}).waitFor();}
+ async function settings(){await openApplicationSettings(page);await page.getByRole('dialog',{name:'设置',exact:true}).waitFor();}
  async function apply(){await button('保存设置').click();await page.getByRole('dialog',{name:'设置',exact:true}).waitFor({state:'hidden'});}
  async function save(all=false){await button('保存').click();await page.getByRole('menuitem',{name:all?'保存全部':'保存当前',exact:true}).click();await until(()=>page.locator('.save-status').textContent().then(v=>v==='已保存'),'saved');}
  async function context(item,index){await tabs().nth(index??(await tabs().count()-1)).click({button:'right'});await page.getByRole('menuitem',{name:item,exact:true}).click();}
@@ -96,7 +97,7 @@ async function runScenario(electron,{executable,cwd,evidence}){
   if (await button('重新加载').isVisible()) {
     await button('重新加载').click();
   } else {
-    await button('更多').click();
+    await page.locator('.cases-heading').getByRole('button',{name:'更多',exact:true}).click();
     await page.getByRole('menuitem', { name: '重新加载', exact: true }).click();
   }
   await until(()=>button('导入').isEnabled(),'reload complete');await compileAndRun(page,'F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');

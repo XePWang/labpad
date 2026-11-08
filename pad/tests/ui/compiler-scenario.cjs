@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -26,7 +27,7 @@ async function runCompilerScenario(electron,{executable,cwd,evidence}){
   page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message));await page.locator('.toolbar').waitFor();
   await app.evaluate(({dialog})=>{globalThis.__source='';dialog.showMessageBox=globalThis.__wrapNativeReply(async()=>({response:1,checkboxChecked:false}));dialog.showOpenDialog=async()=>({canceled:!globalThis.__source,filePaths:[globalThis.__source]});});
  }
- async function settings(){await page.getByRole('button',{name:/设置/}).click();await settingsDialog().waitFor();}
+ async function settings(){await openApplicationSettings(page);await settingsDialog().waitFor();}
  async function detect(){await button('自动检测').click();await dialog().waitFor({timeout:60000});}
  async function importSource(){await button('导入').click();await page.getByRole('menuitem',{name:'导入源码',exact:true}).click();}
  function pass(label){checks.push(label);console.log('PASS '+label);}

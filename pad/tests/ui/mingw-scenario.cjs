@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const until=async(fn,label,timeout=120000)=>{const start=Date.now();while(Date.now()-start<timeout){if(await fn())return;await new Promise(r=>setTimeout(r,70));}throw Error('Timeout: '+label);};
@@ -10,7 +11,7 @@ async function runMingwScenario(electron,{executable,evidence,bin}){
   page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('.toolbar').waitFor();
   const button=name=>page.getByRole('button',{name,exact:true}),editor=()=>page.locator('.cm-content');
   await page.evaluate(()=>{window.__mingwOutput='';window.labpad.onDebugData((data,ack)=>{window.__mingwOutput+=data;ack();});});
-  await page.getByRole('button',{name:'⚙ 设置',exact:true}).click();await page.getByRole('combobox',{name:'编译器使用方式',exact:true}).selectOption('custom');await button('自动检测').click();await page.getByRole('heading',{name:'自动检测编译器',exact:true}).waitFor();
+  await openApplicationSettings(page);await page.getByRole('combobox',{name:'编译器使用方式',exact:true}).selectOption('custom');await button('自动检测').click();await page.getByRole('heading',{name:'自动检测编译器',exact:true}).waitFor();
   const candidate=page.locator('.compiler-option').filter({hasText:bin}).filter({hasText:'GCC'}).first();await candidate.getByRole('radio').check();await button('使用此编译器').click();
   assert.equal(await page.getByRole('combobox',{name:'编译器类型',exact:true}).inputValue(),'gcc');
   assert.equal((await page.getByRole('textbox',{name:'C 编译器路径',exact:true}).inputValue()).toLowerCase(),path.join(bin,'gcc.exe').toLowerCase());

@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron, type Page } from '@playwright/test';
 import { withFixtures } from './legacy-flow.cjs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -58,7 +59,7 @@ for (const scale of [1, 1.25])
         { english: 18, chinese: 26, theme: 'dark' },
         { english: 21, chinese: 17, theme: 'light' },
       ]) {
-        await page.locator('.settings-button').click();
+        await openSettings(page);
         await page
           .getByRole('spinbutton', { name: '英文字号', exact: true })
           .fill(String(profile.english));

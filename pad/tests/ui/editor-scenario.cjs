@@ -1,3 +1,4 @@
+const {openSettings:openApplicationSettings}=require('./settings-helper.cjs');
 const {compileAndRun,compileOnly,ensureCompiled,runSingle,selectTerminalText}=require('./legacy-flow.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -44,7 +45,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   await key('Control+Home');
  }
  async function settings(values){
-  await page.getByRole('button',{name:/设置/}).click();await page.getByRole('dialog').waitFor();
+  await openApplicationSettings(page);await page.getByRole('dialog').waitFor();
   for(const [label,value] of Object.entries(values)){
    if(typeof value==='boolean')await page.getByRole('checkbox',{name:label,exact:true}).setChecked(value);
    else await select(label).selectOption(String(value));
@@ -148,7 +149,7 @@ async function runEditorScenario(electron,{executable,cwd,evidence}){
   assert.equal(await text(),beforeTheme);
   await key('Control+z');await equal('int main(void) {\n    return 0;\n}\n','theme does not reset history');
   await page.screenshot({path:path.join(evidence,'editor-light.png'),fullPage:true});
-  await page.getByRole('button',{name:/设置/}).click();await page.screenshot({path:path.join(evidence,'settings-light.png'),fullPage:true});await button('取消').click();
+  await openApplicationSettings(page);await page.screenshot({path:path.join(evidence,'settings-light.png'),fullPage:true});await button('取消').click();
   await settings({'主题':'dark'});assert.equal(await editor().evaluate(el=>getComputedStyle(el.closest('.cm-editor')).backgroundColor),'rgb(30, 30, 30)');
   await button('终端').click();assert.equal(await page.locator('.xterm-scrollable-element').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(30, 30, 30)');await button('输出').click();
   whitespace=await page.locator('.cm-highlightSpace').first().evaluate(el=>getComputedStyle(el).background);assert.match(whitespace,/0.35/);

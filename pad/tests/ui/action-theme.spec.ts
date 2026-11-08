@@ -1,3 +1,4 @@
+import { openSettings } from './settings-helper.cjs';
 import { test, expect, _electron } from '@playwright/test';
 import type { Locator } from '@playwright/test';
 import { withFixtures, closeApplication } from './legacy-flow.cjs';
@@ -63,7 +64,7 @@ test('portaled export actions share normal, hover, focus and disabled styles in 
       };
     }
     for (const theme of ['dark', 'light'] as const) {
-      await page.locator('.settings-button').click();
+      await openSettings(page);
       await page.getByRole('combobox', { name: '主题', exact: true }).selectOption(theme);
       await page.getByRole('button', { name: '保存设置', exact: true }).click();
       await expect(page.locator('.settings-dialog')).toHaveCount(0);
