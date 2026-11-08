@@ -265,14 +265,12 @@ export class FileService {
         } else if (action === 'move' || action === 'rename') {
           const intermediate = path.join(transaction, String(n++));
           await rename(from, intermediate);
-          try {
-            await mkdir(path.dirname(to!), { recursive: true });
-            await rename(intermediate, to!);
-          } catch (e) {
-            await rename(intermediate, from);
-            throw e;
-          }
-          undo.push(() => rename(to!, from));
+          // Register recovery before the next I/O: a failed restore must retain this backup.
+          let current = intermediate;
+          undo.push(() => rename(current, from));
+          await mkdir(path.dirname(to!), { recursive: true });
+          await rename(intermediate, to!);
+          current = to!;
           changes.push({ from: p.from, to: p.to, replaced });
         } else {
           await mkdir(path.dirname(to!), { recursive: true });
@@ -298,7 +296,7 @@ export class FileService {
       if (failures.length)
         throw new AggregateError(
           [error, ...failures],
-          '文件操作失败，部分文件未能恢复；请保留编辑内容并检查实验目录。',
+          '文件操作失败，部分文件未能恢复；备份保留在：' + transaction,
         );
       try {
         await rm(transaction, { recursive: true, force: true });
