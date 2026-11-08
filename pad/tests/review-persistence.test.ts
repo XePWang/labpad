@@ -134,5 +134,5 @@ test('batch rerun without the original ZIP still selects the best complete binar
     assert.equal(second.summary[0]['main_通过'], 2);
     const index = JSON.parse(await readFile(path.join(root, 'src/index.json'), 'utf8'));
     assert.equal(index.length, 2);
-    assert.equal(second.summary[0]['main_采用版本'], first.summary[0]['main_采用版本']);
+    assert.equal(second.summary[0]['main_SHA256'], first.summary[0]['main_SHA256']);
   }));

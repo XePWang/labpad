@@ -41,6 +41,7 @@ test('explicit target compiles B after activation persistence fails and an auxil
       a.source = '#include <stdio.h>\nint main(void){puts("A");return 0;}\n';
       a.problem.testCases = [{ id: 'one', input: '', expectedOutput: 'B\n' }];
       await window.labpad.saveDraft(a);
+      await window.labpad.saveProblem(a.problem);
       a = await window.labpad.loadDraft('TargetFixture', 'one', 'c');
       const b = await window.labpad.newVersion(
         { ...a, source: a.source.replace('"A"', '"B"') },
@@ -413,6 +414,7 @@ test('failed save retries through compile; concurrent requests and judge errors 
       draft.source = '#include <stdio.h>\nint main(void){puts("OK");return 0;}\n';
       draft.problem.testCases = [{ id: 'one', input: '', expectedOutput: 'OK\n' }];
       await window.labpad.saveDraft(draft);
+      await window.labpad.saveProblem(draft.problem);
       await window.labpad.loadDraft('TaskFixture', 'one', 'c');
     });
     await page.reload();
@@ -573,6 +575,7 @@ test('native and terminal launch errors restore controls and preserve successful
       const draft = await window.labpad.createProblem('TerminalLaunchFixture', 'one', 'c');
       draft.source = '#include <stdio.h>\nint main(void){puts("terminal recovered");return 0;}\n';
       await window.labpad.saveDraft(draft);
+      await window.labpad.saveProblem(draft.problem);
       await window.labpad.loadDraft('TerminalLaunchFixture', 'one', 'c');
     });
     await page.reload();
@@ -720,6 +723,7 @@ test('completion ranks locals, accepts atomically and respects namespaces and fo
       const make = await window.labpad.workspaceOpen('ForcedFixture', 'LPMake.txt');
       make.source += '\nset_language("c++")\n';
       await window.labpad.saveDraft(make);
+      await window.labpad.saveProblem(make.problem);
     });
     await page.reload();
     await page.locator('.toolbar').waitFor();

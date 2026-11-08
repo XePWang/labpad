@@ -210,6 +210,7 @@ test('same relative filenames in different projects cannot share undo history', 
         const file = await window.labpad.workspaceOpen(name, 'main.c');
         file.source = 'int ' + name + ';\n';
         await window.labpad.saveDraft(file);
+        await window.labpad.saveProblem(file.problem);
       }
       await window.labpad.loadDraft('HistoryA', '', 'c');
     });

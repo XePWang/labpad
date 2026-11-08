@@ -147,7 +147,7 @@ test('importing only I/O leaves the current source file untouched',async()=>{
  try{
   const s=new Storage(dir);await s.init();await s.createLab('Lab 2');const d=await s.createProblem('Lab 2','Lab 2-1','c');
   const file=s.paths('Lab 2','Lab 2-1','c').source,before=await readFile(file,'utf8');
-  d.source='unsaved replacement';d.problem.testCases=[{id:'1',input:'1',expectedOutput:'2'}];await s.save(d,false);
+  d.source='unsaved replacement';d.problem.testCases=[{id:'1',input:'1',expectedOutput:'2'}];await s.save(d,{source:false});
   assert.equal(await readFile(file,'utf8'),before);assert.equal((await s.load('Lab 2','Lab 2-1','c')).problem.testCases[0].input,'1');
  }finally{await rm(dir,{recursive:true,force:true});}
 });

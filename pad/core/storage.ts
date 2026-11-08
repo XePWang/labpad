@@ -20,6 +20,7 @@ import {
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import iconv from 'iconv-lite';
 import writeFileAtomic from 'write-file-atomic';
 import { migrateShortcuts } from '../shared/shortcuts';
@@ -316,7 +317,29 @@ export class Storage {
     if (warning) draft.warning = warning;
     return draft;
   }
-  save(draft: Draft, saveSource = true) {
+  private async writeProblem(problem: Problem, expected?: Problem, source?: string) {
+    const file = this.paths(problem.labId, problem.problemId, 'c').problem;
+    const current = (await exists(file))
+      ? validateProblem(await readJSON(file))
+      : defaultProblem(problem.labId, problem.problemId);
+    if (expected && !isDeepStrictEqual(current, expected))
+      throw new Error('题目规则已更改，请先重新加载题目文件，或保留一处修改后再保存。');
+    await mkdir(path.dirname(file), { recursive: true });
+    await this.atomic(file, source ?? JSON.stringify(problem, null, 2) + '\n');
+  }
+  saveProblem(value: Problem, expected?: Problem) {
+    const problem = structuredClone(validateProblem(value));
+    const baseline = expected ? structuredClone(validateProblem(expected)) : undefined;
+    return this.enqueue(() => this.writeProblem(problem, baseline));
+  }
+  async saveRuleFile(current: Problem, source: string) {
+    const problem = structuredClone(validateProblem(JSON.parse(source.replace(/^\uFEFF/, ''))));
+    if (problem.labId !== current.labId || problem.problemId !== current.problemId)
+      throw new Error('题目文件中的 labId / problemId 与文件位置不一致');
+    await this.enqueue(() => this.writeProblem(problem, current, source));
+    return problem;
+  }
+  save(draft: Draft, { source: saveSource = true, rules: saveRules = true } = {}) {
     const snapshot = structuredClone(validateDraft(draft)),
       p = this.paths(snapshot.problem.labId, snapshot.problem.problemId, snapshot.language);
     return this.enqueue(async () => {
@@ -346,7 +369,7 @@ export class Storage {
           snapshot.source,
           version?.encoding,
         );
-      await this.atomic(p.problem, JSON.stringify(snapshot.problem, null, 2) + '\n');
+      if (saveRules) await this.writeProblem(snapshot.problem);
       if (saveSource) {
         const meta = await this.readState(snapshot.problem.labId, snapshot.problem.problemId),
           state = this.stateFor(meta, snapshot.problem.problemId, snapshot.language);
@@ -1170,6 +1193,7 @@ export class Storage {
     return {
       file: name,
       auxiliary: true,
+      ruleFile: path.resolve(target) === path.resolve(this.paths(lab, problem, language).problem),
       documentId: 'aux:' + name,
       name,
       sourceFile: target,

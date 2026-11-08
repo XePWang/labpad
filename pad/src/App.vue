@@ -1033,12 +1033,13 @@ const failedIds = computed(
 function reportCursor(value: EditorCursor) {
   cursor.value = value;
 }
-function invalidate() {
+function invalidate(outcome: Outcome = 'changed') {
+  compiledReady.value = false;
   results.value = {};
   diffOpen.value = {};
   finished.value = false;
   summaryMode.value = 'selected';
-  if (!nativeActive.value) setIdle('changed');
+  if (!nativeActive.value) setIdle(outcome);
   queueChecks();
 }
 function queueChecks() {
@@ -1099,12 +1100,25 @@ function recordState() {
   api.workspaceState(
     tabs.value.map((t) => ({ ...clone(t.document), problem: clone(draft.value!.problem) })),
     rulesDirty.value || tabs.value.some((t) => t.dirty),
+    {
+      dirtyDocuments: tabs.value.filter((t) => t.dirty).map((t) => t.id),
+      ...(rulesDirty.value
+        ? {
+            rules: {
+              problem: clone(draft.value.problem),
+              expected: JSON.parse(savedRules),
+            },
+          }
+        : {}),
+    },
   );
 }
 function enqueueSave(input: Draft, id: number) {
   const value = input;
   const tab = tabs.value.find((t) => t.id === value.documentId);
   if (!tab) return Promise.reject(new Error('请先新建或导入源码'));
+  if (tab.document.ruleFile && rulesDirty.value)
+    return Promise.reject(new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。'));
   tab.status = '保存中…';
   if (tab.id === activeId.value) saveStatus.value = tab.status;
   const task = saveTail
@@ -1123,6 +1137,10 @@ function enqueueSave(input: Draft, id: number) {
         }
         current.document.sourceFile = result.path;
         if (current.revision === id || current.document.source === result.source) {
+          if (current.document.source !== result.source) {
+            revision++;
+            invalidate();
+          }
           current.document.source = result.source;
           current.dirty = tabDirty(current);
           current.status = current.dirty ? '未保存' : '已保存';
@@ -1138,19 +1156,25 @@ function enqueueSave(input: Draft, id: number) {
           current.status = current.dirty ? '未保存' : '已保存';
         }
       }
-      if (
-        !value.auxiliary &&
-        JSON.stringify(value.problem) === JSON.stringify(draft.value!.problem)
-      ) {
-        savedRules = JSON.stringify(value.problem);
-        rulesDirty.value = false;
+      if (result.problem) {
+        if (JSON.stringify(draft.value!.problem) === JSON.stringify(value.problem)) {
+          pauseSave = true;
+          draft.value!.problem = clone(result.problem);
+          for (const item of tabs.value) item.document.problem = clone(result.problem);
+          pauseSave = false;
+          selectedCases.value = result.problem.testCases.map((item) => item.id);
+          revision++;
+          invalidate();
+        }
+        savedRules = JSON.stringify(result.problem);
+        rulesDirty.value = JSON.stringify(draft.value!.problem) !== savedRules;
       }
       refreshDirty();
       recordState();
       if (result.formatWarning) error.value = result.formatWarning;
       flashFooter('已保存 · ' + result.path);
       projects.value = await api.projects();
-      return result.path;
+      return result;
     })
     .catch((e) => {
       if (tab) {
@@ -1171,8 +1195,8 @@ function enqueueSave(input: Draft, id: number) {
 watch(
   draft,
   () => {
-    compiledReady.value = false;
     if (pauseSave || !draft.value) return;
+    compiledReady.value = false;
     revision++;
     const tab = activeTab.value;
     if (tab) {
@@ -1256,6 +1280,7 @@ function activateTab(id: string, focus = true) {
   clearTimeout(saveTimer);
   pauseSave = true;
   const problem = clone(draft.value!.problem);
+  const previousTarget = targetSourceId.value;
   activeId.value = id;
   if (!tab.document.auxiliary) targetSourceId.value = id;
   draft.value = { ...clone(tab.document), problem };
@@ -1265,7 +1290,9 @@ function activateTab(id: string, focus = true) {
   revision++;
   config.value!.language = tab.document.language;
   pauseSave = false;
-  invalidate();
+  if (!workspaceMode.value && previousTarget !== targetSourceId.value)
+    invalidate(tab.dirty ? 'changed' : 'ready');
+  else queueChecks();
   recordState();
   if (!tab.document.auxiliary)
     void action(() => api.activateDocument(id, tab.document.file), false);
@@ -1273,38 +1300,51 @@ function activateTab(id: string, focus = true) {
   if (config.value?.saveMode === 'auto' && (tabs.value.some((t) => t.dirty) || rulesDirty.value))
     saveTimer = setTimeout(() => void action(saveAll), 350);
 }
+async function saveRules() {
+  if (!rulesDirty.value) return;
+  if (tabs.value.some((tab) => tab.document.ruleFile && tab.dirty))
+    throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+  const problem = clone(draft.value!.problem);
+  await api.saveProblem(problem, JSON.parse(savedRules));
+  savedRules = JSON.stringify(problem);
+  rulesDirty.value = JSON.stringify(draft.value!.problem) !== savedRules;
+  const source = JSON.stringify(problem, null, 2) + '\n';
+  pauseSave = true;
+  try {
+    for (const tab of tabs.value.filter((item) => item.document.ruleFile && !item.dirty)) {
+      tab.document.source = source;
+      tab.savedSource = source;
+      tab.document.problem = clone(problem);
+      if (activeId.value === tab.id) {
+        draft.value!.source = source;
+        editor.value?.applyText(source);
+      }
+    }
+  } finally {
+    pauseSave = false;
+  }
+  refreshDirty();
+  recordState();
+}
 async function saveNow() {
   clearTimeout(saveTimer);
   await saveTail;
-  if (activeTab.value) await enqueueSave(snapshot(), activeTab.value.revision);
-  else if (rulesDirty.value) {
-    await api.saveProblem(clone(draft.value!.problem));
-    savedRules = JSON.stringify(draft.value!.problem);
-    rulesDirty.value = false;
-    dirty.value = false;
-    recordState();
-  }
+  const result = activeTab.value
+    ? await enqueueSave(snapshot(), activeTab.value.revision)
+    : undefined;
+  if (!result?.problem) await saveRules();
 }
 async function saveAll() {
   clearTimeout(saveTimer);
   await saveTail;
-  if (!tabs.value.length) {
-    await saveNow();
-    return;
-  }
-  for (const tab of [...tabs.value].filter(
-    (t) => t.dirty || rulesDirty.value || tabs.value.length === 1,
-  ))
+  if (rulesDirty.value && tabs.value.some((tab) => tab.document.ruleFile && tab.dirty))
+    throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+  for (const tab of [...tabs.value].filter((item) => item.dirty || tabs.value.length === 1))
     await enqueueSave(
       { ...clone(tab.document), problem: clone(draft.value!.problem) },
       tab.revision,
     );
-  if (rulesDirty.value) {
-    await api.saveProblem(clone(draft.value!.problem));
-    savedRules = JSON.stringify(draft.value!.problem);
-    rulesDirty.value = false;
-    refreshDirty();
-  }
+  await saveRules();
   if (activeId.value && !activeTab.value?.document.auxiliary)
     await api.activateDocument(activeId.value, activeTab.value?.document.file);
 }
@@ -1361,13 +1401,16 @@ async function tabAction(value: string, id = activeId.value) {
   if (targets.some((t) => t.dirty) || (closesAll && rulesDirty.value)) {
     const choice = config.value!.saveMode === 'auto' ? 'save' : await api.confirmUnsaved();
     if (choice === 'cancel') return;
-    if (choice === 'save')
-      for (const t of targets.filter((t) => t.dirty || rulesDirty.value))
+    if (choice === 'save') {
+      if (rulesDirty.value && tabs.value.some((item) => item.document.ruleFile && item.dirty))
+        throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+      for (const t of targets.filter((item) => item.dirty))
         await enqueueSave(
           { ...clone(t.document), problem: clone(draft.value!.problem) },
           t.revision,
         );
-    else if (closesAll && workspaceMode.value) {
+      await saveRules();
+    } else if (closesAll && workspaceMode.value) {
       const original = await api.workspaceOpen(draft.value!.problem.labId, tab.document.file!);
       pauseSave = true;
       draft.value = clone(original);

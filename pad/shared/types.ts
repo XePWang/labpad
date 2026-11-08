@@ -95,6 +95,7 @@ export interface Draft {
   problem: Problem;
 }
 export interface LoadedDraft extends Draft {
+  ruleFile?: boolean;
   missing?: boolean;
   sourceFile?: string;
   sourceEncoding?: string;
@@ -146,7 +147,12 @@ export interface JudgeResult {
 export type JudgeEvent =
   | { type: 'compilation'; compilation: Compilation }
   | { type: 'case'; index: number; result: CaseResult };
+export interface WorkspaceEdits {
+  dirtyDocuments: string[];
+  rules?: { problem: Problem; expected: Problem };
+}
 export interface SaveResult {
+  problem?: Problem;
   path: string;
   source: string;
   formatWarning?: string;
@@ -301,7 +307,7 @@ export interface Bridge {
   writeExport(value: ExportPreview): Promise<string | null>;
   checkState(draft: Draft): Promise<Coverage>;
   problemStates(draft: Draft, buffers: Draft[]): Promise<Record<string, TestState>>;
-  saveProblem(problem: Problem): Promise<void>;
+  saveProblem(problem: Problem, expected?: Problem): Promise<void>;
   bootstrap(): Promise<Bootstrap>;
   reloadDocument(): Promise<Bootstrap>;
   saveDraft(draft: Draft): Promise<SaveResult>;
@@ -321,7 +327,7 @@ export interface Bridge {
   newVersion(draft: Draft, fromTemplate?: boolean): Promise<LoadedDraft>;
   copyPath(value: string, relative: boolean): Promise<void>;
   copyText(value: string): Promise<void>;
-  workspaceState(drafts: Draft[], dirty: boolean): void;
+  workspaceState(drafts: Draft[], dirty: boolean, edits?: WorkspaceEdits): void;
   openShortcuts(): Promise<void>;
   shortcutSettings(): Promise<{
     shortcuts: Record<string, string[]>;

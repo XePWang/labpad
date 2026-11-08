@@ -101,6 +101,7 @@ import type {
   LoadedDraft,
   PathKind,
   SaveResult,
+  WorkspaceEdits,
 } from '../shared/types';
 app.setName('LabPad');
 if (process.platform === 'win32') app.setAppUserModelId('cn.xep.labpad');
@@ -165,6 +166,7 @@ const compiler = new Compiler({
 const compiledProgram = new CompiledProgram(compiler);
 let shortcutWindow: BrowserWindow | undefined,
   openBuffers: Draft[] = [];
+let pendingEdits: WorkspaceEdits | undefined;
 let warmController: AbortController | undefined,
   warmTask: Promise<unknown> | undefined,
   warmTimer: ReturnType<typeof setTimeout> | undefined;
@@ -448,7 +450,7 @@ async function persist(value: Draft): Promise<SaveResult> {
           } catch (e) {
             formatWarning = '格式化失败，已保存原文：' + String(e);
           }
-        snapshot.source = await storage.workspace.save(snapshot);
+        snapshot.source = await storage.workspace.save(snapshot, { rules: false });
         if (
           currentDocument?.documentId === snapshot.documentId &&
           JSON.stringify(currentDocument) === original
@@ -472,6 +474,21 @@ async function persist(value: Draft): Promise<SaveResult> {
         let source = snapshot.source;
         if (options.formatOnSave && isCodeFile(snapshot.file))
           source = await formatter.format(source, snapshot.language, options.indentSize);
+        if (
+          path.resolve(target) ===
+          path.resolve(
+            storage.paths(snapshot.problem.labId, snapshot.problem.problemId, snapshot.language)
+              .problem,
+          )
+        ) {
+          const problem = await storage.saveRuleFile(snapshot.problem, source);
+          if (
+            currentDocument?.problem.labId === problem.labId &&
+            currentDocument.problem.problemId === problem.problemId
+          )
+            currentDocument.problem = structuredClone(problem);
+          return { path: target, source, problem };
+        }
         await writeSource(target, source, encoding);
         return { path: target, source };
       }
@@ -487,7 +504,7 @@ async function persist(value: Draft): Promise<SaveResult> {
           formatWarning = '格式化失败，已保存原文：' + (e instanceof Error ? e.message : String(e));
         }
       }
-      await storage.save(snapshot);
+      await storage.save(snapshot, { rules: false });
       config = {
         ...config,
         currentLab: snapshot.problem.labId,
@@ -1628,12 +1645,28 @@ async function initialize() {
       documentDirty = !!dirty;
     }
   });
-  ipcMain.on('workspace:state', (event, values: Draft[], dirty: boolean) => {
-    if (event.sender === win.webContents) {
-      openBuffers = values.map((d) => structuredClone(validateDraft(d)));
-      documentDirty = !!dirty;
-    }
-  });
+  ipcMain.on(
+    'workspace:state',
+    (event, values: Draft[], dirty: boolean, edits?: WorkspaceEdits) => {
+      if (event.sender === win.webContents) {
+        openBuffers = values.map((d) => structuredClone(validateDraft(d)));
+        pendingEdits = edits
+          ? {
+              dirtyDocuments: edits.dirtyDocuments.filter((id) => typeof id === 'string'),
+              ...(edits.rules
+                ? {
+                    rules: {
+                      problem: structuredClone(validateProblem(edits.rules.problem)),
+                      expected: structuredClone(validateProblem(edits.rules.expected)),
+                    },
+                  }
+                : {}),
+            }
+          : undefined;
+        documentDirty = !!dirty;
+      }
+    },
+  );
   handle('documents:open', async (lab: string, problem: string, language: Language) =>
     (await storage.workspace.isProject(lab))
       ? storage.workspace.documents(lab)
@@ -1924,15 +1957,15 @@ async function initialize() {
       document,
     };
   });
-  handle('problem:save', async (value: unknown) => {
+  handle('problem:save', async (value: unknown, expected?: unknown) => {
     const problem = structuredClone(validateProblem(value));
     await saves;
     if (await storage.workspace.isProject(problem.labId))
       await storage.workspace.update(problem.labId, { tests: problem });
     else
-      await storage.save(
-        { source: '', language: currentDocument?.language ?? config.language, problem },
-        false,
+      await storage.saveProblem(
+        problem,
+        expected === undefined ? undefined : validateProblem(expected),
       );
     if (
       currentDocument?.problem.labId === problem.labId &&
@@ -2019,7 +2052,7 @@ async function initialize() {
     if (confirm.response !== 1) return null;
     if (await storage.workspace.isProject(lab))
       await storage.workspace.update(lab, { tests: imported.problem });
-    else await storage.save({ ...current, problem: imported.problem }, false);
+    else await storage.saveProblem(imported.problem);
     if (currentDocument?.problem.labId === lab && currentDocument.problem.problemId === problem)
       currentDocument.problem = imported.problem;
     return imported.problem;
@@ -2542,8 +2575,16 @@ app.whenReady().then(async () => {
             return;
           }
           if (choice === 'save') {
-            if (openBuffers.length) for (const buffer of openBuffers) await persist(buffer);
-            else await storage.save(currentDocument, false);
+            const edits = pendingEdits ? structuredClone(pendingEdits) : undefined;
+            for (const buffer of openBuffers)
+              if (!edits || edits.dirtyDocuments.includes(buffer.documentId ?? ''))
+                await persist(buffer);
+            if (edits?.rules) {
+              const { problem, expected } = edits.rules;
+              if (await storage.workspace.isProject(problem.labId))
+                await storage.workspace.update(problem.labId, { tests: problem });
+              else await storage.saveProblem(problem, expected);
+            }
           }
         }
         await stopWarmup();

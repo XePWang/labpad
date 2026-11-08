@@ -247,13 +247,13 @@ export class WorkspaceStore {
       ...(state.inheritDefaults === true ? { inheritDefaults: true } : {}),
     };
   }
-  async save(draft: Draft) {
+  async save(draft: Draft, { rules: saveRules = true } = {}) {
     if (!draft.file) throw new Error('请选择项目文件');
     const lab = draft.problem.labId,
       target = await this.path(lab, draft.file);
     return this.enqueue(async () => {
       const state = (await readJSON(this.metadata(lab))) as WorkspaceState;
-      state.tests = structuredClone(validateProblem(draft.problem));
+      if (saveRules) state.tests = structuredClone(validateProblem(draft.problem));
       let source = draft.source;
       if (draft.file === 'LPMake.txt' && Object.hasOwn(state, 'inheritDefaults')) {
         if (state.inheritDefaults) source = independentMake(source, await this.legacyDefaults());
