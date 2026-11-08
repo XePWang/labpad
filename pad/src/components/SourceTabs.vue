@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
 import { nextTick, watch, ref } from 'vue';
 import {
   ContextMenuRoot,
@@ -125,7 +126,12 @@ const items = [
           </div></ContextMenuTrigger
         >
         <ContextMenuPortal
-          ><ContextMenuContent class="tab-context" :data-theme="theme" :collision-padding="8"
+          ><ContextMenuContent
+            @open-auto-focus="rememberMenuFocus"
+            @close-auto-focus="restoreMenuFocus"
+            class="tab-context"
+            :data-theme="theme"
+            :collision-padding="8"
             ><template
               v-for="([id, label], i) in items.filter(([id]) => !workspace || id !== 'version')"
               :key="id"

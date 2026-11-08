@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { hasNewFocus } from '../menu-focus';
 import { isCodeFile } from '../../shared/file-language';
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import {
@@ -432,7 +433,7 @@ function contextClosed(event: Event) {
   event.preventDefault();
   nextTick(() => {
     if (edit.value) input.value?.focus();
-    else {
+    else if (!hasNewFocus()) {
       const file = selected.value.at(-1);
       Array.from(host.value?.querySelectorAll<HTMLElement>('.tree-file') ?? [])
         .find((row) => row.dataset.file === file)

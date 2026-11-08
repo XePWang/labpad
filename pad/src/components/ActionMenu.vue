@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
 import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
@@ -24,6 +25,10 @@ defineProps<{
   triggerClass?: string;
 }>();
 const emit = defineEmits<{ select: [value: string]; closeAutoFocus: [event: Event] }>();
+function closeMenu(event: Event) {
+  emit('closeAutoFocus', event);
+  restoreMenuFocus(event);
+}
 </script>
 <template>
   <DropdownMenuRoot>
@@ -57,7 +62,8 @@ const emit = defineEmits<{ select: [value: string]; closeAutoFocus: [event: Even
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
       <DropdownMenuContent
-        @close-auto-focus="emit('closeAutoFocus', $event)"
+        @open-auto-focus="rememberMenuFocus"
+        @close-auto-focus="closeMenu"
         class="action-menu"
         :data-theme="theme"
         align="end"
