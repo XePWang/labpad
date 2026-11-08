@@ -45,6 +45,30 @@ test('a clean rule tab saves form-only changes with Save Current and as the only
     await expect(page.locator('.cm-content')).toContainText('"ALL"');
     await expect(page.getByRole('alert')).toHaveCount(0);
     expect(JSON.parse(await readFile(file, 'utf8')).testCases[0].expectedOutput).toBe('ALL');
+    await page.evaluate(async () => {
+      for (const name of ['EmptyA', 'EmptyB']) {
+        const d = await window.labpad.createLab(name, 'problem-set');
+        const expected = JSON.parse(JSON.stringify(d.problem));
+        d.problem.testCases = [{ id: 'draft', input: '', expectedOutput: 'EMPTY' }];
+        await window.labpad.saveProblem(d.problem, expected);
+      }
+      await window.labpad.createLab('EmptyC', 'problem-set');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    if (!(await page.locator('.file-tree').isVisible()))
+      await page.getByRole('button', { name: '显示文件', exact: true }).click();
+    await page.locator('.tree-file[data-file="空项目.json"]').click();
+    await expect(page.locator('.source-tab.active')).toContainText('空项目.json');
+    await expect(page.locator('.cm-content')).toContainText('"expectedOutput": "EMPTY"');
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
+    const text = await page.locator('.cm-content').innerText();
+    await page.locator('.cm-content').fill(text.replace('"EMPTY"', '"EMPTY_RAW"'));
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
+    await expect(page.locator('.tab-dirty')).toHaveCount(0);
+    await expect(page.locator('.io-pair textarea').nth(1)).toHaveValue('EMPTY_RAW');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(JSON.parse(await readFile(file, 'utf8')).testCases[0].expectedOutput).toBe('ALL');
   } finally {
     await closeApplication(app);
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

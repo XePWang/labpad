@@ -322,6 +322,10 @@ export class Storage {
     const current = (await exists(file))
       ? validateProblem(await readJSON(file))
       : defaultProblem(problem.labId, problem.problemId);
+    if (!problem.problemId) {
+      current.labId = problem.labId;
+      current.problemId = '';
+    }
     if (expected && !isDeepStrictEqual(current, expected))
       throw new Error('题目规则已更改，请先重新加载题目文件，或保留一处修改后再保存。');
     await mkdir(path.dirname(file), { recursive: true });
@@ -334,9 +338,14 @@ export class Storage {
   }
   async saveRuleFile(current: Problem, source: string) {
     const problem = structuredClone(validateProblem(JSON.parse(source.replace(/^\uFEFF/, ''))));
-    if (problem.labId !== current.labId || problem.problemId !== current.problemId)
+    if (
+      problem.problemId !== current.problemId ||
+      (current.problemId && problem.labId !== current.labId)
+    )
       throw new Error('题目文件中的 labId / problemId 与文件位置不一致');
-    await this.enqueue(() => this.writeProblem(problem, current, source));
+    if (!current.problemId) problem.labId = current.labId;
+    const baseline = structuredClone(current);
+    await this.enqueue(() => this.writeProblem(problem, baseline, source));
     return problem;
   }
   save(draft: Draft, { source: saveSource = true, rules: saveRules = true } = {}) {

@@ -39,3 +39,25 @@ test('source-only saving preserves newer rules; explicit rule writes detect conf
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('unassigned draft rules use the current selection before conflict checks', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-draft-rules-'));
+  try {
+    const store = new Storage(root);
+    await store.init();
+    await store.createLab('EmptyA');
+    const a = await store.load('EmptyA', '', 'c');
+    const next = { ...a.problem, testCases: [{ id: 'one', input: '', expectedOutput: 'A' }] };
+    await store.saveProblem(next, a.problem);
+    await store.createLab('EmptyB');
+    const b = await store.load('EmptyB', '', 'c');
+    const file = store.paths('EmptyB', '', 'c').problem;
+    const text = (await readFile(file, 'utf8')).replace('"A"', '"B"');
+    const saved = await store.saveRuleFile(b.problem, text);
+    assert.equal(saved.labId, 'EmptyB');
+    assert.equal((await store.load('EmptyB', '', 'c')).problem.testCases[0].expectedOutput, 'B');
+    assert.equal((await store.load('', '', 'c')).problem.testCases[0].expectedOutput, 'B');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
