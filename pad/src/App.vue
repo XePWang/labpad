@@ -2143,6 +2143,7 @@ onMounted(async () => {
     api.onJudge((event) => {
       if (event.type === 'compilation') {
         if (busy.value !== 'compile') showCompilation(event.compilation);
+        queueChecks();
       } else results.value[event.result.id] = event.result;
     }),
     api.onNativeState((state) => {

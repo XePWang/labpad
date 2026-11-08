@@ -460,6 +460,26 @@ test('failed save retries through compile; concurrent requests and judge errors 
     await expect(run).toBeEnabled({ timeout: 60000 });
     expect(await app.evaluate(() => (globalThis as any).__compileConfirmations)).toBe(1);
     await expect(page.locator('.tab-dirty')).toHaveCount(0);
+    // Exercise a readiness probe that observes the compiler between programs.
+    // A completion event must recheck readiness, even outside the toolbar call.
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('compile:state');
+      (globalThis as any).__restoreCompileState = () => handlers.set('compile:state', original);
+      handlers.set('compile:state', async (...args: any[]) => ({
+        ...(await original(...args)),
+        ready: false,
+      }));
+    });
+    await page.evaluate(() =>
+      window.labpad.fileOperation('TaskFixture', 'one', {
+        action: 'newFile',
+        paths: ['readiness.h'],
+        content: '// refresh while the compiler is replacing its program',
+      }),
+    );
+    await expect(run).toBeDisabled();
+    await app.evaluate(() => (globalThis as any).__restoreCompileState());
     const simultaneous = await page.evaluate(async () => {
       const draft = (await window.labpad.bootstrap()).draft;
       return (
@@ -467,6 +487,7 @@ test('failed save retries through compile; concurrent requests and judge errors 
       ).map((result) => result.status);
     });
     expect(simultaneous.sort()).toEqual(['fulfilled', 'rejected']);
+    await expect(run).toBeEnabled();
     await app.evaluate(({ ipcMain }) => {
       const handlers = (ipcMain as any)._invokeHandlers,
         original = handlers.get('judge');
