@@ -93,7 +93,13 @@ async function runScenario(electron,{executable,cwd,evidence}){
   await edit('invalid syntax');await compileAndRun(page,'F9');await idle();assert.match(await button('输出').getAttribute('class'),/active/);
   await edit(code('3.0'));await page.getByRole('button',{name:/新增测试点/}).click();await input('预期输出 1').fill('3.00');await save();
   const rules=path.join(data,'projects','实验2','Lab 2-1.json'),problem=JSON.parse(await fs.readFile(rules,'utf8'));problem.testCases.push({id:'float',input:'',expectedOutput:'3.00',comparison:{type:'floatTokens',absoluteTolerance:0}});await fs.writeFile(rules,JSON.stringify(problem));
-  await button('更多').click();await page.getByRole('menuitem',{name:'重新加载',exact:true}).click();await until(()=>button('导入').isEnabled(),'reload complete');await compileAndRun(page,'F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');
+  if (await button('重新加载').isVisible()) {
+    await button('重新加载').click();
+  } else {
+    await button('更多').click();
+    await page.getByRole('menuitem', { name: '重新加载', exact: true }).click();
+  }
+  await until(()=>button('导入').isEnabled(),'reload complete');await compileAndRun(page,'F9');await page.locator('.verdict.wa').waitFor();await page.locator('.verdict.ac').waitFor();await idle();pass('CE stays in Output; one topic uses exact and floating checkers together');
   await settings();await button('设置快捷键…').click();await until(()=>app.windows().length===2,'shortcut window opens');const popup=app.windows().find(w=>w!==page);await popup.getByRole('heading',{name:'快捷键',exact:true}).waitFor();
   await popup.getByRole('textbox',{name:'编译 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await until(()=>popup.getByRole('status').textContent().then(t=>t.includes('已保存')),'shortcut change saves');
   await popup.getByRole('textbox',{name:'保存当前 快捷键',exact:true}).fill('F8');await popup.getByRole('button',{name:'保存快捷键',exact:true}).click();await popup.getByRole('alert').waitFor();assert.match(await popup.getByRole('alert').textContent(),/重复/);

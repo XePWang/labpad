@@ -1,6 +1,6 @@
 {
   "name": "labpad",
-  "version": "0.1.0-dev.9",
+  "version": "1.0.0-rc.1",
   "description": "C 语言实验自测与源码导出工具",
   "author": "LabPad contributors",
   "license": "MIT",

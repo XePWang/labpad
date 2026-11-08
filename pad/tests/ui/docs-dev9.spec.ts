@@ -2,7 +2,7 @@ import { test, expect, _electron } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-test('dev9 guide screenshots', async () => {
+test('current release guide screenshots', async () => {
   test.setTimeout(120000);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'labpad-doc-')),
     app = await _electron.launch({
@@ -13,6 +13,7 @@ test('dev9 guide screenshots', async () => {
     });
   try {
     const page = await app.firstWindow();
+    const guideVersion = await app.evaluate(({app}) => app.getVersion());
     page.setDefaultTimeout(15000);
     await page.locator('.toolbar').waitFor();
     await app.evaluate(({ dialog }) => {
@@ -44,9 +45,12 @@ test('dev9 guide screenshots', async () => {
     });
     await page.reload();
     await page.locator('.file-tree').waitFor();
-    const images = path.resolve('../doc/0.1.0-dev.9/images'),
+    const images = path.resolve('../doc', guideVersion, 'images'),
       shot = (name: string) =>
-        page.screenshot({ path: path.join(images, name + '.png'), fullPage: true });
+        page.screenshot({
+          path: path.join(images, name.replace(/^dev9-/, '') + '.png'),
+          fullPage: true,
+        });
     await page
       .locator('.cm-content')
       .fill(
@@ -119,6 +123,8 @@ test('dev9 guide screenshots', async () => {
     await expect(settings.locator('.parameter-preview')).toContainText('C · main.c');
     await expect(settings.locator('.source-diagnostic')).toHaveCount(0);
     await shot('dev9-settings');
+    await settings.locator('.typography-settings').scrollIntoViewIfNeeded();
+    await shot('dev9-font-settings');
     await settings.getByRole('combobox', { name: '主题', exact: true }).selectOption('light');
     await settings.getByRole('button', { name: '保存设置', exact: true }).click();
     await page.locator('[data-file="main.c"]').click();
