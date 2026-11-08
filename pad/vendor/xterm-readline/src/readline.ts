@@ -23,6 +23,9 @@ export class Readline implements ITerminalAddon {
   private printingPrompt = false;
   private promptWaiters: (() => void)[] = [];
   private finishPromptWaiters() { for (const done of this.promptWaiters.splice(0)) done(); }
+  public whenPromptReady(): Promise<void> {
+    return this.printingPrompt ? new Promise(done => this.promptWaiters.push(done)) : Promise.resolve();
+  }
   private pendingKeys: (Input | (() => void))[] = [];
   private promptMarker: IMarker | undefined;
   private promptStartCol = 0;

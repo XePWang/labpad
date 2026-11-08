@@ -157,6 +157,7 @@ export interface Bootstrap extends SettingsResult {
   warning?: string;
   documents: LoadedDraft[];
   workspace?: {
+    scope: string;
     files: WorkspaceFile[];
     expanded: string[];
     sidebarWidth: number;
@@ -188,7 +189,12 @@ export interface Coverage {
   state: TestState;
   cases: CaseResult[];
 }
+export interface TerminalContext {
+  scope: string;
+  cwd: string;
+}
 export interface FileEvent {
+  scope: string;
   id: number;
   lab: string;
   changes: import('./file-changes').FileChange[];
@@ -196,10 +202,11 @@ export interface FileEvent {
   files: WorkspaceFile[];
 }
 export interface Bridge {
+  terminalContext(draft: Draft): Promise<TerminalContext>;
   terminalCommand(
     draft: Draft,
     text: string,
-  ): Promise<{ cwd: string; output: string; clear?: boolean; needsSave?: boolean }>;
+  ): Promise<TerminalContext & { output: string; clear?: boolean; needsSave?: boolean }>;
   terminalComplete(text: string): Promise<string[]>;
   nativeStart(
     draft: Draft,

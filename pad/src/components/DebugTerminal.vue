@@ -15,7 +15,10 @@ const props = defineProps<{
   scrollback: number;
   theme: 'light' | 'dark';
   context?: string;
-  execute?: (text: string) => Promise<{ cwd: string; output: string; clear?: boolean }>;
+  synchronize?: () => Promise<{ scope: string; cwd: string }>;
+  execute?: (
+    text: string,
+  ) => Promise<{ scope: string; cwd: string; output: string; clear?: boolean }>;
   interrupt?: () => Promise<unknown>;
 }>();
 const host = ref<HTMLDivElement>();
@@ -59,13 +62,15 @@ async function readLoop(id: number) {
         executing = true;
         try {
           const result = await props.execute(text);
+          if (id !== generation || (props.context && result.scope !== props.context)) return;
           cwd.value = result.cwd;
           if (result.clear) readline.clearOutput();
           if (result.output) await write(result.output.replace(/\r?\n/g, '\r\n') + '\r\n');
         } catch (error) {
-          await write((error instanceof Error ? error.message : String(error)) + '\r\n');
+          if (id === generation)
+            await write((error instanceof Error ? error.message : String(error)) + '\r\n');
         } finally {
-          executing = false;
+          if (id === generation) executing = false;
         }
       }
     } catch {
@@ -73,25 +78,62 @@ async function readLoop(id: number) {
     }
   }
 }
-async function begin() {
+async function begin(preserve = false) {
+  const previous = preserve ? readline?.getLine() : '';
   const id = ++generation;
+  executing = false;
   readline?.holdInput(false);
   readline?.abortRead();
   readline?.holdInput(true);
-  await outputTail;
-  await nextTick();
-  if (!interactive() || id !== generation || !terminal) return;
-  fit?.fit();
-  terminal.options.disableStdin = false;
-  terminal.options.cursorBlink = true;
-  terminal.focus();
-  terminal.write('', () => {
+  if (terminal && interactive()) terminal.options.disableStdin = false;
+  try {
+    await outputTail;
+    await nextTick();
+    if (!props.running && props.synchronize) {
+      const state = await props.synchronize();
+      if (id !== generation || (props.context && state.scope !== props.context)) return;
+      cwd.value = state.cwd;
+    }
+    if (!interactive() || id !== generation || !terminal) return;
+    fit?.fit();
+    terminal.options.cursorBlink = true;
+    if (!preserve && host.value?.offsetWidth) terminal.focus();
+    await new Promise<void>((done) => terminal!.write('', done));
     if (!interactive() || id !== generation) return;
-    const start = () => void readLoop(id);
-    if (terminal!.buffer.active.cursorX) terminal!.write('\r\n', start);
-    else start();
-  });
+    if (terminal.buffer.active.cursorX)
+      await new Promise<void>((done) => terminal!.write('\r\n', done));
+    if (id !== generation) return;
+    void readLoop(id);
+    if (previous) {
+      await readline?.whenPromptReady();
+      if (id === generation) readline?.updateLine(previous);
+    }
+  } catch (error) {
+    if (id === generation) {
+      if (terminal) terminal.options.disableStdin = true;
+      await write((error instanceof Error ? error.message : String(error)) + '\r\n');
+    }
+  }
 }
+async function refreshDirectory() {
+  if (props.running || executing || !props.synchronize) return;
+  const scope = props.context,
+    id = generation;
+  const state = await props.synchronize();
+  if (
+    id !== generation ||
+    scope !== props.context ||
+    state.scope !== scope ||
+    props.running ||
+    executing
+  )
+    return;
+  if (state.cwd !== cwd.value) {
+    await readline?.whenPromptReady();
+    if (id === generation) await begin(true);
+  }
+}
+
 function key(event: KeyboardEvent) {
   if (event.type !== 'keydown' || event.isComposing) return true;
   if (event.key === 'Tab' && !props.running && props.execute) {
@@ -120,7 +162,7 @@ function key(event: KeyboardEvent) {
     else {
       readline?.updateLine('');
       readline?.abortRead();
-      void write('^C\r\n').then(begin);
+      void write('^C\r\n').then(() => begin());
     }
   }
   if (command === 'selectAll') terminal?.selectAll();
@@ -172,7 +214,7 @@ watch(
   () => [props.running, props.context],
   () => {
     if (props.context !== lastContext) {
-      cwd.value = '';
+      readline?.resetHistory(props.historyBytes);
       lastContext = props.context;
     }
     if (interactive()) void begin();
@@ -237,6 +279,7 @@ function write(data: string, done?: () => void) {
   return outputTail;
 }
 defineExpose({
+  refreshDirectory,
   write,
   selection: () => terminal?.getSelection() || '',
   clear: () => readline?.clearOutput(),

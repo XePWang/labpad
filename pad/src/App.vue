@@ -58,6 +58,7 @@ const draft = ref<Draft>(),
   config = ref<Config>(),
   settings = ref<Config>(),
   projects = ref<Project[]>([]);
+const fileScope = ref('');
 const dataRoot = ref(''),
   settingsRoot = ref(''),
   version = ref(''),
@@ -415,16 +416,23 @@ async function interruptTerminal() {
   if (nativeActive.value && nativeState.value.status === 'running') await nativeControl('pause');
   else if (!nativeActive.value) await stop();
 }
+async function synchronizeTerminal() {
+  return api.terminalContext(snapshot());
+}
 async function executeTerminal(text: string) {
+  const scope = fileScope.value;
   let result = await api.terminalCommand(snapshot(), text);
+  if (scope !== fileScope.value) return result;
   if (result.needsSave) {
-    if (!(await api.confirmCompile())) return { cwd: result.cwd, output: '已取消。' };
+    if (!(await api.confirmCompile())) return { ...result, output: '已取消。' };
+    if (scope !== fileScope.value) return result;
     await saveAll();
     result = await api.terminalCommand(snapshot(), text);
   }
-  await refreshFiles();
+  if (scope === fileScope.value) await refreshFiles();
   return result;
 }
+
 const runHint = computed(() =>
   selectedCases.value.length === draft.value?.problem.testCases.length
     ? '运行全部测试点'
@@ -457,7 +465,10 @@ function toggleAllTests(event: Event) {
 
 const clipboardFiles = ref<{ lab: string; paths: string[]; absolute: string[]; cut: boolean }>();
 const fileEvents = new Map<number, Promise<void>>();
+let fileEventTail: Promise<void> = Promise.resolve();
 async function refreshFiles(reconcile = false) {
+  const context = await api.terminalContext(snapshot());
+  fileScope.value = context.scope;
   fileEntries.value = await api.workspaceFiles(draft.value!.problem.labId);
   if (!reconcile) return;
   const present = new Set(fileEntries.value.filter((f) => !f.directory).map((f) => f.path));
@@ -529,16 +540,23 @@ function editTab(id: string, text: string) {
   }
 }
 function applyFileEvent(event: FileEvent): Promise<void> {
-  if (event.lab !== draft.value?.problem.labId) return Promise.resolve();
+  if (event.lab !== draft.value?.problem.labId || event.scope !== fileScope.value)
+    return Promise.resolve();
   const existing = fileEvents.get(event.id);
   if (existing) return existing;
-  const task = applyFileChanges(event);
+  const task = fileEventTail.then(() =>
+    event.lab === draft.value?.problem.labId && event.scope === fileScope.value
+      ? applyFileChanges(event)
+      : undefined,
+  );
+  fileEventTail = task.catch(() => {});
   fileEvents.set(event.id, task);
   if (fileEvents.size > 64) fileEvents.delete(fileEvents.keys().next().value!);
   return task;
 }
 async function applyFileChanges(event: FileEvent) {
-  const lab = draft.value!.problem.labId;
+  const lab = draft.value!.problem.labId,
+    scope = fileScope.value;
   const remap = (file: string) => remapPath(file, event.changes);
   const targetFile = tabs.value.find((tab) => tab.id === targetSourceId.value)?.document.file;
   const targetRemoved =
@@ -568,7 +586,7 @@ async function applyFileChanges(event: FileEvent) {
   const absolute = clipPaths?.length
     ? await api.fileContext(event.lab, draft.value!.problem.problemId, clipPaths, 'copy')
     : [];
-  if (draft.value?.problem.labId !== lab) return;
+  if (draft.value?.problem.labId !== lab || scope !== fileScope.value) return;
 
   // Read all committed metadata before publishing the new tree and editor state.
   expanded.value = expanded.value.map(remap).filter((file): file is string => file !== undefined);
@@ -634,6 +652,7 @@ async function applyFileChanges(event: FileEvent) {
   }
   fileEntries.value = event.files;
   projects.value = nextProjects;
+  void terminal.value?.refreshDirectory();
   if (event.warnings?.length) notice.value = event.warnings.join('\n');
   refreshDirty();
   revision++;
@@ -1385,6 +1404,7 @@ function applyBootstrap(state: Awaited<ReturnType<typeof api.bootstrap>>) {
   projects.value = state.projects;
   version.value = state.version;
   dataRoot.value = state.dataRoot;
+  fileScope.value = state.workspace?.scope ?? '';
   compilerLabel.value = state.compilerLabel;
   fileEntries.value = state.workspace?.files ?? [];
   expanded.value = state.workspace?.expanded ?? [];
@@ -2822,7 +2842,8 @@ onBeforeUnmount(() => {
                 :text-style="textStyle"
                 ref="terminal"
                 :running="debugRunning"
-                :context="draft.problem.labId + ':' + draft.problem.problemId"
+                :context="fileScope"
+                :synchronize="synchronizeTerminal"
                 :execute="executeTerminal"
                 :interrupt="interruptTerminal"
                 :epoch="debugEpoch"

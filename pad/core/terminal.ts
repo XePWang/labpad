@@ -1,3 +1,4 @@
+import { remapPath } from '../shared/file-changes';
 import { readFile, lstat, readdir, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { FileService, type FileRequest, type FileChange } from './files';
@@ -57,7 +58,21 @@ export class CommandTerminal {
     private mutate: (request: FileRequest) => Promise<unknown>,
     private make: (action: 'help' | 'build' | 'run' | 'clean', cwd: string) => Promise<string>,
   ) {}
+  async context() {
+    try {
+      if (!(await lstat(await this.files.resolve(this.cwd))).isDirectory()) this.cwd = '';
+    } catch (error: any) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+      this.cwd = '';
+    }
+    return { scope: this.files.root, cwd: this.cwd };
+  }
+  async reconcile(changes: FileChange[]) {
+    this.cwd = remapPath(this.cwd, changes) ?? '';
+    return this.context();
+  }
   async execute(text: string): Promise<ShellResult> {
+    await this.context();
     const words = commandWords(text),
       command = words.shift()?.toLowerCase();
     let output = '',

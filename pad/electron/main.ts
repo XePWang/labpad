@@ -362,6 +362,7 @@ async function workspaceBootstrap() {
       ? { warning: '旧版构建配置暂未迁移，请先修复 LPMake.txt 的错误并保存。' }
       : {}),
     workspace: {
+      scope: storage.workspace.root(lab),
       files: await storage.workspace.list(lab),
       expanded: state.expanded ?? [],
       sidebarWidth: state.sidebarWidth ?? 190,
@@ -548,6 +549,7 @@ async function bootstrap() {
     sourcePath: current.sourceFile ?? null,
     version: app.getVersion(),
     workspace: {
+      scope: (await storage.fileService(config.currentLab, config.currentProblem)).root,
       files: await (await storage.fileService(config.currentLab, config.currentProblem)).list(),
       ...(await storage.fileView(config.currentLab)),
     },
@@ -789,9 +791,10 @@ function emitFileChanges(
   lab: string,
   changes: FileChange[],
   files: import('../shared/workspace').WorkspaceFile[],
+  scope: string,
   warnings: string[] = [],
 ) {
-  const event = { id: ++fileSequence, lab, changes, files, warnings };
+  const event = { id: ++fileSequence, lab, changes, files, warnings, scope };
   send('files:changed', event);
   return event;
 }
@@ -997,6 +1000,31 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
     }
   }
 }
+async function shellFor(value: Draft) {
+  const draft = validateDraft(value),
+    store = storage;
+  const files = await store.fileService(draft.problem.labId, draft.problem.problemId);
+  const key = JSON.stringify([files.root, await store.workspace.isProject(draft.problem.labId)]);
+  if (store !== storage) throw Error('数据目录已改变，请重试。');
+  if (!terminalShell || terminalShellKey !== key) {
+    requireIdle();
+    for (const target of terminalTargets.values()) {
+      try {
+        await target.program.cleanup();
+      } catch (error) {
+        send('native:diagnostic', 'Terminal cleanup: ' + String(error));
+      }
+    }
+    terminalTargets.clear();
+    terminalShellKey = key;
+    terminalShell = new CommandTerminal(
+      files,
+      (request) => performFiles(draft.problem.labId, draft.problem.problemId, request),
+      makeCommand,
+    );
+  }
+  return terminalShell;
+}
 async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: string) {
   if (action === 'help') return 'lpmake build / run / clean（b / r / c）';
   requireIdle();
@@ -1091,8 +1119,9 @@ async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: stri
 async function performFiles(lab: string, problem: string, request: FileRequest) {
   if (!nativeActive()) requireIdle();
   await saves;
+  const store = storage;
   selection(lab, problem);
-  const service = await storage.fileService(lab, problem);
+  const service = await store.fileService(lab, problem);
   if (request.action === 'delete') {
     const result = await messageBox({
       type: 'warning',
@@ -1105,11 +1134,17 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
       noLink: true,
     });
     if (result.response !== 0)
-      return { id: ++fileSequence, lab, changes: [], files: await service.list() };
+      return {
+        id: ++fileSequence,
+        lab,
+        scope: service.root,
+        changes: [],
+        files: await service.list(),
+      };
   }
   let result;
   try {
-    result = await storage.operateFiles(lab, problem, request, (files) =>
+    result = await store.operateFiles(lab, problem, request, (files) =>
       nativeFileGuard(
         lab,
         request.action === 'copy' ? files.filter((p) => !request.paths.includes(p)) : files,
@@ -1130,8 +1165,14 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
       noLink: true,
     });
     if (answer.response === 3)
-      return { id: ++fileSequence, lab, changes: [], files: await service.list() };
-    result = await storage.operateFiles(
+      return {
+        id: ++fileSequence,
+        lab,
+        scope: service.root,
+        changes: [],
+        files: await service.list(),
+      };
+    result = await store.operateFiles(
       lab,
       problem,
       { ...request, conflict: (['replace', 'keepBoth', 'skip'] as const)[answer.response] },
@@ -1142,6 +1183,7 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
         ),
     );
   }
+  if (terminalShell?.files.root === service.root) await terminalShell.reconcile(result.changes);
   const translate = (d: Draft) => {
     if (d.problem.labId !== lab || !d.file) return d;
     const file = remapPath(d.file, result.changes);
@@ -1153,7 +1195,7 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
     return next ? [next] : [];
   });
   if (currentDocument) currentDocument = translate(currentDocument);
-  const event = { ...result, lab, id: ++fileSequence };
+  const event = { ...result, lab, scope: service.root, id: ++fileSequence };
   send('files:changed', event);
   return event;
 }
@@ -2227,36 +2269,23 @@ async function initialize() {
       }
     }
   });
+  handle('terminal:context', async (value: Draft) => (await shellFor(value)).context());
   handle('terminal:command', async (value: Draft, text: string) => {
     if (active && nativeSession && !nativeActive()) await active;
     if (typeof text !== 'string' || Buffer.byteLength(text) > 1048576) throw Error('命令过长。');
-    const d = validateDraft(value),
-      key = d.problem.labId + '\0' + (d.problem.problemId ? 'lab' : 'draft');
-    if (!terminalShell || terminalShellKey !== key) {
-      requireIdle();
-      for (const target of terminalTargets.values()) await target.program.cleanup();
-      terminalTargets.clear();
-      terminalShellKey = key;
-      terminalShell = new CommandTerminal(
-        await storage.fileService(d.problem.labId, d.problem.problemId),
-        (request) => performFiles(d.problem.labId, d.problem.problemId, request),
-        makeCommand,
-      );
-    }
+    const draft = validateDraft(value),
+      shell = await shellFor(draft);
+    await shell.context();
     if (
-      /^[Ll][Pp][Mm][Aa][Kk][Ee]\s+(?:b|build|r|run)\s*$/.test(text) &&
-      (await exists(await terminalShell.files.resolve('LPMake.txt', true, terminalShell.cwd))) &&
-      !(await programContext(d)).saved
+      /^[Ll][Pp][Mm][Aa][Kk][Ee]s+(?:b|build|r|run)s*$/.test(text) &&
+      (await exists(await shell.files.resolve('LPMake.txt', true, shell.cwd))) &&
+      !(await programContext(draft)).saved
     )
-      return { cwd: terminalShell.cwd, output: '', needsSave: true };
-    const result = await terminalShell.execute(text);
+      return { ...(await shell.context()), output: '', needsSave: true };
+    const result = await shell.execute(text);
     if (result.filesChanged)
-      emitFileChanges(
-        d.problem.labId,
-        [],
-        await (await storage.fileService(d.problem.labId, d.problem.problemId)).list(),
-      );
-    return result;
+      emitFileChanges(draft.problem.labId, [], await shell.files.list(), shell.files.root);
+    return { ...result, scope: shell.files.root };
   });
   handle(
     'terminal:complete',
@@ -2276,7 +2305,7 @@ async function initialize() {
         'clear',
         'help',
         'lpmake',
-      ].filter((v) => v.startsWith(text)),
+      ].filter((value) => value.startsWith(text)),
   );
   handle(
     'native:confirm-restart',

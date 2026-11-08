@@ -14,6 +14,7 @@ async function invoke(channel: string, ...args: unknown[]) {
   }
 }
 const api: Bridge = {
+  terminalContext: (d) => invoke('terminal:context', d),
   terminalCommand: (d, t) => invoke('terminal:command', d, t),
   terminalComplete: (t) => invoke('terminal:complete', t),
   nativeStart: (d, b) => invoke('native:start', d, b),

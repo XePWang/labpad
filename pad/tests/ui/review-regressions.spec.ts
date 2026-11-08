@@ -137,3 +137,129 @@ test('dirty file rename preserves editor history and reconciles breakpoint paths
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+test('terminal prompt follows shared topic cwd, directory changes and late command results', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-terminal-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: any[]) => {
+        const options = args.at(-1);
+        return { response: Math.max(0, options.buttons.indexOf('删除')), checkboxChecked: false };
+      };
+    });
+    await page.evaluate(async () => {
+      await window.labpad.createLab('TerminalFixture', 'problem-set');
+      await window.labpad.createProblem('TerminalFixture', 'one', 'c');
+      await window.labpad.createProblem('TerminalFixture', 'two', 'c');
+      const first = await window.labpad.loadDraft('TerminalFixture', 'one', 'c');
+      await window.labpad.terminalCommand(first, 'mkdir inner');
+      await window.labpad.terminalCommand(first, 'cd inner');
+      await window.labpad.createLab('OtherFixture', 'problem-set');
+      await window.labpad.createProblem('OtherFixture', 'other', 'c');
+      await window.labpad.loadDraft('TerminalFixture', 'one', 'c');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await page.getByRole('button', { name: '终端', exact: true }).click();
+    const rows = page.locator('.xterm-rows');
+    await expect(rows).toContainText('./inner >');
+    await page.getByRole('combobox', { name: '题号', exact: true }).click();
+    await page.getByRole('option').filter({ hasText: 'two' }).click();
+    await expect(page.getByRole('combobox', { name: '题号', exact: true })).toContainText('two');
+    const context = await page.evaluate(async () =>
+      window.labpad.terminalContext((await window.labpad.bootstrap()).draft),
+    );
+    expect(context.cwd).toBe('inner');
+    await expect(rows).toContainText('./inner >');
+    const input = page.locator('.xterm-helper-textarea');
+    await input.focus();
+    await page.keyboard.type('touch ');
+    await expect(rows).toContainText('./inner > touch');
+    await page.evaluate(() =>
+      window.labpad.fileOperation('TerminalFixture', 'two', {
+        action: 'rename',
+        paths: ['inner'],
+        destination: 'renamed',
+      }),
+    );
+    await expect(rows).toContainText('./renamed > touch');
+    await page.keyboard.type('marker.txt');
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () =>
+        (await page.evaluate(() => window.labpad.workspaceFiles('TerminalFixture'))).some(
+          (file) => file.path === 'renamed/marker.txt',
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() =>
+      window.labpad.fileOperation('TerminalFixture', 'two', {
+        action: 'delete',
+        paths: ['renamed'],
+      }),
+    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await page.evaluate(async () =>
+              window.labpad.terminalContext((await window.labpad.bootstrap()).draft),
+            )
+          ).cwd,
+      )
+      .toBe('');
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('terminal:command');
+      (globalThis as any).__lateCommand = false;
+      (globalThis as any).__lateStarted = false;
+      handlers.set('terminal:command', async (...args: any[]) => {
+        if (args.at(-1) === 'pwd') (globalThis as any).__lateStarted = true;
+        const result = await original(...args);
+        if (args.at(-1) === 'pwd') {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          (globalThis as any).__lateCommand = true;
+        }
+        return result;
+      });
+    });
+    await input.focus();
+    await expect
+      .poll(async () =>
+        (await page.locator('.xterm-rows>div').allTextContents())
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .at(-1),
+      )
+      .toBe('./ >');
+    await page.keyboard.type('pwd');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__lateStarted)).toBe(true);
+    await page.getByRole('combobox', { name: '实验项目', exact: true }).click();
+    await page.getByRole('option').filter({ hasText: 'OtherFixture' }).click();
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toContainText(
+      'OtherFixture',
+    );
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__lateCommand)).toBe(true);
+    await expect
+      .poll(async () =>
+        (await page.locator('.xterm-rows>div').allTextContents())
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .at(-1),
+      )
+      .toBe('./ >');
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
