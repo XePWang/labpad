@@ -27,6 +27,9 @@ test('a clean rule tab saves form-only changes with Save Current and as the only
     if (!(await page.locator('.file-tree').isVisible()))
       await page.getByRole('button', { name: '显示文件', exact: true }).click();
     await page.locator('.tree-file[data-file="one.json"]').click();
+    await expect(page.locator('.source-tab.active')).toContainText('one.json');
+    await expect(page.locator('.cm-content')).toContainText('"expectedOutput": "OLD"');
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     await page.locator('.io-pair textarea').nth(1).fill('CURRENT');
     await expect(page.locator('.tab-dirty')).toHaveCount(0);
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');

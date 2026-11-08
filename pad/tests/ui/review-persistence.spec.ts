@@ -57,6 +57,9 @@ test('rule JSON saves update the test panel; source saving and clean auxiliary v
   try {
     const { page, files } = await fixture(app);
     await page.locator('.tree-file[data-file="one.json"]').click();
+    await expect(page.locator('.source-tab.active')).toContainText('one.json');
+    await expect(page.locator('.cm-content')).toContainText('"expectedOutput": "OLD"');
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     const original = await page.locator('.cm-content').innerText();
     const changed = original.replace('"OLD"', '"NEW"');
     await page.locator('.cm-content').fill(changed);
@@ -65,6 +68,9 @@ test('rule JSON saves update the test panel; source saving and clean auxiliary v
     await expect(page.locator('.io-pair textarea').nth(1)).toHaveValue('NEW');
     expect(JSON.parse(await readFile(files.rule, 'utf8')).testCases[0].expectedOutput).toBe('NEW');
     await page.locator('.source-tab').filter({ hasText: 'one.c' }).click();
+    await expect(page.locator('.source-tab.active')).toContainText('one.c');
+    await expect(page.locator('.cm-content')).toContainText('#include');
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     const source = await page.locator('.cm-content').innerText();
     await page.locator('.cm-content').fill(source + '\n// source edit\n');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
@@ -86,6 +92,7 @@ test('rule JSON saves update the test panel; source saving and clean auxiliary v
       await expect(page.locator('.tab-dirty')).toHaveCount(0);
     }
     await page.locator('.source-tab').filter({ hasText: 'one.json' }).click();
+    await expect(page.locator('.cm-content')).toContainText('"schemaVersion"');
     await page.locator('.cm-content').fill('{broken');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
     await expect(page.getByRole('alert')).toBeVisible();
@@ -108,6 +115,9 @@ test('saving form changes updates a clean rule tab and closing saves only the ac
   try {
     const { page, files } = await fixture(app);
     await page.locator('.tree-file[data-file="one.json"]').click();
+    await expect(page.locator('.source-tab.active')).toContainText('one.json');
+    await expect(page.locator('.cm-content')).toContainText('"expectedOutput": "OLD"');
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     await page.locator('.io-pair textarea').nth(1).fill('NEW');
     await page.getByRole('button', { name: '保存', exact: true }).click();
     await page.getByRole('menuitem', { name: '保存全部', exact: true }).click();
