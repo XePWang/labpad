@@ -333,11 +333,35 @@
   flex: 1;
   min-height: calc(var(--pane-header-height) * 2 + 100px);
 }
+.work-layout.splitpanes:has(.cm-search) {
+  --search-workspace-min-height: 260px;
+  min-height: calc(var(--search-workspace-min-height) + var(--pane-header-height) + 37px);
+}
+.work-layout > .splitpanes__pane:first-child:has(.cm-search) {
+  min-height: var(--search-workspace-min-height);
+}
+
 .workspace.splitpanes {
   display: flex;
   min-height: 0;
 }
+/* Keep code usable; the file tree is the only manually collapsible left section. */
+.workspace.splitpanes {
+  --visible-files-min-width: var(--file-tree-min-width);
+  --visible-right-min-width: var(--right-pane-min-width);
+  min-width: calc(
+    var(--code-editor-min-width) + var(--visible-files-min-width) + var(--visible-right-min-width) +
+      5px
+  );
+}
+.workspace.files-folded {
+  --visible-files-min-width: 0px;
+}
+.workspace.right-folded {
+  --visible-right-min-width: 0px;
+}
 .workspace .editor-pane {
+  --pane-min-width: calc(var(--code-editor-min-width) + var(--visible-files-min-width));
   border-right: 0;
 }
 .work-layout .splitpanes__splitter {

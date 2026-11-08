@@ -755,8 +755,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  min-width: 150px;
-  max-width: 420px;
+  min-width: var(--file-tree-min-width);
+  max-width: min(420px, calc(100% - var(--code-editor-min-width)));
   background: var(--panel);
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -922,7 +922,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-width: 0;
+  min-width: var(--code-editor-min-width);
   min-height: 0;
 }
 .editor-content > .code-editor {

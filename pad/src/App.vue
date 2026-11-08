@@ -38,7 +38,7 @@ import type { WorkspaceFile, WorkspaceEdit, ProjectBuildOptions } from '../share
 import CodeEditor from './components/CodeEditor.vue';
 import DialogActions from './components/DialogActions';
 import DiagnosticCounts from './components/DiagnosticCounts.vue';
-import { diagnosticCounts } from '../shared/diagnostics';
+import { diagnosticCounts, isLpmakeDiagnostic } from '../shared/diagnostics';
 import DebugTerminal from './components/DebugTerminal.vue';
 import OutputDiff from './components/OutputDiff.vue';
 import PathField from './components/PathField.vue';
@@ -489,16 +489,21 @@ async function synchronizeTerminal() {
 }
 async function executeTerminal(text: string) {
   const scope = fileScope.value;
-  let result = await api.terminalCommand(snapshot(), text);
-  if (scope !== fileScope.value) return result;
-  if (result.needsSave) {
-    if (!(await api.confirmCompile())) return { ...result, output: '已取消。' };
+  try {
+    let result = await api.terminalCommand(snapshot(), text);
     if (scope !== fileScope.value) return result;
-    await saveAll();
-    result = await api.terminalCommand(snapshot(), text);
+    if (result.needsSave) {
+      if (!(await api.confirmCompile())) return { ...result, output: '已取消。' };
+      if (scope !== fileScope.value) return result;
+      await saveAll();
+      result = await api.terminalCommand(snapshot(), text);
+    }
+    if (scope === fileScope.value) await refreshFiles();
+    return result;
+  } catch (error) {
+    if (scope !== fileScope.value || !showLpmakeDiagnostic(message(error))) throw error;
+    return { ...(await api.terminalContext(snapshot())), output: '构建失败，请查看“输出”。' };
   }
-  if (scope === fileScope.value) await refreshFiles();
-  return result;
 }
 
 const runHint = computed(() =>
@@ -1140,6 +1145,18 @@ const validSettingsPaths = computed(
 function message(e: unknown) {
   return operationError(e);
 }
+function showLpmakeDiagnostic(text: string): boolean {
+  if (!isLpmakeDiagnostic(text)) return false;
+  logs.value = 'LPMake 配置检查\n\n' + text + '\n';
+  diagnostics.value = diagnosticCounts(text);
+  diagnosticRevision.value++;
+  bottomTab.value = 'output';
+  return true;
+}
+function reportOperationError(reason: unknown) {
+  const text = message(reason);
+  if (!showLpmakeDiagnostic(text)) error.value = text;
+}
 async function action(fn: () => Promise<unknown>, clearMessages = true) {
   if (clearMessages) {
     error.value = '';
@@ -1148,7 +1165,7 @@ async function action(fn: () => Promise<unknown>, clearMessages = true) {
   try {
     await fn();
   } catch (e) {
-    error.value = message(e);
+    reportOperationError(e);
   }
 }
 async function fileAction(fn: () => Promise<unknown>) {
@@ -1188,7 +1205,7 @@ function queueChecks() {
   checkTimer = setTimeout(
     () =>
       void refreshChecks().catch((e) => {
-        error.value = message(e);
+        reportOperationError(e);
       }),
     300,
   );
@@ -1325,7 +1342,7 @@ function enqueueSave(input: Draft, id: number): Promise<SaveResult> {
         tab.dirty = true;
       }
       saveStatus.value = activeTab.value?.status ?? '保存失败';
-      error.value = message(e);
+      reportOperationError(e);
       recordState();
       throw e;
     });
@@ -1890,11 +1907,13 @@ async function compile() {
     compiledReady.value = false;
     compilationFailed.value = started;
     endExecution(id, started ? 'compile-failed' : 'compile-not-started');
-    logs.value = message(error);
-    diagnostics.value = diagnosticCounts(logs.value);
-    if (!diagnostics.value.errors) diagnostics.value.errors = 1;
-    diagnosticRevision.value++;
-    throw error;
+    if (!showLpmakeDiagnostic(message(error))) {
+      logs.value = message(error);
+      diagnostics.value = diagnosticCounts(logs.value);
+      if (!diagnostics.value.errors) diagnostics.value.errors = 1;
+      diagnosticRevision.value++;
+      throw error;
+    }
   } finally {
     endExecution(id, 'ready');
     queueChecks();
@@ -2020,7 +2039,7 @@ async function openSettings() {
     settingsMessage.value = '';
     settingsOpen.value = true;
   } catch (e) {
-    error.value = message(e);
+    reportOperationError(e);
   }
 }
 async function saveSettings() {
@@ -2490,7 +2509,7 @@ watch(
               sidebarCollapsed: sidebarCollapsed.value,
               rightCollapsed: rightCollapsed.value,
             })
-      ).catch((e) => (error.value = message(e)));
+      ).catch((e) => reportOperationError(e));
     }, 250);
   },
 );
@@ -2519,7 +2538,7 @@ watch(
         }
       }
     } catch (reason) {
-      if (current()) error.value = message(reason);
+      if (current()) reportOperationError(reason);
     } finally {
       await nextTick();
       if (current()) loadingDebugPrefs = false;
@@ -2550,7 +2569,7 @@ watch(
       setTimeout(() => {
         debugPrefTimers.delete(token.lab);
         void api.nativeView(token.lab, value).catch((reason) => {
-          if (ownsView(token)) error.value = message(reason);
+          if (ownsView(token)) reportOperationError(reason);
         });
       }, 250),
     );
@@ -2772,7 +2791,7 @@ async function foldRight(collapsed: boolean) {
           ><div class="workspace-row">
             <Splitpanes
               class="workspace"
-              :class="{ 'right-folded': rightCollapsed }"
+              :class="{ 'right-folded': rightCollapsed, 'files-folded': sidebarCollapsed }"
               :maximize-panes="false"
               @resized="resized('editorPercent', $event)"
             >
@@ -3637,6 +3656,7 @@ async function foldRight(collapsed: boolean) {
 
 <style>
 .workspace-row {
+  overflow: auto;
   display: flex;
   height: 100%;
   min-width: 0;
@@ -3679,7 +3699,7 @@ async function foldRight(collapsed: boolean) {
   opacity: 0.45;
 }
 .cases-pane:not(.is-folded) {
-  --pane-min-width: 144px;
+  --pane-min-width: var(--right-pane-min-width);
 }
 .cases-heading {
   --pane-header-padding: 6px;

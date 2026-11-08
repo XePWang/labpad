@@ -2516,8 +2516,8 @@ app.whenReady().then(async () => {
   win = new BrowserWindow({
     width: 1440,
     height: 950,
-    minWidth: 1000,
-    minHeight: 720,
+    minWidth: 640,
+    minHeight: 380,
     title: 'LabPad',
     icon,
     backgroundColor: '#0c111b',

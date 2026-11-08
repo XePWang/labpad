@@ -1,5 +1,8 @@
 :root {
   --pane-header-height: 40px;
+  --code-editor-min-width: 240px;
+  --file-tree-min-width: 150px;
+  --right-pane-min-width: 144px;
   font-family: Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   color: #dce5f2;
   background: #0c111b;

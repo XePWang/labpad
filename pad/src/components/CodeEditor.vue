@@ -457,6 +457,25 @@ defineExpose({
 <template><div ref="host" class="code-editor" data-testid="editor"></div></template>
 
 <style>
+/* Keep the native search panel separate from application form layout. */
+
+.code-editor .cm-search label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+.code-editor .cm-search input.cm-textfield {
+  max-width: calc(100% - 24px);
+  padding: 2px 4px;
+}
+.code-editor .cm-search button:not([name='close']) {
+  padding: 2px 5px;
+}
+.code-editor .cm-editor:has(.cm-search) .cm-scroller {
+  min-height: 2lh;
+}
+
 .source-debug-gutter .cm-gutterElement {
   width: 18px;
   cursor: pointer;
