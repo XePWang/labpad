@@ -404,6 +404,8 @@ Zig 直接通过 zig cc / zig c++ 构建并复用受控缓存；GCC/Clang 采用
 ## 诊断格式
 LPMake 诊断使用英文，给出文件、行列、源码及定位指针。已识别的修正建议显示为 hint，相关上下文显示为 note；两者按需出现。
 
+桌面端统一在“输出”中展示这些诊断，保留原始排版。编译、调试启动、终端构建和项目导入使用同一展示入口；表单字段校验继续就地提示。完整示例见 [错误输出示例](diagnostic-examples.md)。
+
 ~~~text
 LPMake.txt:2:14: error: Unsupported language "cpp".
   2 | set_language("cpp")

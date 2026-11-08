@@ -297,7 +297,7 @@ core/cleanup.ts 独立执行各释放动作，并以零参数调用回调，避�
 
 文件打开、文件区刷新、补全、构建成员预览及栈帧选择校验视图代次和请求序号；A→B→A 不是同一次视图。workspace:files/open 显式携带题号。断点与监视设置加载校验归属，写入捕获原项目和当时数据。设置扫描失效于设置关闭；参数预览在输入变化时立即失效，防抖仅推迟新计算。
 
-弹窗统一使用 DialogActions 和 nativeButtonOrder；新建名称通过 Reka 的 open-auto-focus 聚焦。工具栏动作组在窄窗口换行，极矮视口允许滚动。补全排序、长签名截断及接受行为继续使用 CodeMirror；UI 菜单保留界面字体。故障证据、原生窗口回归与平台范围见 [质量收敛记录](quality-audit.md) 和 [验证记录](verification.md)。
+弹窗统一使用 DialogActions 和 nativeButtonOrder；新建名称通过 Reka 的 open-auto-focus 聚焦。工具栏动作组在窄窗口换行，极矮视口允许滚动。补全排序、长签名截断及接受行为继续使用 CodeMirror；UI 菜单保留界面字体。故障证据、原生窗口回归与平台范围见 [源码审查](audit-report.md) 和 [验证记录](verification.md)。
 
 ### Windows 原子保存
 
@@ -313,3 +313,21 @@ core/atomic-file.ts 统一承接 write-file-atomic。整次写入含重试按文
 - 标题高度由 --pane-header-height 统一为 40 CSS px。右区按可用宽度收拢低频动作；运行及展开/收起保持可达。菜单使用 Reka Portal、碰撞避让和可用高度变量，不受侧栏 overflow 影响。
 
 复现入口、修改位置、原生窗口证据及发布候选验收见 [最终源码审查](audit-report.md) 和 [验证记录](verification.md)。
+
+
+## 紧凑布局与诊断展示
+
+窗口紧凑基准采用 100% 缩放下约 640–683 × 380–480 的逻辑尺寸。style.css 集中定义编辑区 240 px、文件区 150 px、右区 144 px 的下限。文件区保留用户偏好宽度，实际宽度受当前可用空间限制；ResizeObserver 不回写临时限宽。左右分隔线不能把编辑区压为零。
+
+CodeMirror 原生查找替换继续使用其自带面板、匹配和替换命令。局部样式隔离应用表单的纵向 label 和大内边距；查找面板出现时提高工作区最低高度，保留代码行，较矮窗口由应用纵向滚动承接。标题栏仍固定为 40 px。
+
+IPC 保留错误消息后，shared/diagnostics.ts 只按 ConfigError 的规范首行识别 LPMake 诊断。App 的公共错误呈现入口、编译异常与终端命令异常使用同一个输出函数。这个步骤只负责展示，不重新解析 LPMake，也不改写编译器 stdout/stderr。导入失败不改变当前实验，编译失败的执行归属照常释放。
+
+对应原生回归：rc1-compact、rc1-compact-flow、rc1-search-space、rc1-lpmake-output；包括两种工作区、两种主题、常用缩放、手动文件侧栏、拖动分隔线、菜单、补全、查找替换和各诊断出口。
+
+
+## 菜单焦点
+
+Reka 菜单的默认关闭行为包含延迟焦点恢复。menu-focus.ts 统一记录打开前的控件，并在关闭钩子中同步决定返回位置；用户已进入编辑器时保留新的焦点。文件区的内联输入优先保持命名焦点。回归同时检查“Esc 返回原按钮”和“Esc 后立即继续编辑”两条路径。
+
+独立工具链验证及安装路径限制见 [自定义编译器兼容性](compiler-compatibility.md)。编译参数修复必须同时覆盖单文件库选项与实际对象文件输入，避免把 -x c/c++ 意外作用到对象文件。
