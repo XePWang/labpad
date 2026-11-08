@@ -1,11 +1,11 @@
 import { readEditableFile, readFileLimited } from './read-file';
 import { EDITOR_FILE_BYTES } from '../shared/resource-limits';
+import { isCodeFile } from '../shared/file-language';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { decodeText } from './storage';
 import { workspacePath, uniquePaths, type WorkspaceSnapshot } from '../shared/workspace';
-const sourceText = (name: string) =>
-  name === 'LPMake.txt' || /\.(?:c|cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(name);
+const sourceText = (name: string) => name === 'LPMake.txt' || isCodeFile(name);
 export function snapshotBytes(entries: Record<string, Buffer>): WorkspaceSnapshot {
   const files: Record<string, string> = {},
     binaryFiles: Record<string, string> = {};
