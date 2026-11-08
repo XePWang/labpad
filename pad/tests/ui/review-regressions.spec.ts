@@ -324,11 +324,13 @@ test('native debugger releases task ownership after temporary cleanup fails', as
       const fs = process.getBuiltinModule('node:fs/promises') as any;
       (globalThis as any).__cleanupOriginal = fs.rm;
       (globalThis as any).__cleanupFailures = 0;
+      (globalThis as any).__cleanupPaths = [];
       fs.rm = async (...args: any[]) => {
+        (globalThis as any).__cleanupPaths.push(String(args[0]));
         if (
           !(globalThis as any).__cleanupFailures &&
           String(args[0]).includes('labpad-runtime-') &&
-          /[\/]project-[^\/]+$/.test(String(args[0]))
+          process.getBuiltinModule('node:path').basename(String(args[0])).startsWith('project-')
         ) {
           (globalThis as any).__cleanupFailures++;
           throw Error('Injected temporary cleanup failure');
@@ -338,7 +340,11 @@ test('native debugger releases task ownership after temporary cleanup fails', as
     });
     await page.getByRole('button', { name: '停止调试', exact: true }).click();
     await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
-    expect(await app.evaluate(() => (globalThis as any).__cleanupFailures)).toBe(1);
+    const cleanupTrace = await app.evaluate(() => ({
+      failures: (globalThis as any).__cleanupFailures,
+      paths: (globalThis as any).__cleanupPaths,
+    }));
+    expect(cleanupTrace.failures, JSON.stringify(cleanupTrace.paths)).toBe(1);
     await app.evaluate(() => {
       (process.getBuiltinModule('node:fs/promises') as any).rm = (
         globalThis as any
@@ -424,6 +430,29 @@ test('failed save retries through compile; concurrent requests and judge errors 
       .fill('#include <stdio.h>\nint main(void){puts("OK");return 0;} // changed\n');
     await page.getByRole('button', { name: '保存', exact: true }).click();
     await page.getByRole('menuitem', { name: '保存当前', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Injected save failure');
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('completion:files');
+      (globalThis as any).__backgroundCompletions = 0;
+      handlers.set('completion:files', async (...args: any[]) => {
+        try {
+          return await original(...args);
+        } finally {
+          (globalThis as any).__backgroundCompletions++;
+        }
+      });
+    });
+    await page.evaluate(() =>
+      window.labpad.fileOperation('TaskFixture', 'one', {
+        action: 'newFile',
+        paths: ['background.h'],
+        content: '// trigger background completion refresh',
+      }),
+    );
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as any).__backgroundCompletions))
+      .toBeGreaterThan(0);
     await expect(page.getByRole('alert')).toContainText('Injected save failure');
     const compile = page.getByRole('button', { name: '编译', exact: true }),
       run = page.locator('.cases-heading .run-test-icon');

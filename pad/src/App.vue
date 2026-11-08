@@ -999,9 +999,11 @@ const validSettingsPaths = computed(
 function message(e: unknown) {
   return operationError(e);
 }
-async function action(fn: () => Promise<unknown>) {
-  error.value = '';
-  notice.value = '';
+async function action(fn: () => Promise<unknown>, clearMessages = true) {
+  if (clearMessages) {
+    error.value = '';
+    notice.value = '';
+  }
   try {
     await fn();
   } catch (e) {
@@ -1256,7 +1258,8 @@ function activateTab(id: string, focus = true) {
   pauseSave = false;
   invalidate();
   recordState();
-  if (!tab.document.auxiliary) void action(() => api.activateDocument(id, tab.document.file));
+  if (!tab.document.auxiliary)
+    void action(() => api.activateDocument(id, tab.document.file), false);
   if (focus) nextTick(() => editor.value?.focus());
   if (config.value?.saveMode === 'auto' && (tabs.value.some((t) => t.dirty) || rulesDirty.value))
     saveTimer = setTimeout(() => void action(saveAll), 350);
@@ -2142,7 +2145,7 @@ onMounted(async () => {
       logs.value += data;
     }),
     api.onFiles((event) => {
-      void action(() => applyFileEvent(event));
+      void action(() => applyFileEvent(event), false);
     }),
     api.onDebugData((data, ack) => terminal.value?.write(data, ack)),
     api.onDebugState(handleDebugState),
@@ -2263,7 +2266,7 @@ watch(
   () => [draft.value?.problem.labId, draft.value?.problem.problemId],
   async () => {
     clearTimeout(completionTimer);
-    completionTimer = setTimeout(() => void action(refreshCompletion), 150);
+    completionTimer = setTimeout(() => void action(refreshCompletion, false), 150);
     if (!draft.value || !workspaceMode.value) {
       sourceBreakpoints.value = [];
       watches.value = [];
@@ -2288,7 +2291,7 @@ watch(
     ]),
   () => {
     clearTimeout(completionTimer);
-    completionTimer = setTimeout(() => void action(refreshCompletion), 250);
+    completionTimer = setTimeout(() => void action(refreshCompletion, false), 250);
   },
 );
 watch(
@@ -2314,7 +2317,7 @@ watch(
   () => [nativeState.value.selectedFrameId, nativeState.value.status],
   () => {
     if (nativeState.value.status === 'paused' && activeFrame.value?.path)
-      void action(() => debugLocation(activeFrame.value!.path!, activeFrame.value!.line));
+      void action(() => debugLocation(activeFrame.value!.path!, activeFrame.value!.line), false);
   },
 );
 watch(

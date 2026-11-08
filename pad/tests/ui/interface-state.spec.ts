@@ -70,6 +70,14 @@ test('sidebars preserve state and focus, share motion settings and use the same 
     await expect
       .poll(async () => Math.round((await sidebar.boundingBox())!.width))
       .toBe(savedWidth);
+    for (let round = 0; round < 3; round++) {
+      await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
+      await expect(sidebar).toBeHidden();
+      await page.getByRole('button', { name: '显示文件', exact: true }).click();
+      await expect
+        .poll(async () => Math.round((await sidebar.boundingBox())!.width))
+        .toBe(savedWidth);
+    }
     await page.getByRole('tab', { name: '调试', exact: true }).click();
     const variables = page.locator('.native-debug-panel details').first();
     await variables.locator('summary').click();
