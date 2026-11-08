@@ -43,8 +43,8 @@ const api: Bridge = {
   resetZoom: () => invoke('zoom:reset'),
   onZoom: (c) => listen('zoom:changed', c),
   workspaceSources: (l, s) => invoke('workspace:sources', l, s),
-  workspaceFiles: (l) => invoke('workspace:files', l),
-  workspaceOpen: (l, f) => invoke('workspace:open', l, f),
+  workspaceFiles: (l, p) => invoke('workspace:files', l, p),
+  workspaceOpen: (l, f, p) => invoke('workspace:open', l, f, p),
 
   workspaceView: (l, v) => invoke('workspace:view', l, v),
   projectBuildOptions: (l) => invoke('project:build:get', l),

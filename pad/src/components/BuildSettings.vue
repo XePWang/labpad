@@ -65,8 +65,7 @@ function currentText() {
 }
 let timer: ReturnType<typeof setTimeout> | undefined,
   request = 0;
-async function refresh() {
-  const id = ++request;
+async function refresh(id: number) {
   previewBusy.value = true;
   try {
     const value = await props.preview(currentText());
@@ -96,7 +95,10 @@ watch(
     ]),
   () => {
     clearTimeout(timer);
-    timer = setTimeout(() => void refresh(), 180);
+    const id = ++request;
+    previewValue.value = undefined;
+    previewBusy.value = true;
+    timer = setTimeout(() => void refresh(id), 180);
   },
   { immediate: true },
 );

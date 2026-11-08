@@ -284,8 +284,8 @@ export interface Bridge {
   resetZoom(): Promise<void>;
   onZoom(callback: (value: number) => void): () => void;
   workspaceSources(lab: string, lpmake: string): Promise<string[]>;
-  workspaceFiles(lab: string): Promise<WorkspaceFile[]>;
-  workspaceOpen(lab: string, file: string): Promise<LoadedDraft>;
+  workspaceFiles(lab: string, problem?: string): Promise<WorkspaceFile[]>;
+  workspaceOpen(lab: string, file: string, problem?: string): Promise<LoadedDraft>;
 
   workspaceView(
     lab: string,

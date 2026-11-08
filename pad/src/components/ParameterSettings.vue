@@ -50,8 +50,7 @@ const value = ref<BuildPreview>(),
   loading = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined,
   revision = 0;
-async function refresh() {
-  const id = ++revision;
+async function refresh(id: number) {
   loading.value = true;
   try {
     if (!props.workspace)
@@ -77,7 +76,10 @@ watch(
   () => JSON.stringify([props.machine, props.options, props.workspace]),
   () => {
     clearTimeout(timer);
-    timer = setTimeout(() => void refresh(), 180);
+    const id = ++revision;
+    value.value = undefined;
+    loading.value = true;
+    timer = setTimeout(() => void refresh(id), 180);
   },
   { immediate: true },
 );

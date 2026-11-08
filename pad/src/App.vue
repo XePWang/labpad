@@ -340,8 +340,8 @@ const executionLine = computed(() =>
     : undefined,
 );
 const conditionDialog = ref<{ path: string; line: number; value: string }>();
-let debugPrefsTimer: ReturnType<typeof setTimeout> | undefined,
-  loadingDebugPrefs = false;
+let loadingDebugPrefs = false,
+  debugPrefsRevision = 0;
 const completionContext = ref<CompletionFiles>({
   files: {},
   includeDirs: ['.'],
@@ -359,13 +359,15 @@ const completionFiles = computed(() => ({
   },
   includeDirs: completionContext.value.includeDirs,
 }));
-async function refreshCompletion() {
+async function refreshCompletion(request = ++completionRevision) {
   if (!draft.value) return;
-  const lab = draft.value.problem.labId,
-    problem = draft.value.problem.problemId,
-    value = await api.completionFiles(lab, problem);
-  if (lab === draft.value?.problem.labId && problem === draft.value?.problem.problemId)
-    completionContext.value = value;
+  const token = viewToken();
+  try {
+    const value = await api.completionFiles(token.lab, token.problem);
+    if (ownsView(token) && request === completionRevision) completionContext.value = value;
+  } catch (error) {
+    if (ownsView(token) && request === completionRevision) throw error;
+  }
 }
 function changeBreakpoints(values: SourceBreakpoint[]) {
   sourceBreakpoints.value = values;
@@ -411,9 +413,19 @@ async function debugLocation(path: string, line: number) {
   editor.value?.jumpLine(line);
 }
 async function selectFrame(id: number) {
-  nativeState.value = await api.nativeFrame(id);
-  const frame = nativeState.value.frames.find((f) => f.id === id);
-  if (frame?.path) await debugLocation(frame.path, frame.line);
+  const token = viewToken(),
+    request = ++frameRevision;
+  const current = () =>
+    ownsView(token) && request === frameRevision && nativeState.value.status === 'paused';
+  try {
+    const state = await api.nativeFrame(id);
+    if (!current()) return;
+    nativeState.value = state;
+    const frame = state.frames.find((f) => f.id === id);
+    if (frame?.path) await debugLocation(frame.path, frame.line);
+  } catch (error) {
+    if (current() && nativeState.value.selectedFrameId === id) throw error;
+  }
 }
 async function startNative(restart = false) {
   if (nativeStarting.value || busy.value) return;
@@ -522,54 +534,104 @@ function toggleAllTests(event: Event) {
 const clipboardFiles = ref<{ lab: string; paths: string[]; absolute: string[]; cut: boolean }>();
 const fileEvents = new Map<number, Promise<void>>();
 let fileEventTail: Promise<void> = Promise.resolve();
+let viewEpoch = 0,
+  fileRefreshRevision = 0,
+  fileOpenRevision = 0,
+  completionRevision = 0,
+  frameRevision = 0,
+  compilerScanRevision = 0;
+const debugPrefTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function viewToken() {
+  return {
+    epoch: viewEpoch,
+    lab: draft.value?.problem.labId ?? '',
+    problem: draft.value?.problem.problemId ?? '',
+    workspace: workspaceMode.value,
+  };
+}
+function ownsView(token: ReturnType<typeof viewToken>) {
+  return (
+    token.epoch === viewEpoch &&
+    token.lab === draft.value?.problem.labId &&
+    token.problem === draft.value?.problem.problemId &&
+    token.workspace === workspaceMode.value
+  );
+}
 async function refreshFiles(reconcile = false) {
-  const context = await api.terminalContext(snapshot());
-  fileScope.value = context.scope;
-  fileEntries.value = await api.workspaceFiles(draft.value!.problem.labId);
-  if (!reconcile) return;
-  const present = new Set(fileEntries.value.filter((f) => !f.directory).map((f) => f.path));
-  for (const tab of [...tabs.value]) {
-    const file = tab.document.file;
-    if (!file) continue;
-    if (!present.has(file)) {
-      tab.missing = true;
-      tab.status = '文件已移除';
-      continue;
+  const token = viewToken(),
+    request = ++fileRefreshRevision,
+    input = snapshot();
+  const current = () => ownsView(token) && request === fileRefreshRevision;
+  try {
+    const context = await api.terminalContext(input);
+    if (!current()) return;
+    const entries = await api.workspaceFiles(token.lab, token.problem);
+    if (!current()) return;
+    fileScope.value = context.scope;
+    fileEntries.value = entries;
+    if (!reconcile) return;
+    const present = new Set(entries.filter((f) => !f.directory).map((f) => f.path));
+    for (const tab of [...tabs.value]) {
+      const file = tab.document.file,
+        revision = tab.revision;
+      if (!file) continue;
+      if (!present.has(file)) {
+        tab.missing = true;
+        tab.status = '文件已移除';
+        continue;
+      }
+      const loaded = await api.workspaceOpen(token.lab, file, token.problem);
+      if (!current()) return;
+      const same = () =>
+        tabs.value.includes(tab) && tab.document.file === file && tab.revision === revision;
+      if (!same() || loaded.source === tab.savedSource) continue;
+      if (tab.dirty && !(await api.confirmExternal(file))) continue;
+      if (!current()) return;
+      if (!same()) continue;
+      tab.savedSource = loaded.source;
+      tab.document = { ...loaded, documentId: tab.id };
+      tab.missing = false;
+      if (tab.id === activeId.value) {
+        pauseSave = true;
+        draft.value = { ...clone(tab.document), problem: clone(draft.value!.problem) };
+        editor.value?.applyText(loaded.source);
+        pauseSave = false;
+      }
     }
-    const loaded = await api.workspaceOpen(draft.value!.problem.labId, file);
-    if (loaded.source === tab.savedSource) continue;
-    if (tab.dirty && !(await api.confirmExternal(file))) continue;
-    tab.savedSource = loaded.source;
-    tab.document = { ...loaded, documentId: tab.id };
-    tab.missing = false;
-    if (tab.id === activeId.value) {
-      pauseSave = true;
-      draft.value = { ...clone(tab.document), problem: clone(draft.value!.problem) };
-      editor.value?.applyText(loaded.source);
-      pauseSave = false;
+    if (current()) {
+      refreshDirty();
+      invalidate();
+      recordState();
     }
+  } catch (error) {
+    if (current()) throw error;
   }
-  refreshDirty();
-  invalidate();
-  recordState();
 }
 async function openFile(file: string) {
+  const token = viewToken(),
+    request = ++fileOpenRevision;
+  const current = () => ownsView(token) && request === fileOpenRevision;
   const found = tabs.value.find((t) => t.document.file === file);
   if (found) {
     activateTab(found.id);
     return;
   }
-  const loaded = await api.workspaceOpen(draft.value!.problem.labId, file);
-  if (
-    !workspaceMode.value &&
-    loaded.problem.problemId !== draft.value!.problem.problemId &&
-    !loaded.auxiliary
-  ) {
-    if (!(await beforeChange())) return;
-    await api.loadDraft(loaded.problem.labId, loaded.problem.problemId, loaded.language);
-    applyBootstrap(await api.bootstrap());
+  try {
+    const loaded = await api.workspaceOpen(token.lab, file, token.problem);
+    if (!current()) return;
+    if (!workspaceMode.value && loaded.problem.problemId !== token.problem && !loaded.auxiliary) {
+      await fileAction(async () => {
+        if (!current() || !(await beforeChange()) || !current()) return;
+        await api.loadDraft(loaded.problem.labId, loaded.problem.problemId, loaded.language);
+        applyBootstrap(await api.bootstrap());
+        addDocument(loaded);
+      });
+      return;
+    }
+    addDocument(loaded);
+  } catch (error) {
+    if (current()) throw error;
   }
-  addDocument(loaded);
 }
 async function openFiles(files: string[]) {
   for (const file of files) {
@@ -1277,6 +1339,7 @@ async function loadWorkspace(value: LoadedDraft) {
   applyBootstrap(await api.bootstrap());
 }
 function activateTab(id: string, focus = true) {
+  fileOpenRevision++;
   if (fileBusy.value || busy.value || !!exportKind.value || id === activeId.value) return;
   const tab = tabs.value.find((t) => t.id === id);
   if (!tab) return;
@@ -1522,6 +1585,9 @@ async function createItem() {
   }
 }
 function applyBootstrap(state: Awaited<ReturnType<typeof api.bootstrap>>) {
+  viewEpoch++;
+  completionRevision++;
+  frameRevision++;
   config.value = state.config;
   projects.value = state.projects;
   version.value = state.version;
@@ -1613,11 +1679,12 @@ async function formatCode() {
   try {
     const formatted = await api.formatCode(draft.value!.source, language, size);
     if (id !== revision || size !== config.value!.indentSize || language !== editorLanguage.value) {
-      notice.value = '代码或缩进设置已改变，请重新格式化';
       return;
     }
     editor.value?.applyText(formatted);
     editor.value?.focus();
+  } catch (error) {
+    if (id === revision) throw error;
   } finally {
     formatting.value = false;
   }
@@ -1791,7 +1858,8 @@ async function run(ids?: string[]) {
   try {
     const result = await api.judge(snapshot(), chosen);
     if (!ownsExecution(id)) return;
-    if (result.cleanupWarnings?.length) logs.value += '\n[清理未完成] ' + result.cleanupWarnings.join('；');
+    if (result.cleanupWarnings?.length)
+      logs.value += '\n[清理未完成] ' + result.cleanupWarnings.join('；');
     const coverage = await api.checkState(snapshot());
     if (!ownsExecution(id)) return;
     problemStates.value[draft.value!.problem.problemId] = coverage.state;
@@ -1928,17 +1996,25 @@ async function saveSettings() {
   }
 }
 async function detectInstalledCompilers() {
-  if (compilerScanning.value) return;
+  if (compilerScanning.value || !settingsOpen.value || !settings.value) return;
+  const request = ++compilerScanRevision,
+    owner = settings.value;
   compilerScanning.value = true;
+  const current = () =>
+    request === compilerScanRevision && settingsOpen.value && settings.value === owner;
   try {
-    detectedCompilers.value = await api.detectCompilers();
+    const found = await api.detectCompilers();
+    if (!current()) return;
+    detectedCompilers.value = found;
     selectedCompiler.value = '';
     useRecommended.value = true;
     compilerChoiceOpen.value = true;
     await nextTick();
-    compilerDialog.value?.focus();
+    if (current()) compilerDialog.value?.focus();
+  } catch (error) {
+    if (current()) throw error;
   } finally {
-    compilerScanning.value = false;
+    if (request === compilerScanRevision) compilerScanning.value = false;
   }
 }
 function useDetectedCompiler() {
@@ -2195,6 +2271,7 @@ onMounted(async () => {
     }),
     api.onNativeState((state) => {
       if (state.scope && state.scope !== fileScope.value) return;
+      if (state.status !== 'paused') frameRevision++;
       nativeState.value = state;
       if (state.status === 'ended' || state.status === 'error')
         setIdle(state.status === 'ended' ? 'native-ended' : 'native-failed');
@@ -2240,6 +2317,11 @@ watch(newKind, (open, old) => {
     });
 });
 watch(settingsOpen, (open, old) => {
+  if (old && !open) {
+    compilerScanRevision++;
+    compilerScanning.value = false;
+    compilerChoiceOpen.value = false;
+  }
   if (old && !open && exportKind.value && !settingsSaving.value)
     exportDialog.value?.cancelSettings();
   if (open && exportKind.value)
@@ -2252,6 +2334,7 @@ watch(notice, (value) => {
       notice.value = '';
     }, 4000);
 });
+let membershipRevision = 0;
 watch(
   () =>
     JSON.stringify([
@@ -2262,22 +2345,27 @@ watch(
     ]),
   () => {
     clearTimeout(membershipTimer);
+    const request = ++membershipRevision,
+      token = viewToken();
     includedSources.value = null;
+    membershipMessage.value = '';
     if (!workspaceMode.value) return;
-    const lab = draft.value!.problem.labId,
-      make = tabs.value.find((t) => t.document.file === 'LPMake.txt')?.document.source;
+    const make = tabs.value.find((t) => t.document.file === 'LPMake.txt')?.document.source;
+    const current = () => ownsView(token) && request === membershipRevision;
     membershipTimer = setTimeout(
       () =>
         void (async () => {
           try {
-            const text = make ?? (await api.workspaceOpen(lab, 'LPMake.txt')).source,
-              sources = await api.workspaceSources(lab, text);
-            if (draft.value?.problem.labId === lab) {
+            const text =
+              make ?? (await api.workspaceOpen(token.lab, 'LPMake.txt', token.problem)).source;
+            if (!current()) return;
+            const sources = await api.workspaceSources(token.lab, text);
+            if (current()) {
               includedSources.value = sources;
               membershipMessage.value = '';
             }
-          } catch (e) {
-            membershipMessage.value = message(e);
+          } catch (error) {
+            if (current()) membershipMessage.value = message(error);
           }
         })(),
       250,
@@ -2323,21 +2411,32 @@ watch(
 watch(
   () => [draft.value?.problem.labId, draft.value?.problem.problemId],
   async () => {
+    const token = viewToken(),
+      request = ++debugPrefsRevision;
+    const current = () => ownsView(token) && request === debugPrefsRevision;
     clearTimeout(completionTimer);
-    completionTimer = setTimeout(() => void action(refreshCompletion, false), 150);
-    if (!draft.value || !workspaceMode.value) {
-      sourceBreakpoints.value = [];
-      watches.value = [];
-      return;
-    }
+    const completion = ++completionRevision;
+    completionContext.value = { files: {}, includeDirs: ['.'] };
+    completionTimer = setTimeout(
+      () => void action(() => refreshCompletion(completion), false),
+      150,
+    );
     loadingDebugPrefs = true;
+    sourceBreakpoints.value = [];
+    watches.value = [];
     try {
-      const value = await api.nativeView(draft.value.problem.labId);
-      sourceBreakpoints.value = value.breakpoints;
-      watches.value = value.watches;
+      if (token.workspace) {
+        const value = await api.nativeView(token.lab);
+        if (current()) {
+          sourceBreakpoints.value = value.breakpoints;
+          watches.value = value.watches;
+        }
+      }
+    } catch (reason) {
+      if (current()) error.value = message(reason);
     } finally {
       await nextTick();
-      loadingDebugPrefs = false;
+      if (current()) loadingDebugPrefs = false;
     }
   },
 );
@@ -2349,24 +2448,25 @@ watch(
     ]),
   () => {
     clearTimeout(completionTimer);
-    completionTimer = setTimeout(() => void action(refreshCompletion, false), 250);
+    const request = ++completionRevision;
+    completionTimer = setTimeout(() => void action(() => refreshCompletion(request), false), 250);
   },
 );
 watch(
   () => [sourceBreakpoints.value, watches.value],
   () => {
     if (loadingDebugPrefs || !workspaceMode.value) return;
-    clearTimeout(debugPrefsTimer);
-    const lab = draft.value!.problem.labId;
-    debugPrefsTimer = setTimeout(
-      () =>
-        void api
-          .nativeView(lab, {
-            breakpoints: clone(sourceBreakpoints.value),
-            watches: clone(watches.value),
-          })
-          .catch((e) => (error.value = message(e))),
-      250,
+    const token = viewToken(),
+      value = { breakpoints: clone(sourceBreakpoints.value), watches: clone(watches.value) };
+    clearTimeout(debugPrefTimers.get(token.lab));
+    debugPrefTimers.set(
+      token.lab,
+      setTimeout(() => {
+        debugPrefTimers.delete(token.lab);
+        void api.nativeView(token.lab, value).catch((reason) => {
+          if (ownsView(token)) error.value = message(reason);
+        });
+      }, 250),
     );
   },
   { deep: true },
@@ -2386,7 +2486,10 @@ watch(
   { deep: true },
 );
 onBeforeUnmount(() => {
-  clearTimeout(debugPrefsTimer);
+  for (const timer of debugPrefTimers.values()) clearTimeout(timer);
+  viewEpoch++;
+  compilerScanRevision++;
+  frameRevision++;
   clearTimeout(completionTimer);
   clearTimeout(viewTimer);
   clearTimeout(membershipTimer);

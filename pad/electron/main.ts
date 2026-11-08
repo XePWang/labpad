@@ -1260,11 +1260,11 @@ async function initialize() {
       (u) => u.path,
     );
   });
-  handle('workspace:files', async (lab: string) =>
-    (await storage.fileService(lab, config.currentProblem)).list(),
+  handle('workspace:files', async (lab: string,problem=config.currentProblem) =>
+    (await storage.fileService(lab, problem)).list(),
   );
-  handle('workspace:open', (lab: string, file: string) =>
-    storage.openFile(lab, config.currentProblem, file, config.language),
+  handle('workspace:open', (lab: string, file: string,problem=config.currentProblem) =>
+    storage.openFile(lab, problem, file, config.language),
   );
   handle('workspace:view', async (lab: string, value: any) => {
     if (!(await storage.workspace.isProject(lab))) throw new Error('请选择多文件项目');
