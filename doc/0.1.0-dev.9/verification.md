@@ -104,3 +104,21 @@ Linux 完整轮的唯一剩余失败为诊断夹具只定位顶部提示，而�
 回归入口：tests/build-target.test.ts、tests/file-reconciliation.test.ts、tests/execution.test.ts、tests/pty-session.test.ts、tests/debug-cleanup.test.ts、tests/completion-regressions.test.ts、tests/ui/review-regressions.spec.ts、tests/ui/interface-state.spec.ts。其余功能沿用完整核心与桌面流程套件。指南五张主界面截图已刷新并逐张查看。
 
 本轮未推送 Git 或更新发布附件，继续保留发布传输暂停状态。版本号仍为 0.1.0-dev.9。
+
+
+## 2026-11-08 终端显示与默认源码恢复
+
+终端底部黑栏来自 Xterm 6 新滚动层与旧 viewport 样式叠加。现隐藏旧层原生滚动条、统一主题背景，将内边距移出 FitAddon 宿主；滚轮和内部滚动条仍可回看历史。根目录提示符改为 >，子目录显示相对路径，例如 文件夹1/文件夹2>。
+
+输出原先固定 12 px，编辑器和终端默认 14 px；Xterm 与 CSS 的行高基准也不同。现统一代码与输入输出区域的字体、字号，按字形测量校准终端行高，变更字体后重新适配行列。首次启动会写入默认源码；已有源码缺失时可保存当前缓冲恢复，重新加载后不再保留缺失标记。
+
+| 检查 | 结果 |
+| --- | --- |
+| 核心与类型 | 完整核心 159 项通过，零跳过；最后的源码目标与恢复补测 4 项通过；构建和类型检查通过 |
+| Linux 界面 | 字体、分栏和新增终端/恢复场景 5 项通过；最终编译完成状态修复后，相关故障与编译流程 12 项通过；指南截图流程 1 项通过 |
+| Windows 原生 | 首轮 16/17 通过；并发编译暴露完成事件遗漏就绪复核，修复后最终构建 17/17 通过 |
+| 显示与输入 | 100%/125% 显示比例，14/14、18/26、21/17 中英字号组合，亮暗主题，嵌套中文提示符，历史滚轮及拖动滚动条均通过；原验证路径另行隔离启动通过 |
+| 文档与构建 | README、四份指南及六张相关截图同步；Windows ASAR 与程序 SHA-256 和远端构建一致 |
+| macOS | 共用显示逻辑和类型检查通过，字体显示及滚动实机待测 |
+
+新增回归位于 tests/ui/terminal-layout.spec.ts；编译完成事件的就绪恢复由 tests/ui/review-regressions.spec.ts 覆盖。Windows 验证包已更新，个人数据目录保留。本轮继续暂停 Git 推送和发布附件上传。

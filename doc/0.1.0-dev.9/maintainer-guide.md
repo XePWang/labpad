@@ -234,14 +234,18 @@ Windows 项目链接生成的 PDB 与程序一并保留，运行副本保持目�
 
 `src/typography.ts` 使用浏览器 FontFace、unicode-range 与 size-adjust 管理字体。英文默认读取随包 WOFF2，自定义字体使用本地字体源；中文范围单独缩放。CodeMirror 用 Compartment 更新编辑器和补全字体，保留撤销历史；终端使用同一字体源并调整等宽网格、行高和 FitAddon 尺寸。预览关闭及配置替换时释放旧 FontFace。
 
+输出、测试点输入输出和 Diff 使用同一组代码字体 CSS 变量。CSS 行高按字号计算，Xterm 行高按字体测量高度计算；typography 将两者统一到相同的像素行高。字体变更与容器缩放在下一帧合并执行 FitAddon，避免用旧字形尺寸计算行列。Xterm 6 的内部滚动层管理历史回看；旧外层 viewport 隐藏原生滚动条并沿用主题背景，FitAddon 的宿主容器不设置内边距。
+
 JetBrains Mono 固定为 2.304，原字体保存在 `assets/fonts/`，OFL-1.1 原文和下载哈希保存在 `vendor/jetbrains-mono/`。许可证合入发布包 `licenses/THIRD_PARTY_LICENSES.txt`；字体随 Vite 静态资源放入 ASAR。
 
-对应检查为 `tests/typography.test.ts` 和 `tests/ui/typography.spec.ts`，覆盖旧配置、无网络字体加载、独立字号、无效字体、终端中英混合行编辑、撤销历史、重启恢复和字体对象释放。
+对应检查为 `tests/typography.test.ts`、`tests/ui/typography.spec.ts` 及 `tests/ui/terminal-layout.spec.ts`，覆盖旧配置、无网络字体加载、独立字号、无效字体、终端中英混合行编辑、撤销历史、重启恢复和字体对象释放。
 
 
 ## 12. 执行上下文与故障恢复
 
 题集请求以 labId、problemId、documentId 显式绑定源码；项目请求绑定工作区。Storage.buildTarget 校验归属、文件存在性和缓冲身份，辅助标签不读取旧的活动版本偏好作为构建目标。导出单份源码使用明确的源码目标；枚举多个导出版本时，各版本按自身 documentId 预检，不继承当前编辑标签的 target。workspaceBootstrap 刷新文件的语言与编码元数据，保留当前未保存文本。
+
+首次创建默认源码时同步写入实际文件。已登记源码在磁盘上缺失时，LoadedDraft.missing 使标签显示未保存；身份匹配的当前缓冲可通过保存恢复文件。没有对应缓冲的缺失目标仍被拒绝，编译仍要求输入已经保存。保存成功后同时清除标签和活动草稿的缺失状态。
 
 shared/file-language.ts 统一源码、头文件、LPMake 识别及编辑语言。set_language 的有效语言同时用于构建与补全，未指定时按扩展名识别。
 
@@ -250,6 +254,8 @@ Storage.operateFiles 与 FileService 是文件事务入口；shared/file-changes
 CommandTerminal 唯一持有 cwd；提示符使用后端校验后的 TerminalContext。作用域由实际工作区根与模式确定，同题集切题沿用真实 cwd；目录移动同步路径，删除或外部移除后退回根目录。旧作用域的迟到事件不更新新工作区。
 
 shared/execution.ts 的任务状态同时派生占用与阶段文字；保存生命周期独立于调试生命周期。保存队尾仅代表队列排空，单次保存失败由该次调用返回。编译预检、评测及调试启动先占用任务；停止使迟到的预检响应失效。后台补全、文件同步和调试定位保留已有操作提示，不能通过通用 action 的起始清空覆盖保存失败信息。
+
+编译完成事件重新排队核对当前目标的就绪状态。并发检查可能恰好观察到旧程序已清除、新程序尚未完成；不能让这个瞬时结果一直禁用测试点运行入口。回查仍使用当前目标与修订号，避免将其他实验或终端构建的结果直接作为 GUI 可运行状态。
 
 core/pty-session.ts 共管原始运行与终端程序的输出合并、背压确认和退出。进程停止、逻辑状态释放和磁盘清理分开处理：停止失败可重试；确认退出后，目录删除失败不会让后续编译永久等待。
 
