@@ -214,6 +214,30 @@ test('late variable successes, failures and finally blocks never update a newer 
       (globalThis as any).__variables.map((r: any) => r.inspection),
     );
     expect(inspections).toEqual(['session:1', 'session:3', 'session:4', 'session:4']);
+    await app.evaluate(({ ipcMain }) => {
+      (ipcMain as any)._invokeHandlers.set(
+        'native:watch',
+        () =>
+          new Promise((resolve) => {
+            (globalThis as any).__watchReply = resolve;
+          }),
+      );
+    });
+    await page.getByRole('textbox', { name: '监视表达式', exact: true }).fill('watched');
+    await page.getByRole('button', { name: '添加监视', exact: true }).click();
+    await expect
+      .poll(() => app.evaluate(() => typeof (globalThis as any).__watchReply))
+      .toBe('function');
+    await emit({ ...state(5, [], 41, 42), status: 'stop-failed' });
+    await app.evaluate(() =>
+      (globalThis as any).__watchReply({
+        name: 'watched',
+        value: 'OLD_WATCH',
+        variablesReference: 0,
+      }),
+    );
+    await settle(page);
+    await expect(page.locator('.native-debug-panel')).not.toContainText('OLD_WATCH');
   } finally {
     await close();
   }

@@ -38,7 +38,7 @@ onBeforeUnmount(() => {
   scopeEpoch++;
 });
 watch(
-  () => [inspectionContext.value, props.watches] as const,
+  () => [props.state.status, inspectionContext.value, props.watches] as const,
   async () => {
     const epoch = ++watchEpoch;
     watchValues.value = [];
