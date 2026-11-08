@@ -18,7 +18,9 @@
     "build:cli": "node scripts/build-cli.mjs",
     "cli": "node ../.work/build/cli/labpad.cjs",
     "package:cli": "npm run build:cli && node scripts/package-cli.mjs",
-    "parser": "node scripts/generate-lpmake.mjs"
+    "parser": "node scripts/generate-lpmake.mjs",
+    "format": "prettier --write",
+    "format:check": "prettier --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.3",
@@ -67,6 +69,7 @@
     "electron-builder": "^26.8.1",
     "esbuild": "0.28.2",
     "node-gyp": "12.4.0",
+    "prettier": "3.9.10",
     "tsx": "^4.20.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
