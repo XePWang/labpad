@@ -1,3 +1,4 @@
+import { t as localize, UIError } from '../shared/i18n';
 import { cleanupAll, cleanupText, addCleanupNotes } from './cleanup';
 import { snapshotEntries } from './workspace-files';
 import type { WorkspaceSnapshot } from '../shared/workspace';
@@ -67,7 +68,10 @@ export class Compiler {
           ? config.cPath
           : config.cppPath || (config.kind === 'zig' ? config.cPath : '');
     if (!program)
-      throw new Error('请在设置中指定' + (language === 'c' ? 'C' : 'C++') + '编译器可执行文件');
+      throw new UIError(
+        'Select the {0} compiler executable in Settings',
+        language === 'c' ? 'C' : 'C++',
+      );
     return { program, prefix: zig ? [language === 'c' ? 'cc' : 'c++'] : [] };
   }
   async identity(config: CompilerConfig, language: Language): Promise<string> {
@@ -99,9 +103,9 @@ export class Compiler {
       processHost: this.paths.processHost,
     });
     if (r.reason || r.code !== 0)
-      throw new Error('无法读取编译器版本：' + r.stderr.toString('utf8'));
+      throw new UIError('Cannot read the compiler version: {0}', r.stderr.toString('utf8'));
     return (
-      (config.mode === 'builtin' ? '内置 Zig ' : '自定义 ') +
+      (config.mode === 'builtin' ? localize('Built-in Zig ') : localize('Custom ')) +
       (r.stdout.toString('utf8').split(/\r?\n/)[0] || kind)
     );
   }
@@ -128,10 +132,9 @@ export class Compiler {
       if (arg === '-target' || arg === '--target') target = args[++i];
       else if (/^--?target=/.test(arg)) target = arg.slice(arg.indexOf('=') + 1);
       if (target && target !== 'native' && !allowed[marker.target]?.test(target))
-        throw Error(
-          '内置工具链仅支持本机目标（' +
-            marker.target +
-            '）。交叉编译请在设置中选择完整的自定义 Zig 工具链。',
+        throw new UIError(
+          'The built-in toolchain supports the native target only ({0}). To cross-compile, select a complete custom Zig toolchain in Settings.',
+          marker.target,
         );
     }
   }
@@ -188,9 +191,9 @@ export class Compiler {
     ]);
     assertParameters(
       language === 'c' ? config.cArgs : config.cppArgs,
-      language === 'c' ? 'C 参数' : 'C++ 参数',
+      language === 'c' ? localize('C Arguments') : localize('C++ Arguments'),
     );
-    assertParameters(config.linkArgs, '链接参数');
+    assertParameters(config.linkArgs, localize('Linker Arguments'));
     const directory = await mkdtemp(path.join(await this.session, 'run-'));
     const executable = path.join(
       directory,
@@ -243,11 +246,16 @@ export class Compiler {
         processHost: this.paths.processHost,
       });
       if (r.reason && r.reason !== 'cancelled')
-        throw new Error(r.reason === 'timeout' ? '编译工具运行超时' : '编译工具输出超过上限');
+        throw new Error(
+          r.reason === 'timeout'
+            ? localize('The compiler timed out')
+            : localize('Compiler output exceeded the limit'),
+        );
       const compilation: Compilation = {
         status: r.reason === 'cancelled' ? 'cancelled' : r.code === 0 ? 'success' : 'CE',
         stdout: r.stdout.toString('utf8'),
-        stderr: r.stderr.toString('utf8') + (r.stderrTruncated ? '\n[stderr 已截断]' : ''),
+        stderr:
+          r.stderr.toString('utf8') + (r.stderrTruncated ? localize('\n[stderr truncated]') : ''),
         command: [program, ...args],
         elapsedMs: r.elapsedMs,
       };
@@ -255,7 +263,7 @@ export class Compiler {
         try {
           await access(executable);
         } catch {
-          throw new Error('编译器没有生成可执行文件，请检查编译参数');
+          throw new UIError('The compiler produced no executable. Check the compiler arguments.');
         }
       }
       prepared = {
@@ -277,9 +285,9 @@ export class Compiler {
       throw failure;
     } finally {
       const warnings = await cleanupAll([
-        ...(!prepared ? [{ label: '临时编译目录', run: cleanup }] : []),
+        ...(!prepared ? [{ label: localize('Temporary Build Directory'), run: cleanup }] : []),
         {
-          label: '编译缓存租约',
+          label: localize('Compiler Cache Lease'),
           run: async () => {
             await release?.();
           },

@@ -1,3 +1,4 @@
+import { t as localize } from '../shared/i18n';
 export interface CleanupStep {
   label: string;
   run: () => unknown | Promise<unknown>;
@@ -18,7 +19,7 @@ export async function cleanupAll(steps: CleanupStep[]): Promise<string[]> {
   );
 }
 export function cleanupText(warnings: string[]): string {
-  return warnings.length ? '\n[清理未完成] ' + warnings.join('；') : '';
+  return warnings.length ? localize('\n[Cleanup Incomplete] {0}', warnings.join('；')) : '';
 }
 export function addCleanupNotes(error: Error, warnings: string[]): void {
   if (warnings.length) error.message += cleanupText(warnings);

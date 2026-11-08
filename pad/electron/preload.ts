@@ -8,12 +8,18 @@ function listen(channel: string, callback: (value: any) => void) {
 }
 async function invoke(channel: string, ...args: unknown[]) {
   try {
-    return await ipcRenderer.invoke(channel, ...args);
+    const result = await ipcRenderer.invoke(channel, ...args);
+    if (result && typeof result === 'object' && result.$labpadError)
+      return Promise.reject(result.$labpadError);
+    return result;
   } catch (e) {
     throw new Error(operationError(e));
   }
 }
 const api: Bridge = {
+  interfaceLanguage: () => invoke('ui:language:get'),
+  previewLanguage: (language) => invoke('ui:language', language),
+  onLanguage: (callback) => listen('ui:language', callback),
   terminalContext: (d) => invoke('terminal:context', d),
   terminalCommand: (d, t) => invoke('terminal:command', d, t),
   terminalComplete: (t, c) => invoke('terminal:complete', t, c),

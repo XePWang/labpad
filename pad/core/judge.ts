@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../shared/i18n';
 import { cleanupAll } from './cleanup';
 import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,7 +25,7 @@ export async function judge(
       new Set(ids).size !== ids.length ||
       ids.some((id) => !draft.problem.testCases.some((t) => t.id === id)))
   )
-    throw new Error('请选择有效的测试点');
+    throw new UIError('Select valid test cases');
   const result: JudgeResult = {
     status: 'completed',
     cases: [],
@@ -33,7 +34,7 @@ export async function judge(
     selectedCaseIds: ids,
   };
   if (!draft.problem.testCases.length)
-    return { ...result, status: 'error', error: '请先新增或导入测试点' };
+    return { ...result, status: 'error', error: localize('Add or import test cases first') };
   let prepared: Awaited<ReturnType<Compiler['compile']>> | undefined,
     runDirectory: string | undefined;
   try {
@@ -74,7 +75,8 @@ export async function judge(
         status: 'completed',
         elapsedMs: r.elapsedMs,
         stdout: r.stdout.toString('utf8'),
-        stderr: r.stderr.toString('utf8') + (r.stderrTruncated ? '\n[stderr 已截断]' : ''),
+        stderr:
+          r.stderr.toString('utf8') + (r.stderrTruncated ? localize('\n[stderr truncated]') : ''),
         exitCode: r.code,
         signal: r.signal,
         message: '',
@@ -132,7 +134,7 @@ export async function judge(
             checked.signal ||
             ![0, 1, 2, 4, 8].includes(checked.code ?? -1)
           ) {
-            throw new Error('Checker 执行失败（' + checked.code + '）：' + c.message);
+            throw new UIError('Checker failed (exit code {0}): {1}', checked.code, c.message);
           } else c.verdict = checked.code === 0 ? 'AC' : 'WA';
         }
       }
@@ -147,7 +149,7 @@ export async function judge(
   } finally {
     const warnings = await cleanupAll([
       {
-        label: '测试运行目录',
+        label: localize('Test Run Directory'),
         run: async () => {
           if (runDirectory)
             await rm(runDirectory, {
@@ -159,7 +161,7 @@ export async function judge(
         },
       },
       {
-        label: '临时编译目录',
+        label: localize('Temporary Build Directory'),
         run: async () => {
           if (!retained) await prepared?.cleanup();
         },

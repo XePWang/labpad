@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t, uiLanguage, errorText, type UIText } from '../i18n';
+
 import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import ParameterPreview from './ParameterPreview.vue';
 import type { CompilerConfig } from '../../shared/types';
@@ -36,9 +38,9 @@ const source = computed({
 });
 const current = computed(() => (source.value === 'global' ? props.machine : props.options)),
   fields = [
-    ['cArgs', 'C 参数'],
-    ['cppArgs', 'C++ 参数'],
-    ['linkArgs', '链接参数'],
+    ['cArgs', 'C Arguments'],
+    ['cppArgs', 'C++ Arguments'],
+    ['linkArgs', 'Linker Arguments'],
   ] as const;
 function update(key: (typeof fields)[number][0], value: string) {
   const args = value.split(/\r?\n/).filter(Boolean);
@@ -46,7 +48,7 @@ function update(key: (typeof fields)[number][0], value: string) {
   else emit('update:options', { ...props.options, [key]: args });
 }
 const value = ref<BuildPreview>(),
-  error = ref(''),
+  error = ref<UIText>(''),
   loading = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined,
   revision = 0;
@@ -55,8 +57,8 @@ async function refresh(id: number) {
   try {
     if (!props.workspace)
       for (const [key, label] of fields) {
-        const issue = parameterErrors(current.value[key], label)[0];
-        if (issue) throw Error(label + '：' + issue.message);
+        const issue = parameterErrors(current.value[key], t(label))[0];
+        if (issue) throw Error(t(label) + ': ' + issue.message);
       }
     const next = await props.preview(props.options);
     if (id === revision) {
@@ -66,14 +68,14 @@ async function refresh(id: number) {
   } catch (e) {
     if (id === revision) {
       value.value = undefined;
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = errorText(e);
     }
   } finally {
     if (id === revision) loading.value = false;
   }
 }
 watch(
-  () => JSON.stringify([props.machine, props.options, props.workspace]),
+  () => JSON.stringify([props.machine, props.options, props.workspace, uiLanguage.value]),
   () => {
     clearTimeout(timer);
     const id = ++revision;
@@ -91,36 +93,46 @@ onBeforeUnmount(() => {
 <template>
   <div class="parameter-settings">
     <label
-      >参数来源<select v-model="source" aria-label="参数来源" :disabled="workspace">
-        <option v-if="!workspace" value="global">全局配置（默认）</option>
-        <option v-if="lab" value="project">当前实验项目 · {{ lab }}</option>
+      >{{ t('Argument Source')
+      }}<select
+        v-model="source"
+        :aria-label="t('Argument Source')"
+        data-parameter-source
+        :disabled="workspace"
+      >
+        <option v-if="!workspace" value="global">{{ t('Global Defaults') }}</option>
+        <option v-if="lab" value="project">{{ t('Current Experiment ·') }}{{ lab }}</option>
       </select></label
     >
     <template v-if="workspace"
-      ><p>构建参数由 LPMake.txt 管理。</p>
-      <button type="button" @click="emit('edit')">编辑构建配置…</button></template
+      ><p>{{ t('Build arguments are managed by LPMake.txt.') }}</p>
+      <button type="button" @click="emit('edit')">
+        {{ t('Edit Build Configuration…') }}
+      </button></template
     >
     <template v-else
       ><p>
         {{
           source === 'global'
-            ? '保存后，当前题集使用全局参数；已有项目参数保留。'
-            : '保存后，当前题集使用本项目参数；全局参数保留。'
-        }}每行一个参数。
+            ? t(
+                'Saving switches this problem set to global arguments and keeps its project arguments.',
+              )
+            : t('Saving switches this problem set to its own arguments and keeps global defaults.')
+        }}{{ t('One argument per line.') }}
       </p>
       <div class="field-grid">
         <label v-for="[key, label] in fields" :key="key"
-          >{{ label
+          >{{ t(label)
           }}<textarea
             :value="current[key].join('\n')"
-            :aria-label="label"
+            :aria-label="t(label)"
             rows="5"
             spellcheck="false"
             @input="update(key, ($event.target as HTMLTextAreaElement).value)"
           ></textarea>
         </label></div
     ></template>
-    <p v-if="error" class="field-error source-diagnostic" role="alert">{{ error }}</p>
+    <p v-if="error" class="field-error source-diagnostic" role="alert">{{ t(error) }}</p>
     <ParameterPreview :value="value" :loading="loading" />
   </div>
 </template>

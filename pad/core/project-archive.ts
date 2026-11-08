@@ -1,3 +1,4 @@
+import { UIError } from '../shared/i18n';
 import { readArchiveFile } from './read-file';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { workspacePath, uniquePaths, type WorkspaceSnapshot } from '../shared/workspace';
@@ -6,14 +7,14 @@ async function readEntry(archive: ZipFile, entry: Entry, limit = 8 * 1024 ** 2):
   return new Promise((resolve, reject) =>
     archive.openReadStream(entry, (error, stream) => {
       if (error || !stream) {
-        reject(error ?? Error('无法读取 ZIP 条目'));
+        reject(error ?? new UIError('Cannot read a ZIP entry'));
         return;
       }
       const chunks: Buffer[] = [];
       let size = 0;
       stream.on('data', (chunk: Buffer) => {
         size += chunk.length;
-        if (size > limit) stream.destroy(Error('项目文件超过大小限制'));
+        if (size > limit) stream.destroy(new UIError('Project files exceed the size limit'));
         else chunks.push(chunk);
       });
       stream.once('error', reject);
@@ -24,7 +25,7 @@ async function readEntry(archive: ZipFile, entry: Entry, limit = 8 * 1024 ** 2):
 export async function archiveSnapshot(data: Buffer): Promise<WorkspaceSnapshot> {
   const archive = await new Promise<ZipFile>((resolve, reject) =>
     fromBuffer(data, { lazyEntries: true, autoClose: false, validateEntrySizes: true }, (e, z) =>
-      e || !z ? reject(e ?? Error('ZIP 无效')) : resolve(z),
+      e || !z ? reject(e ?? new UIError('Invalid ZIP archive')) : resolve(z),
     ),
   );
   try {
@@ -35,7 +36,7 @@ export async function archiveSnapshot(data: Buffer): Promise<WorkspaceSnapshot> 
       archive.on('entry', (entry: Entry) => {
         entries.push(entry);
         if (entries.length > 65536) {
-          reject(Error('ZIP 条目过多'));
+          reject(new UIError('The ZIP archive has too many entries'));
           archive.close();
         } else archive.readEntry();
       });
@@ -66,16 +67,16 @@ export async function archiveSnapshot(data: Buffer): Promise<WorkspaceSnapshot> 
         (bytes += entry.uncompressedSize) > 64 * 1024 ** 2 ||
         entry.uncompressedSize > 8 * 1024 ** 2
       )
-        throw Error('项目 ZIP 超过4096项 / 64MB限制');
+        throw new UIError('The project ZIP exceeds the 4,096-entry or 64 MB limit');
       if (((entry.externalFileAttributes >>> 16) & 0o170000) === 0o120000)
-        throw Error('项目 ZIP 不支持符号链接');
+        throw new UIError('Project ZIP archives do not support symbolic links');
       const checked = name.endsWith('/labpad.project.json')
         ? name.slice(0, -'labpad.project.json'.length) + 'descriptor.json'
         : name === 'labpad.project.json'
           ? 'descriptor.json'
           : name;
       workspacePath(checked);
-      if (Object.hasOwn(files, name)) throw Error('ZIP 中有重复文件：' + name);
+      if (Object.hasOwn(files, name)) throw new UIError('Duplicate file in ZIP: {0}', name);
       files[name] = await readEntry(archive, entry);
     }
     const names = Object.keys(files),
@@ -99,16 +100,18 @@ export function restorePackage(
   binaryFiles: Record<string, string> = {},
 ): unknown {
   if (!Object.hasOwn(files, 'labpad.project.json'))
-    throw Error('ZIP缺少labpad.project.json。请导入附带项目配置的提交包。');
+    throw new UIError(
+      'The ZIP is missing labpad.project.json. Import an archive that includes the project configuration.',
+    );
   const value = JSON.parse(files['labpad.project.json'].replace(/^\uFEFF/, ''));
   const content = (name: string) => {
     workspacePath(name);
     if (Object.hasOwn(files, name)) return files[name];
     if (Object.hasOwn(binaryFiles, name)) return binaryFiles[name];
-    throw Error('ZIP缺少文件：' + name);
+    throw new UIError('File missing from ZIP: {0}', name);
   };
   if (value.mode === 'project') {
-    if (!Array.isArray(value.files)) throw Error('配置缺少files');
+    if (!Array.isArray(value.files)) throw new UIError('The configuration is missing files');
     value.files = value.files
       .filter((f: any) => f.path !== 'LPMake.txt' || Object.hasOwn(files, 'LPMake.txt'))
       .map((f: any) => ({
@@ -117,7 +120,7 @@ export function restorePackage(
         ...(Object.hasOwn(binaryFiles, f.path) ? { encoding: 'base64' } : {}),
       }));
   } else {
-    if (!Array.isArray(value.problems)) throw Error('配置缺少problems');
+    if (!Array.isArray(value.problems)) throw new UIError('The configuration is missing problems');
     for (const p of value.problems) {
       if (p.sourceFile) p.source = content(p.sourceFile);
       if (p.versions) p.versions = p.versions.map((v: any) => ({ ...v, source: content(v.file) }));

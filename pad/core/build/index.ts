@@ -1,3 +1,4 @@
+import { t as localize } from '../../shared/i18n';
 import { cleanupAll, cleanupText, addCleanupNotes } from '../cleanup';
 import { prepareBuildDirectory } from '../artifacts';
 import { draftPlan, buildOptionsSignature, standaloneSource } from './plan';
@@ -232,7 +233,8 @@ export async function buildWorkspace(
         logs[i] = {
           stdout: result.stdout.toString('utf8'),
           stderr:
-            result.stderr.toString('utf8') + (result.stderrTruncated ? '\n[stderr 已截断]' : ''),
+            result.stderr.toString('utf8') +
+            (result.stderrTruncated ? localize('\n[stderr truncated]') : ''),
           code: result.code,
           reason: result.reason,
           command: [program, ...args],
@@ -337,9 +339,9 @@ export async function buildWorkspace(
     throw failure;
   } finally {
     const warnings = await cleanupAll([
-      ...(!prepared ? [{ label: '临时编译目录', run: cleanup }] : []),
+      ...(!prepared ? [{ label: localize('Temporary Build Directory'), run: cleanup }] : []),
       {
-        label: '编译缓存租约',
+        label: localize('Compiler Cache Lease'),
         run: async () => {
           await release?.();
         },
@@ -388,7 +390,7 @@ export async function clearWorkspaceCache(compiler: Compiler, labId: string) {
     failure = error instanceof Error ? error : new Error(String(error));
     throw failure;
   } finally {
-    const warnings = await cleanupAll([{ label: '编译缓存租约', run: release }]);
+    const warnings = await cleanupAll([{ label: localize('Compiler Cache Lease'), run: release }]);
     if (failure) addCleanupNotes(failure, warnings);
     else if (warnings.length) throw Error(cleanupText(warnings).trim());
   }

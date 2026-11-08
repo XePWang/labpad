@@ -1,3 +1,4 @@
+import { t as localize, UIError } from '../shared/i18n';
 import { under, type FileChange } from '../shared/file-changes';
 import {
   mkdir,
@@ -24,7 +25,9 @@ export interface FileRequest {
 export type { FileChange } from '../shared/file-changes';
 export class FileConflict extends Error {
   constructor(readonly files: string[]) {
-    super('目标已有同名文件：' + files.join('、'));
+    super(
+      localize('The destination already contains files with these names: {0}', files.join('、')),
+    );
   }
 }
 const key = (s: string) => s.normalize('NFC').toLowerCase();
@@ -50,9 +53,10 @@ export class FileService {
       /^(?:\/|[a-z]:)/i.test(value) ||
       value.includes('\0')
     )
-      throw Error('请使用实验目录内的相对路径');
+      throw new UIError('Use a path relative to the experiment folder');
     const name = path.posix.normalize(path.posix.join(base, value));
-    if (name === '..' || name.startsWith('../')) throw Error('路径不能超出当前实验目录');
+    if (name === '..' || name.startsWith('../'))
+      throw new UIError('The path must stay within the current experiment folder');
     if (name === '.') return '';
     workspacePath(name);
     return name;
@@ -94,7 +98,7 @@ export class FileService {
       file = path.join(file, part);
       try {
         if ((await lstat(file)).isSymbolicLink())
-          throw Error('实验文件操作不支持符号链接：' + name);
+          throw new UIError('Experiment file operations do not support symbolic links: {0}', name);
       } catch (e: any) {
         if (e.code === 'ENOENT' && allowMissing) break;
         throw e;
@@ -137,13 +141,13 @@ export class FileService {
       !Array.isArray(request.paths) ||
       !request.paths.every((p) => typeof p === 'string')
     )
-      throw Error('文件操作无效');
+      throw new UIError('Invalid file operation');
     if (request.exactDestination && request.paths.length !== 1)
-      throw Error('精确目标只支持单个来源');
+      throw new UIError('An exact destination requires a single source');
     const action = request.action,
       external = action === 'import',
       sources = compactSelection(request.paths);
-    if (!sources.length) throw Error('请选择文件或文件夹');
+    if (!sources.length) throw new UIError('Select files or folders');
     const existing: WorkspaceFile[] = [];
     const walk = async (dir: string, prefix = '') => {
       for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -167,9 +171,12 @@ export class FileService {
     };
     for (const original of sources) {
       const from = external ? path.resolve(original) : this.relative(original);
-      if (!from) throw Error('不能操作实验根目录');
+      if (!from) throw new UIError('The experiment root cannot be modified');
       if (!external && ['rename', 'move', 'delete'].includes(action) && this.protected(from))
-        throw Error('该文件由 LabPad 管理，不能移动、覆盖或删除：' + from);
+        throw new UIError(
+          'This file is managed by LabPad and cannot be moved, overwritten, or deleted: {0}',
+          from,
+        );
       let to =
         action === 'delete'
           ? undefined
@@ -180,13 +187,13 @@ export class FileService {
               : path.posix.join(dest, path.basename(from));
       if (to !== undefined) {
         to = this.relative(to);
-        if (!to) throw Error('该位置由 LabPad 管理：' + to);
+        if (!to) throw new UIError('This location is managed by LabPad: {0}', to);
         const parts = to.split('/');
         for (let i = 1; i < parts.length; i++) {
           const parent = parts.slice(0, i).join('/'),
             found = existing.find((e) => key(e.path) === key(parent));
           if (found && (!found.directory || found.path !== parent))
-            throw Error('请保持目标文件夹名称及大小写：' + found.path);
+            throw new UIError('Keep the destination folder name and letter case: {0}', found.path);
         }
         if (
           !external &&
@@ -194,7 +201,7 @@ export class FileService {
           key(to) !== key(from) &&
           under(to, from)
         )
-          throw Error('不能把文件夹移入自身内部');
+          throw new UIError('A folder cannot be moved into itself');
         const same =
           !external && (action === 'rename' || action === 'move') && key(from) === key(to);
         if (names.has(key(to)) && !same) {
@@ -203,8 +210,8 @@ export class FileService {
           else if (request.conflict !== 'replace') throw new FileConflict([to]);
         }
         if (!external && (action === 'copy' || action === 'move') && key(from) === key(to))
-          throw Error('来源与目标相同');
-        if (this.protected(to)) throw Error('该位置由 LabPad 管理：' + to);
+          throw new UIError('The source and destination are the same');
+        if (this.protected(to)) throw new UIError('This location is managed by LabPad: {0}', to);
         names.add(key(to));
       }
       plans.push({ from, to, external });
@@ -215,7 +222,7 @@ export class FileService {
     // Preflight every source and destination before mutating a batch.
     const inspect = async (file: string) => {
       const st = await lstat(file);
-      if (st.isSymbolicLink()) throw Error('不支持符号链接：' + file);
+      if (st.isSymbolicLink()) throw new UIError('Symbolic links are not supported: {0}', file);
       if (st.isDirectory()) for (const e of await readdir(file)) await inspect(path.join(file, e));
     };
     for (const p of plans) {
@@ -296,14 +303,20 @@ export class FileService {
       if (failures.length)
         throw new AggregateError(
           [error, ...failures],
-          '文件操作失败，部分文件未能恢复；备份保留在：' + transaction,
+          localize(
+            'The file operation failed, and some files could not be restored. Backups were kept at: {0}',
+            transaction,
+          ),
         );
       try {
         await rm(transaction, { recursive: true, force: true });
       } catch (cleanup) {
         throw new AggregateError(
           [error, cleanup],
-          '文件操作失败；临时备份未能清理：' + transaction,
+          localize(
+            'The file operation failed. Temporary backups could not be removed: {0}',
+            transaction,
+          ),
         );
       }
       throw error;
@@ -314,11 +327,11 @@ export class FileService {
       await rm(transaction, { recursive: true, force: true });
     } catch (error) {
       warnings.push(
-        '文件已更新，但临时备份未能清理：' +
-          transaction +
-          '（' +
-          (error instanceof Error ? error.message : String(error)) +
-          '）',
+        localize(
+          'Files were updated, but temporary backups could not be removed: {0} ({1})',
+          transaction,
+          error instanceof Error ? error.message : String(error),
+        ),
       );
     }
     return { changes, warnings };

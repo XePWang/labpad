@@ -1,3 +1,4 @@
+import { t as localize, UIError } from '../shared/i18n';
 import { cleanupAll, addCleanupNotes, cleanupText } from './cleanup';
 import { readEditableFile, readConfigFile } from './read-file';
 import { remapPath } from '../shared/file-changes';
@@ -43,7 +44,7 @@ export function decodeText(bytes: Buffer): { text: string; encoding: string } {
     ((bytes[0] === 255 && bytes[1] === 254) || (bytes[0] === 254 && bytes[1] === 255))
   ) {
     const encoding = bytes[0] === 255 ? 'UTF-16 LE' : 'UTF-16 BE';
-    if (bytes.length % 2) throw new Error('UTF-16 源文件不完整');
+    if (bytes.length % 2) throw new UIError('The UTF-16 source file is incomplete');
     return {
       text: new TextDecoder(encoding === 'UTF-16 LE' ? 'utf-16le' : 'utf-16be', {
         fatal: true,
@@ -59,7 +60,9 @@ export function decodeText(bytes: Buffer): { text: string; encoding: string } {
   } catch {
     const text = iconv.decode(bytes, 'cp936');
     if (!iconv.encode(text, 'cp936').equals(bytes))
-      throw new Error('无法完整识别文件编码，请先将文件另存为 UTF-8');
+      throw new UIError(
+        'The file encoding could not be identified reliably. Save the file as UTF-8 first.',
+      );
     return { text, encoding: 'GBK / CP936' };
   }
 }
@@ -75,7 +78,9 @@ export function sourceBytes(source: string, encoding = 'UTF-8') {
             : 'utf8';
   let bytes = iconv.encode(text, codec);
   if (codec === 'cp936' && iconv.decode(bytes, codec) !== text)
-    throw new Error('源码包含 GBK 无法保存的字符；请先将文件另存为 UTF-8');
+    throw new UIError(
+      'The source contains characters that GBK cannot store. Save the file as UTF-8 first.',
+    );
   if (encoding === 'UTF-8 BOM') bytes = Buffer.concat([Buffer.from([239, 187, 191]), bytes]);
   if (encoding === 'UTF-16 LE') bytes = Buffer.concat([Buffer.from([255, 254]), bytes]);
   if (encoding === 'UTF-16 BE') bytes = Buffer.concat([Buffer.from([254, 255]), bytes]);
@@ -103,8 +108,8 @@ export async function exists(file: string) {
 export function exportName(draft: Draft, studentId: string) {
   const name = draft.problem.problemId || '空项目',
     id = studentId.trim();
-  filePart(name, '题号');
-  if (id) filePart(id, '学号');
+  filePart(name, localize('Problem'));
+  if (id) filePart(id, localize('Student ID'));
   return (id ? id + '_' : '') + name + (draft.language === 'c' ? '.c' : '.cpp');
 }
 export class Storage {
@@ -158,8 +163,9 @@ export class Storage {
   ) {
     const snapshot = structuredClone(validateConfig(config));
     if (project) {
-      filePart(project.lab, '项目名称');
-      if (typeof project.options.inheritDefaults !== 'boolean') throw new Error('参数来源无效');
+      filePart(project.lab, localize('Experiment Name'));
+      if (typeof project.options.inheritDefaults !== 'boolean')
+        throw new UIError('Invalid argument source');
       validateConfig({
         ...snapshot,
         compiler: {
@@ -207,7 +213,9 @@ export class Storage {
                 .filter((r) => r.status === 'rejected')
                 .map((r) => (r as PromiseRejectedResult).reason),
             ],
-            '设置未保存，恢复原配置时也发生错误。',
+            localize(
+              'Settings were not saved, and the original configuration could not be restored.',
+            ),
           );
         throw error;
       }
@@ -242,14 +250,14 @@ export class Storage {
       typeof value.problems !== 'object' ||
       Array.isArray(value.problems)
     )
-      throw new Error('项目状态文件格式无效：' + file);
+      throw new UIError('Invalid experiment state file: {0}', file);
     return value;
   }
   private stateFor(meta: LabState, id: string, language: Language): ProblemState {
     const current = Object.hasOwn(meta.problems, id) ? meta.problems[id] : undefined;
     if (!current) return { language, starters: {}, checks: {}, sources: {} };
     if (!['c', 'cpp'].includes(current.language) || !current.starters || !current.checks)
-      throw new Error('题目状态记录格式无效：' + id);
+      throw new UIError('Invalid problem state record: {0}', id);
     return { ...current, sources: current.sources ?? {} };
   }
   private async writeState(labId: string, problemId: string, meta: LabState) {
@@ -275,7 +283,7 @@ export class Storage {
       problem.labId = labId;
       problem.problemId = '';
     } else if (problem.labId !== labId || problem.problemId !== problemId)
-      throw new Error('题目文件中的 labId / problemId 与文件位置不一致');
+      throw new UIError('The problem file’s labId or problemId does not match its location');
     const meta = await this.readState(labId, problemId),
       stored = Object.hasOwn(meta.problems, problemId)
         ? this.stateFor(meta, problemId, language)
@@ -308,7 +316,10 @@ export class Storage {
           sourceEncoding: decoded.encoding,
         };
       } catch {
-        warning = '关联源码无法读取：' + binding.path + '；现显示项目内的源码，请检查原文件位置。';
+        warning = localize(
+          'Cannot read the linked source: {0}. Showing the experiment copy; check the original file location.',
+          binding.path,
+        );
       }
     }
     const draft: LoadedDraft = {
@@ -331,7 +342,9 @@ export class Storage {
       current.problemId = '';
     }
     if (expected && !isDeepStrictEqual(current, expected))
-      throw new Error('题目规则已更改，请先重新加载题目文件，或保留一处修改后再保存。');
+      throw new UIError(
+        'The problem rules changed. Reload the rule file, or keep one set of edits before saving.',
+      );
     await mkdir(path.dirname(file), { recursive: true });
     await this.atomic(file, source ?? JSON.stringify(problem, null, 2) + '\n');
   }
@@ -346,7 +359,7 @@ export class Storage {
       problem.problemId !== current.problemId ||
       (current.problemId && problem.labId !== current.labId)
     )
-      throw new Error('题目文件中的 labId / problemId 与文件位置不一致');
+      throw new UIError('The problem file’s labId or problemId does not match its location');
     if (!current.problemId) problem.labId = current.labId;
     const baseline = structuredClone(current);
     await this.enqueue(() => this.writeProblem(problem, baseline, source));
@@ -365,7 +378,7 @@ export class Storage {
           snapshot.language,
         );
         version = state.documents?.find((d) => d.id === snapshot.documentId);
-        if (!version) throw new Error('源码版本已不存在，请重新打开');
+        if (!version) throw new UIError('This source version no longer exists. Open it again.');
         if (saveSource && version.externalPath)
           version = await this.managedVersion(
             snapshot.problem.labId,
@@ -455,7 +468,12 @@ export class Storage {
       missing: !present,
       name: path.basename(file),
       ...(version.externalPath && !(await exists(file))
-        ? { warning: '原关联源码无法读取：' + file + '；请重新导入。当前显示初始模板。' }
+        ? {
+            warning: localize(
+              'Cannot read the original linked source: {0}. Import it again. Showing the initial template.',
+              file,
+            ),
+          }
         : {}),
     };
   }
@@ -671,7 +689,7 @@ export class Storage {
       const meta = await this.readState(labId, problemId),
         state = this.stateFor(meta, problemId, 'c'),
         version = state.documents?.find((d) => d.id === id);
-      if (!version) throw new Error('找不到该源码版本');
+      if (!version) throw new UIError('Source version not found');
       state.activeDocumentId = id;
       state.language = version.language;
       meta.problems = { ...meta.problems, [problemId]: state };
@@ -690,7 +708,7 @@ export class Storage {
       (state.documents ?? []).map(async (version) => {
         const file = this.documentPath(labId, problemId, version),
           info = await stat(file).catch(() => null);
-        if (!info) throw new Error(problemId + '：源码文件不存在：' + version.file);
+        if (!info) throw new UIError('{0}: source file not found: {1}', problemId, version.file);
         return {
           ...(await this.readDocument(labId, problemId, version, loaded.problem)),
           modifiedAt: info.mtimeMs,
@@ -738,7 +756,7 @@ export class Storage {
     for (const item of await readdir(base, { withFileTypes: true })) {
       if (!item.isDirectory()) continue;
       try {
-        filePart(item.name, '项目');
+        filePart(item.name, localize('Project'));
       } catch {
         continue;
       }
@@ -751,7 +769,7 @@ export class Storage {
         if (!file.isFile() || !file.name.endsWith('.json')) continue;
         const name = file.name.slice(0, -5);
         try {
-          filePart(name, '题号');
+          filePart(name, localize('Problem'));
           problems.push(name);
         } catch {}
       }
@@ -769,13 +787,13 @@ export class Storage {
     return result.sort((a, b) => a.labId.localeCompare(b.labId, undefined, { numeric: true }));
   }
   async updateProjectTests(labId: string, problems: Problem[]) {
-    filePart(labId, '项目名称');
+    filePart(labId, localize('Experiment Name'));
     const snapshots = problems.map((p) => structuredClone(validateProblem(p)));
     if (
       snapshots.some((p) => p.labId !== labId || !p.problemId) ||
       new Set(snapshots.map((p) => p.problemId)).size !== snapshots.length
     )
-      throw new Error('更新目标无效');
+      throw new UIError('Invalid update target');
     return this.enqueue(async () => {
       const directory = path.join(this.root, 'projects', labId),
         stage = await mkdtemp(path.join(this.root, '.tests-')),
@@ -785,10 +803,10 @@ export class Storage {
       try {
         await cp(directory, stage, { recursive: true });
         for (const problem of snapshots) {
-          const file = path.join(stage, filePart(problem.problemId, '题号') + '.json');
+          const file = path.join(stage, filePart(problem.problemId, localize('Problem')) + '.json');
           const previous = validateProblem(await readJSON(file));
           if (previous.labId !== labId || previous.problemId !== problem.problemId)
-            throw new Error('题号不符：' + problem.problemId);
+            throw new UIError('Problem ID mismatch: {0}', problem.problemId);
           await this.atomic(file, JSON.stringify(problem, null, 2) + '\n');
         }
         await rename(directory, backup);
@@ -813,7 +831,10 @@ export class Storage {
       } finally {
         if (!moved) {
           const warnings = await cleanupAll([
-            { label: '测试点暂存目录', run: () => rm(stage, { recursive: true, force: true }) },
+            {
+              label: localize('Temporary Test Case Directory'),
+              run: () => rm(stage, { recursive: true, force: true }),
+            },
           ]);
           if (failure) addCleanupNotes(failure, warnings);
           else if (warnings.length) throw Error(cleanupText(warnings).trim());
@@ -822,12 +843,12 @@ export class Storage {
     });
   }
   async buildOptions(labId: string) {
-    filePart(labId, '项目名称');
+    filePart(labId, localize('Experiment Name'));
     const meta = await this.readState(labId, '_');
     return meta.buildOptions;
   }
   async saveBuildOptions(labId: string, value: import('../shared/workspace').ProjectBuildOptions) {
-    filePart(labId, '项目名称');
+    filePart(labId, localize('Experiment Name'));
     if (
       !value ||
       typeof value.inheritDefaults !== 'boolean' ||
@@ -835,7 +856,7 @@ export class Storage {
         (a) => Array.isArray(a) && a.every((s) => typeof s === 'string'),
       )
     )
-      throw new Error('项目编译参数无效');
+      throw new UIError('Invalid experiment compiler arguments');
     return this.enqueue(async () => {
       const meta = await this.readState(labId, '_');
       meta.buildOptions = structuredClone(value);
@@ -843,7 +864,7 @@ export class Storage {
     });
   }
   async deleteLab(labId: string) {
-    filePart(labId, '项目名称');
+    filePart(labId, localize('Experiment Name'));
     await this.flush();
     const root = path.join(this.root, 'projects', labId),
       tombstone = path.join(this.root, '.deleted-' + randomUUID());
@@ -856,7 +877,7 @@ export class Storage {
     }
   }
   async nextLabName(name: string) {
-    filePart(name, '项目名称');
+    filePart(name, localize('Experiment Name'));
     const names = new Set(
       (await this.projects()).map((p) => p.labId.normalize('NFC').toLowerCase()),
     );
@@ -867,7 +888,7 @@ export class Storage {
   }
   async importProject(value: unknown, targetLabId?: string) {
     const lab = parseLabPackage(value),
-      id = filePart(targetLabId ?? lab.labId, '项目名称');
+      id = filePart(targetLabId ?? lab.labId, localize('Experiment Name'));
     return this.enqueue(async () => {
       const base = path.join(this.root, 'projects');
       await mkdir(base, { recursive: true });
@@ -877,7 +898,7 @@ export class Storage {
           (name) => name.normalize('NFC').toLowerCase() === id.normalize('NFC').toLowerCase(),
         )
       )
-        throw new Error('项目已存在，请重新导入并选择副本');
+        throw new UIError('The experiment already exists. Import it again and choose Import Copy.');
       const destination = path.join(base, id),
         temporary = await mkdtemp(path.join(this.root, '.import-'));
       try {
@@ -943,23 +964,26 @@ export class Storage {
   }
   async createLab(name: string) {
     await this.flush();
-    const dir = path.join(this.root, 'projects', filePart(name, '项目名'));
-    if (await exists(dir)) throw new Error('项目已存在，请从下拉菜单中选择');
+    const dir = path.join(this.root, 'projects', filePart(name, localize('Experiment Name')));
+    if (await exists(dir))
+      throw new UIError('The experiment already exists. Select it from the dropdown.');
     await mkdir(dir, { recursive: true });
   }
   async createProblem(lab: string, name: string, language: Language) {
-    filePart(lab, '项目名');
-    filePart(name, '题号');
+    filePart(lab, localize('Experiment Name'));
+    filePart(name, localize('Problem'));
     await this.flush();
     if (!(await exists(path.join(this.root, 'projects', lab))))
-      throw new Error('请先新建或选择实验项目');
+      throw new UIError('Create or select an experiment first');
     if (await exists(this.paths(lab, name, language).problem))
-      throw new Error('题号已存在，请从下拉菜单中选择');
+      throw new UIError('The problem ID already exists. Select it from the dropdown.');
     if (
       (await exists(this.paths(lab, name, 'c').source)) ||
       (await exists(this.paths(lab, name, 'cpp').source))
     )
-      throw new Error('题号与现有源码文件名冲突，请更换题号');
+      throw new UIError(
+        'The problem ID conflicts with an existing source filename. Choose another ID.',
+      );
     const draft = { source: defaultSource(language), language, problem: defaultProblem(lab, name) };
     await this.save(draft);
     return draft;
@@ -1000,7 +1024,7 @@ export class Storage {
     }
   }
   fileRoot(lab: string) {
-    if (lab) filePart(lab, '项目名称');
+    if (lab) filePart(lab, localize('Experiment Name'));
     return lab ? path.join(this.root, 'projects', lab) : path.join(this.root, 'drafts');
   }
   async fileService(lab: string, problem: string, guard?: (paths: string[]) => Promise<void>) {
@@ -1151,7 +1175,7 @@ export class Storage {
     const draft = structuredClone(validateDraft(value));
     const project = await this.workspace.isProject(draft.problem.labId);
     if (draft.target && (draft.target.mode === 'project') !== project)
-      throw new Error('编译目标模式已改变，请重新选择实验。');
+      throw new UIError('The compile target mode changed. Select the experiment again.');
     if (project) return draft;
     const id =
       draft.target?.mode === 'problem-set'
@@ -1160,14 +1184,16 @@ export class Storage {
           ? undefined
           : draft.documentId;
     if (!id) {
-      if (draft.auxiliary) throw new Error('请先选择或新建一份 C / C++ 源码。');
+      if (draft.auxiliary) throw new UIError('Select or create a C / C++ source file first.');
       return draft;
     }
     const { labId, problemId } = draft.problem;
     const state = await this.projectState(labId, problemId, draft.language);
     const version = state.documents?.find((document) => document.id === id);
     if (!version || !isSourceFile(version.file))
-      throw new Error('目标源码已不存在或不属于当前题目，请重新选择源码。');
+      throw new UIError(
+        'The target source is missing or belongs to another problem. Select the source again.',
+      );
     const source = await this.readDocument(labId, problemId, version, draft.problem);
     const buffer = [draft, ...buffers].find(
       (item) =>
@@ -1177,11 +1203,11 @@ export class Storage {
         item.problem.problemId === problemId,
     );
     if ((!source.sourceFile || !(await exists(source.sourceFile))) && !buffer)
-      throw new Error('目标源码文件已不存在，请重新选择或导入源码。');
+      throw new UIError('The target source file is missing. Select or import a source file again.');
     // A live buffer can be explicitly saved to restore a missing file. Compile still
     // checks savedBuildInput and requires save confirmation before executing it.
     if (buffer?.file && buffer.file !== version.file)
-      throw new Error('目标源码路径已改变，请刷新文件后重试。');
+      throw new UIError('The target source path changed. Refresh Files and try again.');
     return {
       ...source,
       source: buffer?.source ?? source.source,
@@ -1216,7 +1242,7 @@ export class Storage {
       bytes.includes(0) &&
       !((bytes[0] === 255 && bytes[1] === 254) || (bytes[0] === 254 && bytes[1] === 255))
     )
-      throw Error('这是二进制文件，请在文件管理器中查看。');
+      throw new UIError('This is a binary file. View it in the file manager.');
     const decoded = decodeText(bytes),
       rule = (await this.load(lab, problem, language)).problem;
     return {
@@ -1353,14 +1379,16 @@ export class Storage {
     ];
     for (const name of [...names, 'config.json'])
       if (await exists(path.join(target, name)))
-        throw new Error('目标目录已有 LabPad 数据，请选择其他目录，避免覆盖');
+        throw new UIError(
+          'The destination already contains LabPad data. Choose a different folder.',
+        );
     const projects = path.join(this.root, 'projects'),
       relative = path.relative(projects, target);
     if (
       relative === '' ||
       (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))
     )
-      throw new Error('数据目录不能放在当前 projects 目录内部');
+      throw new UIError('The data folder cannot be inside the current projects folder');
     for (const name of names)
       if (await exists(path.join(this.root, name)))
         await cp(path.join(this.root, name), path.join(target, name), {
@@ -1384,7 +1412,7 @@ export async function importPairs(
   for (const file of files) {
     const ext = path.extname(file).toLowerCase();
     if (!['.in', '.out', '.ans'].includes(ext))
-      throw new Error('请选择 .in 和同名 .out / .ans 文件');
+      throw new UIError('Select .in files and matching .out or .ans files');
     const key = path.join(path.dirname(file), path.basename(file).slice(0, -ext.length)),
       group = groups.get(key) ?? { answers: [] };
     if (ext === '.in') group.input = file;
@@ -1394,16 +1422,19 @@ export async function importPairs(
   const problem = defaultProblem(labId, problemId);
   for (const [key, group] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
     if (!group.input || group.answers.length !== 1)
-      throw new Error(path.basename(key) + ' 缺少文件对，或同时存在 .out 与 .ans');
+      throw new UIError(
+        '{0} has a missing pair or has both .out and .ans files',
+        path.basename(key),
+      );
     const id = path.basename(key);
     if (problem.testCases.some((t) => t.id === id))
-      throw new Error('不同目录出现同名测试点：' + id);
+      throw new UIError('Duplicate test case name across folders: {0}', id);
     problem.testCases.push({
       id,
       input: decodeText(await readEditableFile(group.input)).text,
       expectedOutput: decodeText(await readEditableFile(group.answers[0])).text,
     });
   }
-  if (!problem.testCases.length) throw new Error('未找到完整测试点');
+  if (!problem.testCases.length) throw new UIError('No complete test case pairs were found');
   return problem;
 }

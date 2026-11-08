@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { t, saveStateText } from '../i18n';
+
 import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
-import { nextTick, watch, ref } from 'vue';
+import { nextTick, watch, ref, computed } from 'vue';
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -36,25 +38,25 @@ watch(
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' }),
     ),
 );
-const items = [
-  ['close', '关闭'],
-  ['others', '关闭其他'],
-  ['right', '关闭右侧标签页'],
-  ['saved', '关闭已保存'],
-  ['all', '全部关闭'],
-  ['version', '另存为新版本'],
-  ['copyPath', '复制路径'],
-  ['copyRelativePath', '复制相对路径'],
-  ['reveal', '在文件管理器中显示'],
-];
+const items = computed(() => [
+  ['close', t('Close')],
+  ['others', t('Close Others')],
+  ['right', t('Close Tabs to the Right')],
+  ['saved', t('Close Saved')],
+  ['all', t('Close All')],
+  ['version', t('Save as New Version')],
+  ['copyPath', t('Copy Path')],
+  ['copyRelativePath', t('Copy Relative Path')],
+  ['reveal', t('Reveal in File Manager')],
+]);
 </script>
 <template>
   <div class="source-strip">
     <button
       v-if="filesEnabled || workspace"
       class="source-sidebar-toggle"
-      :aria-label="sidebarCollapsed ? '显示文件' : '收起侧栏'"
-      :title="sidebarCollapsed ? '显示文件侧栏' : '收起文件侧栏'"
+      :aria-label="sidebarCollapsed ? t('Show Files') : t('Collapse Sidebar')"
+      :title="sidebarCollapsed ? t('Show File Sidebar') : t('Collapse File Sidebar')"
       :aria-expanded="!sidebarCollapsed"
       @click="emit('sidebar')"
     >
@@ -75,7 +77,7 @@ const items = [
         />
       </svg>
     </button>
-    <div ref="row" class="source-tabs" role="tablist" aria-label="源码标签">
+    <div ref="row" class="source-tabs" role="tablist" :aria-label="t('Source Tabs')">
       <ContextMenuRoot v-for="tab in tabs" :key="tab.id">
         <ContextMenuTrigger as-child :disabled="disabled"
           ><div
@@ -112,12 +114,12 @@ const items = [
                       : '·'
             }}</span
             ><span>{{ tab.name }}</span
-            ><span v-if="tab.dirty" class="tab-dirty" aria-label="未保存">●</span
+            ><span v-if="tab.dirty" class="tab-dirty" :aria-label="t('Unsaved')">●</span
             ><span v-if="tab.id === active" class="sr-only save-status" aria-live="polite">{{
-              tab.status
+              saveStateText(tab.status)
             }}</span
             ><button
-              :aria-label="'关闭 ' + tab.name"
+              :aria-label="t('Close {0}', tab.name)"
               :disabled="disabled"
               @click.stop="emit('action', 'close', tab.id)"
             >
@@ -151,7 +153,7 @@ const items = [
     </div>
     <div v-if="canFormat !== false" class="tab-format">
       <button class="format-button" :disabled="disabled || formatting" @click="emit('format')">
-        {{ formatting ? '格式化中…' : '格式化代码' }}
+        {{ formatting ? t('Formatting…') : t('Format Code') }}
       </button>
     </div>
   </div>

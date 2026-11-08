@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from '../i18n';
+
 import { watch } from 'vue';
 import type { Typography } from '../../shared/typography';
 import { useTypography } from '../typography';
@@ -20,33 +22,37 @@ watch([error, loading], () => emit('valid', !error.value && !loading.value), { i
   <div class="typography-settings">
     <div class="field-grid two">
       <label
-        >英文字体<input
+        >{{ t('English Font')
+        }}<input
           :value="modelValue.englishFamily"
-          aria-label="英文字体"
+          :aria-label="t('English Font')"
           list="latin-fonts"
           @input="update('englishFamily', $event)"
       /></label>
       <label
-        >英文字号<input
+        >{{ t('English Font Size')
+        }}<input
           :value="modelValue.englishSize"
-          aria-label="英文字号"
+          :aria-label="t('English Font Size')"
           type="number"
           min="8"
           max="40"
           @input="update('englishSize', $event)"
       /></label>
       <label
-        >中文字体<input
+        >{{ t('Chinese Font')
+        }}<input
           :value="modelValue.chineseFamily"
-          aria-label="中文字体"
-          placeholder="系统默认"
+          :aria-label="t('Chinese Font')"
+          :placeholder="t('System Default')"
           list="chinese-fonts"
           @input="update('chineseFamily', $event)"
       /></label>
       <label
-        >中文字号<input
+        >{{ t('Chinese Font Size')
+        }}<input
           :value="modelValue.chineseSize"
-          aria-label="中文字号"
+          :aria-label="t('Chinese Font Size')"
           type="number"
           min="8"
           max="40"
@@ -75,14 +81,17 @@ watch([error, loading], () => emit('valid', !error.value && !loading.value), { i
       />
     </datalist>
     <p>
-      用于代码编辑器、补全提示、终端、输出和测试点输入输出。JetBrains Mono
-      已内置；其他字体需在本机安装，英文字体建议选择等宽字体。
+      {{
+        t(
+          'Used in the editor, completion list, terminal, output, and test case fields. JetBrains Mono is included. Other fonts must be installed locally; a monospace English font is recommended.',
+        )
+      }}
     </p>
     <p v-if="error" class="field-error" role="alert">{{ error }}</p>
     <p v-else-if="warning" class="muted">{{ warning }}</p>
     <pre
       class="font-preview"
-      aria-label="字体预览"
+      :aria-label="t('Font Preview')"
       :style="{
         fontFamily: style.family,
         fontSize: style.fontSize + 'px',

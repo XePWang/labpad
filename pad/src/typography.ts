@@ -1,4 +1,5 @@
-import { ref, watch, onBeforeUnmount } from 'vue';
+import { UIError, t, msg, errorText, type UIText } from './i18n';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import fontUrl from '../assets/fonts/JetBrainsMono-Regular.woff2?url';
 import { defaultTypography, validateTypography, type Typography } from '../shared/typography';
 
@@ -52,20 +53,25 @@ export async function prepareTypography(preferences: Typography) {
   try {
     await latin.load();
   } catch {
-    throw new Error(
-      '未找到英文字体“' + profile.englishFamily + '”，请选择本机已安装的字体或 JetBrains Mono。',
+    throw new UIError(
+      'English font “{0}” was not found. Choose an installed font or JetBrains Mono.',
+      profile.englishFamily,
     );
   }
   const faces = [latin];
-  let warning = '';
+  let warning: UIText = '';
   try {
     await chinese.load();
     faces.push(chinese);
   } catch {
     if (profile.chineseFamily.trim() || profile.chineseSize !== profile.englishSize) {
-      throw new Error('未找到中文字体，请填写本机已安装的中文字体名称。');
+      throw new UIError(
+        'Chinese font not found. Enter the name of a font installed on this computer.',
+      );
     }
-    warning = '中文使用系统回退字体；单独调整中文字号时请选择已安装的中文字体。';
+    warning = msg(
+      'Chinese text uses the system fallback font. Choose an installed Chinese font to set its size separately.',
+    );
   }
   for (const face of faces) document.fonts.add(face);
   const family =
@@ -100,8 +106,8 @@ export async function prepareTypography(preferences: Typography) {
 
 export function useTypography(read: () => Typography | undefined) {
   const style = ref<TextStyle>({ ...fallbackTextStyle }),
-    error = ref(''),
-    warning = ref(''),
+    error = ref<UIText>(''),
+    warning = ref<UIText>(''),
     loading = ref(false);
   let current: Awaited<ReturnType<typeof prepareTypography>> | undefined;
   watch(
@@ -125,7 +131,7 @@ export function useTypography(read: () => Typography | undefined) {
         error.value = '';
         previous?.dispose();
       } catch (failure) {
-        if (!cancelled) error.value = failure instanceof Error ? failure.message : String(failure);
+        if (!cancelled) error.value = errorText(failure);
       } finally {
         if (!cancelled) loading.value = false;
       }
@@ -135,5 +141,10 @@ export function useTypography(read: () => Typography | undefined) {
   onBeforeUnmount(() => {
     current?.dispose();
   });
-  return { style, error, warning, loading };
+  return {
+    style,
+    error: computed(() => t(error.value)),
+    warning: computed(() => t(warning.value)),
+    loading,
+  };
 }

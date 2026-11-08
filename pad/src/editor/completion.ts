@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { syntaxTree, ensureSyntaxTree } from '@codemirror/language';
 import { visibleDeclarations, declaredNames, includeDirectives, type Candidate } from './symbols';
 import type { Tree } from '@lezer/common';
@@ -246,7 +247,7 @@ export function sourceCompletions(
     snippets = [
       snippetCompletion('if (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
         label: 'if',
-        detail: 'if (条件) { … }',
+        detail: t('if (condition) { … }'),
         type: 'keyword',
       }),
       snippetCompletion(
@@ -260,11 +261,11 @@ export function sourceCompletions(
           indent +
           '\u0024{}' +
           '\n}',
-        { label: 'for', detail: 'for (初始; 条件; 更新) { … }', type: 'keyword' },
+        { label: 'for', detail: t('for (init; condition; update) { … }'), type: 'keyword' },
       ),
       snippetCompletion('while (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
         label: 'while',
-        detail: 'while (条件) { … }',
+        detail: t('while (condition) { … }'),
         type: 'keyword',
       }),
       snippetCompletion(
@@ -282,7 +283,7 @@ export function sourceCompletions(
           indent +
           indent +
           'break;\n}',
-        { label: 'switch', detail: 'switch (值) { case … }', type: 'keyword' },
+        { label: 'switch', detail: t('switch (value) { case … }'), type: 'keyword' },
       ),
     ];
   snippets.push(
@@ -293,12 +294,12 @@ export function sourceCompletions(
     }),
     snippetCompletion('do {\n\t\u0024{}\n} while (\u0024{condition});', {
       label: 'do',
-      detail: 'do … while (条件);',
+      detail: t('do … while (condition);'),
       type: 'keyword',
     }),
     snippetCompletion('return \u0024{value};', {
       label: 'return',
-      detail: 'return 值;',
+      detail: t('return value;'),
       type: 'keyword',
     }),
   );

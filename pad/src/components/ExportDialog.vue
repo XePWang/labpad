@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { errorText } from '../i18n';
+import { t } from '../i18n';
+
 import DialogActions from './DialogActions';
 import { computed, onMounted, ref } from 'vue';
 import {
@@ -38,7 +41,7 @@ const drafts = computed(() =>
 );
 const topics = computed(() => new Set(drafts.value.map((d) => d.problem.problemId)).size);
 const missingIdentity = computed(() =>
-  preview.value?.warnings.some((w) => w.startsWith('未填写身份信息')),
+  preview.value?.warnings.some((w) => w.startsWith(t('Personal Information Is Missing'))),
 );
 function checked(group: ExportProblem) {
   const count = group.versions.filter((v) => selected.value.includes(v.documentId!)).length;
@@ -66,7 +69,7 @@ function filename(id: string) {
         (d.language === 'cpp' ? '.cpp' : '.c')
       );
   }
-  return '未选择';
+  return t('None Selected');
 }
 async function write() {
   if (!preview.value) return;
@@ -77,7 +80,7 @@ async function write() {
     if (file) emit('done', file);
     else loading.value = false;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = t(errorText(e));
     loading.value = false;
   }
 }
@@ -96,7 +99,7 @@ async function next() {
       loading.value = false;
     } else await write();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = t(errorText(e));
     loading.value = false;
   }
 }
@@ -115,7 +118,7 @@ onMounted(async () => {
       loading.value = false;
     } else await next();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = t(errorText(e));
     loading.value = false;
   }
 });
@@ -136,23 +139,31 @@ defineExpose({
         @keydown.esc.stop.prevent="!loading && emit('close')"
         @interact-outside="$event.preventDefault()"
       >
-        <DialogTitle>{{ kind === 'project' ? '导出实验项目' : '导出源码' }}</DialogTitle>
+        <DialogTitle>{{
+          kind === 'project' ? t('Export Experiment') : t('Export Source')
+        }}</DialogTitle>
         <DialogDescription>{{
           step === 'select'
             ? workspace
-              ? '导出整个工作区，保留文件名与目录结构。'
-              : '勾选本次提交的题号和源码版本。'
-            : '确认这些提醒后，选择保存位置。'
+              ? t('Export the workspace with its filenames and folder structure.')
+              : t('Select the problems and source versions to submit.')
+            : t('Review these reminders, then choose where to save the export.')
         }}</DialogDescription>
         <p v-if="error" class="field-error" role="alert">{{ error }}</p>
-        <p v-if="loading" role="status">正在准备导出…</p>
+        <p v-if="loading" role="status">{{ t('Preparing Export…') }}</p>
         <template v-if="step === 'select' && kind === 'project'">
-          <p v-if="workspace">包含项目内源码、头文件、LPMake 及数据文件；编译缓存不会加入。</p>
+          <p v-if="workspace">
+            {{
+              t(
+                'Includes source files, headers, LPMake, and project data. Build caches are excluded.',
+              )
+            }}
+          </p>
           <div v-if="!workspace" class="export-summary">
-            <span>{{ topics }} 题 · {{ drafts.length }} 份源码</span>
+            <span>{{ topics }}{{ t('problems ·') }}{{ drafts.length }}{{ t('source files') }}</span>
             <div>
-              <button :disabled="loading" @click="all(true)">全选</button
-              ><button :disabled="loading" @click="all(false)">取消全选</button>
+              <button :disabled="loading" @click="all(true)">{{ t('Select All') }}</button
+              ><button :disabled="loading" @click="all(false)">{{ t('Deselect All') }}</button>
             </div>
           </div>
           <div v-if="!workspace" class="export-list">
@@ -175,7 +186,7 @@ defineExpose({
                   /></svg
                 ><input
                   type="checkbox"
-                  :aria-label="'导出题号 ' + group.problemId"
+                  :aria-label="t('Export Problem {0}', group.problemId)"
                   :checked="checked(group) || mixed(group)"
                   :indeterminate.prop="mixed(group)"
                   :disabled="loading || !group.versions.length"
@@ -184,11 +195,12 @@ defineExpose({
                 /><strong>{{ group.problemId }}</strong
                 ><small>{{
                   group.versions.length
-                    ? group.versions.filter((v) => selected.includes(v.documentId!)).length +
-                      ' / ' +
-                      group.versions.length +
-                      ' 份'
-                    : '暂无源码'
+                    ? t(
+                        '{0} / {1} files',
+                        group.versions.filter((v) => selected.includes(v.documentId!)).length,
+                        group.versions.length,
+                      )
+                    : t('No Source Files')
                 }}</small>
               </summary>
               <label v-for="v in group.versions" :key="v.documentId" class="export-version"
@@ -196,7 +208,7 @@ defineExpose({
                   v-model="selected"
                   :value="v.documentId"
                   type="checkbox"
-                  :aria-label="'导出版本 ' + group.problemId + ' ' + v.name"
+                  :aria-label="t('Export Version {0} {1}', group.problemId, v.name)"
                   :disabled="loading"
                 /><span
                   ><span
@@ -206,43 +218,46 @@ defineExpose({
                       {{ new Date(v.modifiedAt).toLocaleString('zh-CN', { hour12: false }) }}</small
                     ></span
                   ><code v-if="selected.includes(v.documentId!)"
-                    >导出为 {{ filename(v.documentId!) }}</code
+                    >{{ t('Export As') }}{{ filename(v.documentId!) }}</code
                   ></span
                 ></label
               >
             </details>
           </div>
           <label class="checkbox-field"
-            ><input v-model="includeConfig" type="checkbox" aria-label="附带 LabPad 项目配置" />附带
-            LabPad 项目配置（测试点与项目设置）</label
+            ><input
+              v-model="includeConfig"
+              type="checkbox"
+              :aria-label="t('Include LabPad Project Configuration')"
+            />{{ t('Include LabPad Project Configuration (test cases and settings)') }}</label
           >
         </template>
         <template v-else-if="preview"
           ><ul class="export-warnings">
             <li v-for="warning in preview.warnings" :key="warning">{{ warning }}</li>
           </ul>
-          <p>{{ preview.files.length }} 份源码 · {{ preview.name }}</p>
+          <p>{{ preview.files.length }}{{ t('source files ·') }}{{ preview.name }}</p>
           <button v-if="missingIdentity" :disabled="loading" @click="emit('settings')">
-            前往设置
+            {{ t('Open Settings') }}
           </button></template
         >
         <DialogActions class="export-actions"
-          ><button :disabled="loading" @click="emit('close')">取消导出</button
+          ><button :disabled="loading" @click="emit('close')">{{ t('Cancel Export') }}</button
           ><button
             v-if="step === 'warning' && kind === 'project'"
             :disabled="loading"
             @click="step = 'select'"
           >
-            返回选择</button
+            {{ t('Back to Selection') }}</button
           ><button
             v-if="step === 'select'"
             class="primary"
             :disabled="loading || !drafts.length"
             @click="next"
           >
-            下一步</button
+            {{ t('Next') }}</button
           ><button v-else class="primary" :disabled="loading || !preview" @click="write">
-            仍然导出
+            {{ t('Export Anyway') }}
           </button></DialogActions
         >
       </DialogContent>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { errorText } from '../i18n';
+import { t } from '../i18n';
+
 import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import type { NativeDebugState, SourceBreakpoint, DebugVariable } from '../../shared/debug';
 import DebugVariables from './DebugVariables.vue';
@@ -51,7 +54,7 @@ watch(
         watchValues.value.push(value);
       } catch (e) {
         if (epoch !== watchEpoch) return;
-        watchErrors.value[text] = e instanceof Error ? e.message : String(e);
+        watchErrors.value[text] = t(errorText(e));
       }
     }
   },
@@ -85,7 +88,7 @@ async function changeScope() {
     const values = await window.labpad.nativeVariables(scope, 0, props.state.inspectionId);
     if (current()) scopeVariables.value = values;
   } catch (error) {
-    if (current()) scopeError.value = error instanceof Error ? error.message : String(error);
+    if (current()) scopeError.value = t(errorText(error));
   }
 }
 function addWatch() {
@@ -104,16 +107,20 @@ function toggle(index: number) {
 <template>
   <div class="native-debug-panel">
     <div v-if="changed" class="debug-source-changed" role="status">
-      源码已修改，与当前调试进程不一致；点击「重启」重新编译并调试
+      {{
+        t(
+          'The source has changed since this debug session started. Click Restart to recompile and debug.',
+        )
+      }}
     </div>
     <div v-if="['idle', 'ended', 'error'].includes(state.status)" class="native-debug-empty">
       <p>
         {{
           state.status === 'error'
-            ? '调试未能继续，请检查输出或构建设置。'
+            ? t('Debugging could not continue. Check Output or Build Settings.')
             : state.status === 'ended'
-              ? '调试已结束。'
-              : '在行号旁设置断点，逐步观察程序。'
+              ? t('The debug session has ended.')
+              : t('Set breakpoints beside the line numbers and step through your program.')
         }}
       </p>
     </div>
@@ -122,21 +129,29 @@ function toggle(index: number) {
       class="native-state-message"
       :class="{ error: state.status === 'error' }"
     >
-      {{ state.message }}
+      {{
+        ['breakpoint', 'step', 'pause', 'entry', 'exception'].includes(state.message)
+          ? t(state.message)
+          : state.message
+      }}
     </div>
     <details open>
       <summary>
-        变量
-        <select
+        {{ t('Variables')
+        }}<select
           v-if="state.scopes.length > 1"
           v-model="selectedScope"
-          aria-label="变量作用域"
+          :aria-label="t('Variable Scope')"
           :disabled="!paused"
           @click.stop
           @change="changeScope"
         >
           <option v-for="scope in state.scopes" :value="scope.variablesReference">
-            {{ scope.name }}
+            {{
+              ['Locals', 'Globals', 'Registers', 'Arguments'].includes(scope.name)
+                ? t(scope.name)
+                : scope.name
+            }}
           </option>
         </select>
       </summary>
@@ -147,18 +162,18 @@ function toggle(index: number) {
         :context="inspectionContext + ':' + selectedScope"
         :inspection-id="state.inspectionId"
       />
-      <p v-else class="debug-placeholder">暂停后查看变量。</p>
+      <p v-else class="debug-placeholder">{{ t('Pause to inspect variables.') }}</p>
       <p v-if="scopeError" class="field-error">{{ scopeError }}</p>
     </details>
     <details open>
-      <summary>监视</summary>
+      <summary>{{ t('Watch') }}</summary>
       <form class="debug-watch-form" @submit.prevent="addWatch">
         <input
           v-model="expression"
-          aria-label="监视表达式"
-          placeholder="变量或只读表达式"
+          :aria-label="t('Watch Expression')"
+          :placeholder="t('Variable or read-only expression')"
           maxlength="1024"
-        /><button class="icon-action" aria-label="添加监视" :disabled="!expression.trim()">
+        /><button class="icon-action" :aria-label="t('Add Watch')" :disabled="!expression.trim()">
           <ActionIcon name="plus" />
         </button>
       </form>
@@ -171,7 +186,7 @@ function toggle(index: number) {
         /><code v-if="!watchValues.some((v) => v.name === text)">{{ text }}</code
         ><button
           class="icon-action"
-          :aria-label="'移除监视 ' + text"
+          :aria-label="t('Remove Watch {0}', text)"
           @click="
             emit(
               'watches',
@@ -185,8 +200,10 @@ function toggle(index: number) {
       </div>
     </details>
     <details open>
-      <summary>调用堆栈</summary>
-      <p v-if="!state.frames.length" class="debug-placeholder">暂停后查看调用位置。</p>
+      <summary>{{ t('Call Stack') }}</summary>
+      <p v-if="!state.frames.length" class="debug-placeholder">
+        {{ t('Pause to inspect the call stack.') }}
+      </p>
       <button
         v-for="frame in state.frames"
         :key="frame.id"
@@ -195,15 +212,15 @@ function toggle(index: number) {
         @click="emit('frame', frame.id)"
       >
         <strong>{{ frame.name }}</strong
-        ><span>{{ frame.path?.split('/').pop() || '（外部代码）' }}:{{ frame.line }}</span>
+        ><span>{{ frame.path?.split('/').pop() || t('(external code)') }}:{{ frame.line }}</span>
       </button>
     </details>
     <details open>
       <summary>
-        断点 <span class="counter">{{ breakpoints.length }}</span>
+        {{ t('Breakpoints') }}<span class="counter">{{ breakpoints.length }}</span>
       </summary>
       <p v-if="!breakpoints.length" class="debug-placeholder">
-        点击行号左侧添加断点；右键设置条件。
+        {{ t('Click beside a line number to add a breakpoint. Right-click to set a condition.') }}
       </p>
       <div
         v-for="(point, index) in breakpoints"
@@ -213,7 +230,7 @@ function toggle(index: number) {
         <input
           type="checkbox"
           :checked="point.enabled"
-          :aria-label="'启用断点 ' + point.path + ':' + point.line"
+          :aria-label="t('Enable Breakpoint {0}:{1}', point.path, point.line)"
           @change="toggle(index)"
         /><button
           class="debug-breakpoint-location"
@@ -228,17 +245,19 @@ function toggle(index: number) {
             ]"
           ></span
           >{{ point.path }}:{{ point.line
-          }}<small>{{ point.condition || (point.verified ? '已验证' : '待验证') }}</small></button
+          }}<small>{{
+            point.condition || (point.verified ? t('Verified') : t('Unverified'))
+          }}</small></button
         ><button
           class="icon-action"
-          title="编辑条件"
-          aria-label="编辑断点条件"
+          :title="t('Edit Condition')"
+          :aria-label="t('Edit Breakpoint Condition')"
           @click="emit('condition', point.path, point.line)"
         >
           …</button
         ><button
           class="icon-action"
-          aria-label="移除断点"
+          :aria-label="t('Remove Breakpoint')"
           @click="
             emit(
               'breakpoints',

@@ -1,27 +1,40 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { t } from '../i18n';
+
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent, PopoverClose } from 'reka-ui';
 defineProps<{ theme: string }>();
-const definitions = [
-  ['AC · 通过', '程序正常结束，输出符合本测试点的比较规则。'],
-  ['WA · 答案不符', '输出与预期不同，可以打开 Diff 查看差异。'],
-  ['CE · 编译失败', '未能生成可执行程序，请到“输出”页查看编译信息。'],
-  ['TLE · 运行超时', '程序运行超过本题的时间限制。'],
-  ['RE · 运行异常', '程序异常结束，或返回了非零退出码。'],
-  ['OLE · 输出过多', '程序输出超过本题的字节限制。'],
-];
+const definitions = computed(() => [
+  [
+    t('AC · Accepted'),
+    t('The program finished normally and its output matches this test case’s comparison rules.'),
+  ],
+  [
+    t('WA · Wrong Answer'),
+    t('The output differs from the expected result. Open Diff to compare them.'),
+  ],
+  [
+    t('CE · Compilation Error'),
+    t('No executable was produced. Check the compiler diagnostics in Output.'),
+  ],
+  [t('TLE · Time Limit Exceeded'), t('The program exceeded this problem’s time limit.')],
+  [t('RE · Runtime Error'), t('The program crashed or returned a nonzero exit code.')],
+  [t('OLE · Output Limit Exceeded'), t('The program exceeded this problem’s output byte limit.')],
+]);
 </script>
 <template>
   <PopoverRoot
-    ><PopoverTrigger class="result-help" aria-label="结果说明">?</PopoverTrigger
+    ><PopoverTrigger class="result-help" :aria-label="t('Result Guide')">?</PopoverTrigger
     ><PopoverPortal
       ><PopoverContent
         class="result-help-content"
         :data-theme="theme"
         :collision-padding="12"
         :side-offset="6"
-        aria-label="评测结果说明"
+        :aria-label="t('Test Result Guide')"
         ><div class="help-heading">
-          <strong>结果说明</strong><PopoverClose aria-label="关闭结果说明">×</PopoverClose>
+          <strong>{{ t('Result Guide') }}</strong
+          ><PopoverClose :aria-label="t('Close Result Guide')">×</PopoverClose>
         </div>
         <dl>
           <template v-for="[title, body] in definitions" :key="title"

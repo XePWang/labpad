@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../shared/i18n';
 import { remapPath } from '../shared/file-changes';
 import { lstat, readdir, utimes } from 'node:fs/promises';
 import { readFileLimited } from './read-file';
@@ -44,11 +45,12 @@ export function commandWords(text: string) {
       }
       continue;
     }
-    if (/[|;&<>`]/.test(c)) throw Error('终端暂不支持管道、重定向或脚本语法。');
+    if (/[|;&<>`]/.test(c))
+      throw new UIError('The terminal does not support pipes, redirection, or scripting syntax.');
     value += c;
     started = true;
   }
-  if (quote) throw Error('引号尚未闭合。');
+  if (quote) throw new UIError('A quoted string is not closed.');
   if (started) words.push(value);
   return words;
 }
@@ -82,7 +84,7 @@ export class CommandTerminal {
     const resolve = (name: string, missing = false) => this.files.resolve(name, missing, this.cwd);
     const exact = (min: number, max = min) => {
       if (words.length < min || words.length > max)
-        throw Error('参数数量不正确，输入 help 查看用法。');
+        throw new UIError('Incorrect number of arguments. Enter help for usage.');
     };
     if (!command) return { cwd: this.cwd, output };
     if (command === 'pwd') {
@@ -92,7 +94,7 @@ export class CommandTerminal {
       exact(0, 1);
       const next = relative(words[0] ?? '.'),
         file = await resolve(words[0] ?? '.');
-      if (!(await lstat(file)).isDirectory()) throw Error('这不是文件夹：' + words[0]);
+      if (!(await lstat(file)).isDirectory()) throw new UIError('Not a folder: {0}', words[0]);
       this.cwd = next;
     } else if (command === 'ls' || command === 'll') {
       exact(0, 1);
@@ -100,13 +102,13 @@ export class CommandTerminal {
         prefix = relative(words[0] ?? '.'),
         all = await this.files.list();
       if (!(await lstat(file)).isDirectory())
-        output = (command === 'll' ? '文件  ' : '') + path.basename(file);
+        output = (command === 'll' ? localize('File  ') : '') + path.basename(file);
       else
         output = all
           .filter((f) => path.posix.dirname(f.path) === (prefix || '.'))
           .map(
             (f) =>
-              (command === 'll' ? (f.directory ? '目录  ' : '文件  ') : '') +
+              (command === 'll' ? (f.directory ? localize('Dir   ') : localize('File  ')) : '') +
               path.posix.basename(f.path) +
               (f.directory ? '/' : ''),
           )
@@ -118,10 +120,10 @@ export class CommandTerminal {
         const bytes = await readFileLimited(
           await resolve(name),
           1024 ** 2,
-          '文件超过 1 MB，请在编辑区中查看。',
+          localize('This file exceeds 1 MB. Open it in the editor.'),
         );
         if (bytes.includes(0) && !([254, 255].includes(bytes[0]) && [254, 255].includes(bytes[1])))
-          throw Error('这是二进制文件，请在文件管理器中查看。');
+          throw new UIError('This is a binary file. View it in the file manager.');
         chunks.push(decodeText(bytes).text);
       }
       output = chunks.join('\n');
@@ -134,7 +136,8 @@ export class CommandTerminal {
         if (info) {
           if (command === 'touch' && !info.isDirectory())
             await utimes(file, new Date(), new Date());
-          else if (command === 'mkdir' && !info.isDirectory()) throw Error('该名称已被文件占用。');
+          else if (command === 'mkdir' && !info.isDirectory())
+            throw new UIError('A file already uses that name.');
         } else
           await this.mutate({
             action: command === 'mkdir' ? 'newFolder' : 'newFile',
@@ -163,27 +166,30 @@ export class CommandTerminal {
       exact(1, 20);
       for (const name of words)
         if ((await lstat(await resolve(name))).isDirectory() && !recursive)
-          throw Error('删除文件夹请使用 rm -r，并确认提示。');
+          throw new UIError('Use rm -r to delete a folder, then confirm the prompt.');
       await this.mutate({ action: 'delete', paths: words.map(relative) });
       changed = true;
     } else if (command === 'clear') {
       exact(0);
       return { cwd: this.cwd, output: '', clear: true };
     } else if (command === 'help') {
-      output =
-        'pwd · ls [目录] · ll [目录] · cd [目录]\nmkdir [-p] 路径 · touch 文件 · cat 文件\ncp [-r] 来源 目标 · mv 来源 目标 · rm [-r] 路径\nlpmake build (b) · run (r) · clean (c)\nclear · help\n路径含空格时请加引号；文件操作仅限当前实验。';
+      output = localize(
+        'pwd \u00b7 ls [directory] \u00b7 ll [directory] \u00b7 cd [directory]\nmkdir [-p] path \u00b7 touch file \u00b7 cat file\ncp [-r] source destination \u00b7 mv source destination \u00b7 rm [-r] path\nlpmake build (b) \u00b7 run (r) \u00b7 clean (c)\nclear \u00b7 help\nQuote paths that contain spaces. File commands are limited to the current experiment.',
+      );
     } else if (command === 'lpmake') {
       exact(0, 1);
       const make = await resolve('LPMake.txt', true);
       if (!(await lstat(make).catch(() => undefined))?.isFile())
-        throw Error('当前目录未找到 LPMake.txt。当前位置：./' + this.cwd);
+        throw new UIError('LPMake.txt was not found in the current directory: ./{0}', this.cwd);
       const action = (
         { b: 'build', r: 'run', c: 'clean', build: 'build', run: 'run', clean: 'clean' } as const
       )[words[0] as 'b'];
-      if (words.length && !action) throw Error('用法：lpmake build / run / clean（b / r / c）。');
+      if (words.length && !action)
+        throw new UIError('Usage: lpmake build / run / clean (b / r / c).');
       output = await this.make(action ?? 'help', this.cwd);
       changed = action === 'build' || action === 'clean';
-    } else throw Error('未知命令：' + command + '。输入 help 查看可用命令。');
+    } else
+      throw new UIError('Unknown command: {0}. Enter help to list available commands.', command);
     return { cwd: this.cwd, output, filesChanged: changed };
   }
   async complete(line: string): Promise<string[]> {

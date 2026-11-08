@@ -1,3 +1,4 @@
+import { t as localize } from './i18n';
 import type { Language } from './types';
 export interface ParameterIssue {
   severity: 'error' | 'warning' | 'info';
@@ -105,8 +106,10 @@ export function parameterErrors(args: readonly string[], field: string): Paramet
         field,
         index: t.index,
         message: language
-          ? '编译语言由对应字段管理，请移除此参数。'
-          : '输出位置与编译阶段由 LabPad 管理，请移除此参数。',
+          ? localize(
+              'The source language is managed by its dedicated setting. Remove this argument.',
+            )
+          : localize('LabPad manages output paths and compilation stages. Remove this argument.'),
         reason: language
           ? 'Input language is managed by LabPad.'
           : 'Output selection and compilation stages are managed by LabPad.',
@@ -119,7 +122,7 @@ export function parameterErrors(args: readonly string[], field: string): Paramet
         severity: 'error',
         field,
         index: t.index,
-        message: t.key + ' 后缺少参数值，请在下一行填写。',
+        message: localize('{0} requires a value. Put the value on the next line.', t.key),
         reason: 'Missing value after ' + JSON.stringify(t.key) + '.',
         hint: 'Add the value as the next argument. Each line or string represents one process argument.',
       });
@@ -142,7 +145,7 @@ export function argumentSummary(args: readonly string[]): ArgumentSummary {
     else if ((t.key === '-D' || t.key === '-U') && t.value?.split('=')[0] === 'NDEBUG')
       result.ndebug =
         t.key === '-U'
-          ? '未定义'
+          ? localize('undefined')
           : t.value.includes('=')
             ? t.value.split('=').slice(1).join('=')
             : '1';
@@ -190,17 +193,30 @@ export function parameterAdvice(
   for (const unit of compiles) {
     const flags = switches(unit.args);
     if (flags.keys.has('-pthread') && !linkKeys.has('-pthread') && !linkKeys.has('-lpthread'))
-      note('多文件项目分别编译和链接；-pthread 通常也需要加入额外链接参数。');
+      note(
+        localize(
+          'Projects compile and link separately. Usually, -pthread also belongs in Extra Linker Arguments.',
+        ),
+      );
     if (
       flags.openmp &&
       !link.openmp &&
       !['-lgomp', '-lomp', '-liomp5'].some((k) => linkKeys.has(k))
     )
-      note('已启用 OpenMP；请核对链接参数及当前工具链的 OpenMP 运行库。');
-    if (flags.keys.has('-pg') && !linkKeys.has('-pg')) note('-pg 通常需要同时用于编译与链接。');
+      note(
+        localize(
+          'OpenMP is enabled. Check the linker arguments and this toolchain’s OpenMP runtime.',
+        ),
+      );
+    if (flags.keys.has('-pg') && !linkKeys.has('-pg'))
+      note(localize('Usually, -pg is needed for both compilation and linking.'));
     const coverage = flags.coverage;
     if (coverage && !link.coverage && !linkKeys.has('-lgcov'))
-      note('已启用覆盖率插桩；请核对额外链接参数中的覆盖率开关或运行库。');
+      note(
+        localize(
+          'Coverage instrumentation is enabled. Check the coverage options or runtime in Extra Linker Arguments.',
+        ),
+      );
     const missing = [...flags.sanitizers].filter((s) => s && !link.sanitizers.has(s));
     if (missing.length) {
       const explicitLibrary = [...linkKeys].some((k) =>
@@ -208,18 +224,27 @@ export function parameterAdvice(
       );
       note(
         flags.trap || explicitLibrary
-          ? '已配置 sanitizer 的 trap 模式或显式运行库，请在生效参数中核对编译与链接的配合。'
-          : 'Sanitizer 编译检查 ' + missing.join(', ') + ' 未检测到对应链接开关；请核对链接参数。',
+          ? localize(
+              'Sanitizer trap mode or an explicit runtime is configured. Check the effective compiler and linker arguments together.',
+            )
+          : localize(
+              'Sanitizers {0} are enabled for compilation without matching linker options. Check the linker arguments.',
+              missing.join(', '),
+            ),
         flags.trap || explicitLibrary ? 'info' : 'warning',
       );
     }
     if (flags.lto && !link.lto)
       note(
         linkKeys.has('-fno-lto')
-          ? '链接参数显式关闭了 LTO，编译阶段的 LTO 请求不会自动沿用。'
+          ? localize(
+              'LTO is explicitly disabled for linking. The compiler’s LTO setting does not carry over automatically.',
+            )
           : kind === 'gcc'
-            ? 'GCC 可从 LTO 对象自动启用链接优化；实际链接参数见下方。'
-            : '已启用 LTO；请核对当前工具链的链接器与链接选项。',
+            ? localize(
+                'GCC can enable link-time optimization from LTO objects. The actual linker arguments are shown below.',
+              )
+            : localize('LTO is enabled. Check this toolchain’s linker and link options.'),
         'info',
       );
   }
@@ -236,10 +261,16 @@ export function relativePathAdvice(args: readonly string[], field: string): Para
       continue;
     const message =
       t.key === '-L'
-        ? '相对库路径按链接工作目录解析；建议使用“库目录”字段。'
+        ? localize(
+            'Relative library paths use the link working directory. Prefer the Library Directories field.',
+          )
         : t.key === '-include' || t.key === '-imacros'
-          ? '强制包含文件按编译工作目录解析；请核对该相对文件路径。'
-          : '相对包含路径按编译工作目录解析；建议使用“包含目录”字段。';
+          ? localize(
+              'Forced includes use the compile working directory. Check this relative file path.',
+            )
+          : localize(
+              'Relative include paths use the compile working directory. Prefer the Include Directories field.',
+            );
     if (!result.some((i) => i.message === message))
       result.push({ severity: 'info', field, message });
   }

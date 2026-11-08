@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { errorText } from '../i18n';
+import { t } from '../i18n';
+
 import { ref, watch, onBeforeUnmount } from 'vue';
 import type { DebugVariable } from '../../shared/debug';
 import ActionIcon from './ActionIcon.vue';
@@ -44,8 +47,7 @@ async function more(value: DebugVariable, start: number) {
     if (request === epoch && props.enabled)
       expanded.value[id] = start ? [...(expanded.value[id] ?? []), ...list] : list;
   } catch (error) {
-    if (request === epoch && props.enabled)
-      errors.value[id] = error instanceof Error ? error.message : String(error);
+    if (request === epoch && props.enabled) errors.value[id] = t(errorText(error));
   } finally {
     if (request === epoch) loading.value[id] = false;
   }
@@ -57,7 +59,9 @@ async function more(value: DebugVariable, start: number) {
       <div class="debug-variable-row">
         <button
           class="debug-expander icon-action"
-          :aria-label="(expanded[value.variablesReference] ? '收起 ' : '展开 ') + value.name"
+          :aria-label="
+            t(expanded[value.variablesReference] ? 'Collapse {0}' : 'Expand {0}', value.name)
+          "
           :disabled="!enabled || !value.variablesReference || loading[value.variablesReference]"
           @click="toggle(value)"
         >
@@ -86,7 +90,7 @@ async function more(value: DebugVariable, start: number) {
           :disabled="loading[value.variablesReference]"
           @click="more(value, expanded[value.variablesReference].length)"
         >
-          显示更多
+          {{ t('Show More') }}
         </button></template
       >
     </li>

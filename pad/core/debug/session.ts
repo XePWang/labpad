@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../../shared/i18n';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
@@ -51,7 +52,9 @@ export class NativeDebugger extends EventEmitter {
   }
   private assertInspection(id: string) {
     if (this.state.status !== 'paused' || id !== this.inspectionId)
-      throw Error('Debug context has changed. Refresh variables in the current paused frame.');
+      throw new UIError(
+        'Debug context has changed. Refresh variables in the current paused frame.',
+      );
   }
   private update(value: Partial<NativeDebugState>) {
     this.state = { ...this.state, ...value, inspectionId: this.inspectionId };
@@ -71,7 +74,7 @@ export class NativeDebugger extends EventEmitter {
     this.finish();
   }
   async start(options: DebugLaunch) {
-    if (this.state.status !== 'idle') throw Error('Debugger session has already started.');
+    if (this.state.status !== 'idle') throw new UIError('Debugger session has already started.');
     this.update({ status: 'starting', breakpoints: options.breakpoints });
     const server = createServer();
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -87,7 +90,7 @@ export class NativeDebugger extends EventEmitter {
           server.close();
         });
         connectTimer = setTimeout(
-          () => reject(Error('Debugger startup timed out. ' + this.log)),
+          () => reject(new UIError('Debugger startup timed out. {0}', this.log)),
           15000,
         );
       });
@@ -109,19 +112,22 @@ export class NativeDebugger extends EventEmitter {
       child.once('error', (error) => this.end('error', error.message));
       child.once('exit', (code) => {
         if (!this.disposing)
-          this.end(code === 0 ? 'ended' : 'error', this.log || 'Debugger exited with code ' + code);
+          this.end(
+            code === 0 ? 'ended' : 'error',
+            this.log || localize('Debugger exited with code {0}', code),
+          );
       });
       const socket = await connected;
       const connection = (this.connection = new DapConnection(socket, async (command, args) => {
         if (command !== 'runInTerminal' || !options.runInTerminal)
-          throw Error('Unsupported debugger request: ' + command);
+          throw new UIError('Unsupported debugger request: {0}', command);
         if (
           !args ||
           !Array.isArray(args.args) ||
           !args.args.length ||
           !args.args.every((v: unknown) => typeof v === 'string')
         )
-          throw Error('Invalid debugger terminal launch.');
+          throw new UIError('Invalid debugger terminal launch.');
         return options.runInTerminal(args);
       }));
       connection.on('closed', (error: Error) => {
@@ -200,7 +206,7 @@ export class NativeDebugger extends EventEmitter {
       return;
     }
     if (message.event === 'exited') {
-      this.update({ message: 'Exit code ' + body.exitCode });
+      this.update({ message: localize('Exit code {0}', body.exitCode) });
       return;
     }
     if (message.event === 'breakpoint' && body.breakpoint) {
@@ -256,7 +262,7 @@ export class NativeDebugger extends EventEmitter {
     }
   }
   async selectFrame(id: number) {
-    if (this.state.status !== 'paused') throw Error('The program is not paused.');
+    if (this.state.status !== 'paused') throw new UIError('The program is not paused.');
     const epoch = ++this.inspection;
     this.update({ selectedFrameId: id, scopes: [], variables: [] });
     try {
@@ -305,7 +311,7 @@ export class NativeDebugger extends EventEmitter {
       !expression.trim() ||
       /[;{}]|(?:^|[^=!<>])=(?!=)|(?:\+\+|--)|[A-Za-z_]\w*\s*\(/.test(expression)
     )
-      throw Error('Use a read-only expression such as value, item.member or values[index].');
+      throw new UIError('Use a read-only expression such as value, item.member or values[index].');
     const value = await this.connection!.request('evaluate', {
       expression,
       frameId: this.state.selectedFrameId,
@@ -323,7 +329,7 @@ export class NativeDebugger extends EventEmitter {
   }
   async setBreakpoints(values: SourceBreakpoint[], deferred: string[] = []) {
     if (values.some((v) => !Number.isSafeInteger(v.line) || v.line < 1))
-      throw Error('Invalid breakpoint line.');
+      throw new UIError('Invalid breakpoint line.');
     const previous = this.state.breakpoints;
     this.update({
       breakpoints: values.map((v) => ({ ...v, verified: false, adapterId: undefined })),
@@ -338,7 +344,7 @@ export class NativeDebugger extends EventEmitter {
         continue;
       }
       if (selected.some((v) => !!v.condition) && !this.state.conditionalBreakpoints)
-        throw Error('The debugger does not support conditional breakpoints.');
+        throw new UIError('The debugger does not support conditional breakpoints.');
       const result = await this.connection.request('setBreakpoints', {
         source: { path: file },
         breakpoints: selected.map((v) => ({
@@ -358,12 +364,12 @@ export class NativeDebugger extends EventEmitter {
     this.update({ breakpoints: items });
   }
   async control(action: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut') {
-    if (!this.connection || this.done) throw Error('No active debugger session.');
+    if (!this.connection || this.done) throw new UIError('No active debugger session.');
     let threadId = this.state.threadId;
     if (action === 'pause') {
       const result = await this.connection.request('threads');
       threadId = result.threads?.[0]?.id ?? threadId;
-    } else if (this.state.status !== 'paused') throw Error('The program is not paused.');
+    } else if (this.state.status !== 'paused') throw new UIError('The program is not paused.');
     const before = this.state,
       epoch = ++this.inspection;
     if (action !== 'pause')
@@ -414,7 +420,7 @@ export class NativeDebugger extends EventEmitter {
                 exited,
                 new Promise<never>((_, reject) => {
                   timer = setTimeout(
-                    () => reject(Error('Debugger process has not exited; retry stopping.')),
+                    () => reject(new UIError('Debugger process has not exited; retry stopping.')),
                     2500,
                   );
                 }),

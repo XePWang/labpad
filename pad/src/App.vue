@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, uiLanguage, setLanguage, msg, errorText, type UIText, UIError } from './i18n';
 import type { CompletionFiles } from '../shared/types';
 import { isHeaderFile } from '../shared/file-language';
 import {
@@ -76,7 +77,22 @@ const dataRoot = ref(''),
   settingsRoot = ref(''),
   version = ref(''),
   sourcePath = ref<string | null>(null),
-  compilerLabel = ref('正在读取编译器…');
+  compilerDescription = ref('');
+const compilerLabel = computed({
+  get: () => {
+    const label = compilerDescription.value;
+    const match = /^(内置|自定义|Built-in|Custom)\s+(.+)$/.exec(label);
+    if (match)
+      return t(
+        match[1] === '内置' || match[1] === 'Built-in' ? 'Built-in {0}' : 'Custom {0}',
+        match[2],
+      );
+    return label || t('Reading Compiler Information…');
+  },
+  set: (value: string) => {
+    compilerDescription.value = value;
+  },
+});
 const { style: textStyle } = useTypography(() => config.value?.typography);
 const typographyValid = ref(true);
 const settingsTypography = computed({
@@ -88,7 +104,7 @@ const settingsTypography = computed({
 const execution = ref<ExecutionState>(idle());
 let executionEpoch = 0;
 function beginExecution(kind: TaskKind) {
-  if (execution.value.kind !== 'idle') throw Error('请先停止当前任务。');
+  if (execution.value.kind !== 'idle') throw new UIError('Stop the current task first.');
   const id = ++executionEpoch;
   execution.value = {
     kind,
@@ -122,15 +138,16 @@ const compiledReady = ref(false),
   diagnostics = ref({ warnings: 0, errors: 0 }),
   diagnosticRevision = ref(0),
   debugEpoch = ref(0);
-const logs = ref(''),
-  error = ref(''),
-  notice = ref(''),
+const logEntries = ref<UIText[]>([]);
+const logs = computed(() => logEntries.value.map((entry) => t(entry)).join(''));
+const error = ref<UIText>(''),
+  notice = ref<UIText>(''),
   saveStatus = ref('已保存'),
   dirty = ref(false),
   ready = ref(false);
 const settingsOpen = ref(false),
   settingsSaving = ref(false),
-  settingsMessage = ref(''),
+  settingsMessage = ref<UIText>(''),
   pathValidity = ref({ data: true, c: true, cpp: true });
 const runningCases = ref<string[]>([]),
   selectedCases = ref<string[]>([]),
@@ -145,11 +162,12 @@ let checkTimer: ReturnType<typeof setTimeout> | undefined;
 const results = ref<Record<string, CaseResult>>({}),
   diffOpen = ref<Record<string, boolean>>({}),
   finished = ref(false);
-const phase = computed(() =>
-  nativeActive.value && !nativeStarting.value
+const phase = computed(() => {
+  void uiLanguage.value;
+  return nativeActive.value && !nativeStarting.value
     ? nativeMessage(nativeState.value.status)
-    : taskMessage(execution.value),
-);
+    : taskMessage(execution.value);
+});
 const terminal = ref<InstanceType<typeof DebugTerminal>>(),
   editor = ref<InstanceType<typeof CodeEditor>>();
 const cursor = ref<EditorCursor>({
@@ -164,9 +182,9 @@ const cursor = ref<EditorCursor>({
 let hintTimer: ReturnType<typeof setInterval> | undefined,
   noticeTimer: ReturnType<typeof setTimeout> | undefined,
   layoutTail: Promise<unknown> = Promise.resolve();
-const footerPulse = ref('');
+const footerPulse = ref<UIText>('');
 let pulseTimer: ReturnType<typeof setTimeout> | undefined;
-function flashFooter(text: string) {
+function flashFooter(text: UIText) {
   clearTimeout(pulseTimer);
   footerPulse.value = text;
   pulseTimer = setTimeout(() => {
@@ -180,51 +198,59 @@ function shortcutLabel(id: string) {
 }
 const tips = computed(() => [
   config.value?.saveMode === 'auto'
-    ? '自动保存已开启，写完稍停即可保存。'
-    : shortcutLabel('save') + ' 保存当前源码；导入副本也会保存在这里。',
-  '空格小点只负责指路，导出的仍是普通空格。',
-  '选中多行后按 Tab / Shift+Tab，整块调整缩进。',
-  '没有测试点时，编译通过就会进入终端。',
-  shortcutLabel('format') + ' 整理代码；' + keyLabel('$mod+KeyZ') + ' 可整次撤销。',
-  '测试输入、预期输出和比较规则随题目 JSON 保存。',
-  '别急，先让一个小例子跑通。',
-  '多测一个边界值，心里就多一点底。',
-  '分隔线可以拖，给忙碌的一边多一点位置。',
-  '分号藏得再好，编译器也会认真找。',
-  '空输入、零、负数：边界值也想拥有姓名。',
-  '测试点通过以后，别忘了再读一遍题目。',
-  '思路卡住时，先把问题缩小一点。',
-  '我负责对答案，你负责奇思妙想。',
-  '累了就停一下，分号不会自己长出来。',
-  '一个小测试，也能照亮一大段代码。',
-  '选中几行按 Tab，大家一起挪一挪。',
-  'Shift+Tab 往回走，缩进也有回头路。',
-  keyLabel('$mod+KeyF') + ' 找一找，变量名不用靠眼力。',
-  keyLabel('$mod+KeyZ') + ' 撤销、' + keyLabel('$mod+Shift+KeyZ') + ' 重做，放心整理代码。',
-  '输入跑完会关闭 stdin，读到 EOF 就可以收工。',
-  '输出多了少了？点开 Diff 看看差在哪。',
+    ? t('Auto Save is on. Pause briefly after typing to save.')
+    : t('{0} saves the current source file, including an imported copy.', shortcutLabel('save')),
+  t('Those dots mark spaces. Your exported code still contains ordinary spaces.'),
+  t('Select several lines and press Tab or Shift+Tab to indent them together.'),
+  t('With no test cases, a successful compilation takes you to the terminal.'),
+  t(
+    '{0} formats the code. {1} undoes the whole change.',
+    shortcutLabel('format'),
+    keyLabel('$mod+KeyZ'),
+  ),
+  t('Inputs, expected output, and comparison rules are saved with the problem JSON.'),
+  t('Start small. Get one example working first.'),
+  t('Try one more boundary value. It is a little extra peace of mind.'),
+  t('Drag a divider to give the busy side more room.'),
+  t('The compiler is very good at finding missing semicolons.'),
+  t('Empty input, zero, negatives: boundary values deserve a turn too.'),
+  t('All tests passed? Give the problem one more read.'),
+  t('If you are stuck, make the problem smaller.'),
+  t('I will check the answers. You bring the ideas.'),
+  t('Take a break when you need one. The semicolons can wait.'),
+  t('A small test can shed light on a lot of code.'),
+  t('Select a few lines and press Tab. They will move together.'),
+  t('Shift+Tab brings the indentation back.'),
+  t('Use {0} to find a name instead of scanning by eye.', keyLabel('$mod+KeyF')),
+  t(
+    '{0} to undo, {1} to redo. Make yourself at home.',
+    keyLabel('$mod+KeyZ'),
+    keyLabel('$mod+Shift+KeyZ'),
+  ),
+  t('After the test input, stdin closes. Your program can finish at EOF.'),
+  t('Too much output, or too little? Open Diff to see what changed.'),
   draft.value?.language === 'cpp'
-    ? '一个 cout，也能帮思路探探路。'
-    : '一个 printf，也能帮思路探探路。',
-  '导出前再跑一次，让提交更踏实。',
-  '给测试点一个特别的输入，也许会有新发现。',
-  '代码可以慢慢写，测试记得常常跑。',
+    ? t('A little cout can help you find your way.')
+    : t('A little printf can help you find your way.'),
+  t('Run once more before exporting. It makes submitting easier.'),
+  t('Try an unusual input. You might learn something new.'),
+  t('Take your time writing code. Run your tests often.'),
 ]);
 const footerHint = computed(() =>
   formatting.value
-    ? '正在整理代码格式…'
+    ? t('Formatting Code…')
     : busy.value
       ? phase.value + ' · ' + compilerLabel.value
       : fileBusy.value
-        ? '正在准备文件…'
+        ? t('Preparing Files…')
         : notice.value ||
           footerPulse.value ||
           (cursor.value.selectionChars
-            ? '已选 ' +
-              cursor.value.selectionChars +
-              ' 个字符 · ' +
-              cursor.value.selectionLines +
-              ' 行；Tab / Shift+Tab 可整块缩进。'
+            ? t(
+                'Selected: {0} characters across {1} lines. Tab / Shift+Tab adjusts the whole block.',
+                cursor.value.selectionChars,
+                cursor.value.selectionLines,
+              )
             : tips.value[hintIndex.value % tips.value.length]),
 );
 interface SourceTab {
@@ -405,7 +431,7 @@ function applyCondition() {
 }
 async function debugLocation(path: string, line: number) {
   if (!fileEntries.value.some((f) => f.path === path && !f.directory)) {
-    notice.value = '该调用位于项目外部代码中。';
+    notice.value = msg('This call is in code outside the project.');
     return;
   }
   await openFile(path);
@@ -493,7 +519,7 @@ async function executeTerminal(text: string) {
     let result = await api.terminalCommand(snapshot(), text);
     if (scope !== fileScope.value) return result;
     if (result.needsSave) {
-      if (!(await api.confirmCompile())) return { ...result, output: '已取消。' };
+      if (!(await api.confirmCompile())) return { ...result, output: t('Canceled.') };
       if (scope !== fileScope.value) return result;
       await saveAll();
       result = await api.terminalCommand(snapshot(), text);
@@ -502,24 +528,29 @@ async function executeTerminal(text: string) {
     return result;
   } catch (error) {
     if (scope !== fileScope.value || !showLpmakeDiagnostic(message(error))) throw error;
-    return { ...(await api.terminalContext(snapshot())), output: '构建失败，请查看“输出”。' };
+    return { ...(await api.terminalContext(snapshot())), output: t('Build failed. See Output.') };
   }
 }
 
 const runHint = computed(() =>
   selectedCases.value.length === draft.value?.problem.testCases.length
-    ? '运行全部测试点'
-    : '运行已选的' + selectedCases.value.length + '个测试点',
+    ? t('Run All Test Cases')
+    : t('Run Selected Test Cases ({0})', selectedCases.value.length),
 );
 const testSummary = computed(() =>
   busy.value === 'judge'
-    ? runningCases.value.filter((id) => results.value[id]).length +
-      '/' +
-      runningCases.value.length +
-      ' 已完成'
+    ? t(
+        '{0}/{1} completed',
+        runningCases.value.filter((id) => results.value[id]).length,
+        runningCases.value.length,
+      )
     : summaryMode.value === 'result'
-      ? passed.value + '/' + (draft.value?.problem.testCases.length ?? 0) + ' 通过'
-      : selectedCases.value.length + '/' + (draft.value?.problem.testCases.length ?? 0) + ' 已选',
+      ? t('{0}/{1} passed', passed.value, draft.value?.problem.testCases.length ?? 0)
+      : t(
+          '{0}/{1} selected',
+          selectedCases.value.length,
+          draft.value?.problem.testCases.length ?? 0,
+        ),
 );
 const summaryAllPassed = computed(
   () =>
@@ -542,23 +573,27 @@ const compactToolbar = computed(() => toolbarWidth.value < 1150);
 const toolbarItems = computed(() => [
   ...(!workspaceMode.value
     ? [
-        { label: 'C 源码（.c）', value: 'new:c', disabled: blocked.value },
-        { label: 'C++ 源码（.cpp）', value: 'new:cpp', disabled: blocked.value },
+        { label: t('C Source (.c)'), value: 'new:c', disabled: blocked.value },
+        { label: t('C++ Source (.cpp)'), value: 'new:cpp', disabled: blocked.value },
       ]
     : []),
   {
-    label: '导入源码',
+    label: t('Import Source'),
     value: 'import:source',
     separator: !workspaceMode.value,
     disabled: blocked.value,
   },
-  { label: '导入测试点', value: 'import:io', disabled: blocked.value },
-  { label: '导入实验项目', value: 'import:project', disabled: blocked.value },
-  { label: '导出源码', value: 'export:source', separator: true, disabled: blocked.value },
-  { label: '导出实验项目', value: 'export:project', disabled: blocked.value },
-  { label: '导出当前测试点', value: 'export:currentTests', disabled: blocked.value },
-  { label: '导出项目测试点', value: 'export:projectTests', disabled: blocked.value },
-  { label: '设置', value: 'settings', separator: true, disabled: fileBusy.value },
+  { label: t('Import Test Cases'), value: 'import:io', disabled: blocked.value },
+  { label: t('Import Experiment'), value: 'import:project', disabled: blocked.value },
+  { label: t('Export Source'), value: 'export:source', separator: true, disabled: blocked.value },
+  { label: t('Export Experiment'), value: 'export:project', disabled: blocked.value },
+  { label: t('Export Current Test Cases'), value: 'export:currentTests', disabled: blocked.value },
+  {
+    label: t('Export Experiment Test Cases'),
+    value: 'export:projectTests',
+    disabled: blocked.value,
+  },
+  { label: t('Settings'), value: 'settings', separator: true, disabled: fileBusy.value },
 ]);
 async function chooseToolbarAction(value: string) {
   if (value === 'settings') return openSettings();
@@ -624,7 +659,7 @@ watch(
 );
 const testHeaderItems = computed(() => [
   ...(!showBothRightTabs.value && workspaceMode.value
-    ? [{ label: '切换到调试', value: 'tab' }]
+    ? [{ label: t('Switch to Debug'), value: 'tab' }]
     : []),
   ...(!showTestSummary.value
     ? [
@@ -642,24 +677,30 @@ const testHeaderItems = computed(() => [
         },
       ]
     : []),
-  { label: '定位未通过', value: 'locate', disabled: !failedIds.value.length },
+  { label: t('Go to Failed Test'), value: 'locate', disabled: !failedIds.value.length },
   {
-    label: '重测未通过',
+    label: t('Rerun Failed Tests'),
     value: 'failed',
     disabled: blocked.value || !compiledReady.value || !failedIds.value.length,
   },
   ...(!fullHeader.value
     ? [
-        { label: '题目文件', value: 'rule', separator: true, disabled: blocked.value },
-        { label: '重新加载', value: 'reload', disabled: blocked.value },
-        { label: '新增测试点', value: 'add', disabled: blocked.value },
+        { label: t('Problem File'), value: 'rule', separator: true, disabled: blocked.value },
+        { label: t('Reload'), value: 'reload', disabled: blocked.value },
+        { label: t('Add Test Case'), value: 'add', disabled: blocked.value },
       ]
     : []),
 ]);
 const debugHeaderItems = computed(() => [
-  ...(!showBothRightTabs.value ? [{ label: '切换到测试点', value: 'tab' }] : []),
+  ...(!showBothRightTabs.value ? [{ label: t('Switch to Test Cases'), value: 'tab' }] : []),
   ...(!fullHeader.value
-    ? [{ label: '构建设置…', value: 'build', disabled: blocked.value || nativeActive.value }]
+    ? [
+        {
+          label: t('Build Settings…'),
+          value: 'build',
+          disabled: blocked.value || nativeActive.value,
+        },
+      ]
     : []),
 ]);
 async function testHeaderAction(value: string) {
@@ -920,7 +961,7 @@ async function applyFileChanges(event: FileEvent) {
 }
 
 async function requestFiles(request: FileRequest) {
-  if (busy.value) throw Error('请先停止当前任务');
+  if (busy.value) throw new UIError('Stop the current task first');
   const event = await api.fileOperation(
     draft.value!.problem.labId,
     draft.value!.problem.problemId,
@@ -974,11 +1015,13 @@ async function treeAction(value: string, files: string[]) {
     );
     return;
   }
-  if (value === 'crossLabDrop') throw Error('请先复制文件，再切换实验粘贴。');
-  if (value === 'invalidDrop') throw Error('拖动的文件信息无效，请重试。');
+  if (value === 'crossLabDrop')
+    throw new UIError('Copy files before switching experiments to paste them.');
+  if (value === 'invalidDrop')
+    throw new UIError('The dragged file information is invalid. Try again.');
 }
 async function commitTreeEdit(form: WorkspaceEdit) {
-  if (busy.value || fileBusy.value) throw Error('请等待当前任务完成');
+  if (busy.value || fileBusy.value) throw new UIError('Wait for the current task to finish');
   const lab = draft.value!.problem.labId,
     make =
       workspaceMode.value && form.action === 'rename'
@@ -1078,7 +1121,7 @@ async function openExperimentBuild(lab = draft.value?.problem.labId ?? '') {
     document.activeElement instanceof HTMLElement &&
     !document.activeElement.closest('[role="menuitem"],[role="option"]')
       ? document.activeElement
-      : (document.querySelector<HTMLElement>('[aria-label="实验项目"]') ?? undefined);
+      : (document.querySelector<HTMLElement>('[data-lab-selector]') ?? undefined);
   if (lab !== draft.value?.problem.labId) {
     await fileAction(() => selectLab(lab));
     if (lab !== draft.value?.problem.labId) return;
@@ -1089,13 +1132,15 @@ async function openExperimentBuild(lab = draft.value?.problem.labId ?? '') {
     parameterExpanded.value = true;
     await nextTick();
     document.querySelector('.parameter-settings')?.scrollIntoView({ block: 'center' });
-    document.querySelector<HTMLSelectElement>('[aria-label="参数来源"]')?.focus();
+    document.querySelector<HTMLSelectElement>('[data-parameter-source]')?.focus();
   }
 }
 function applyBuildSettings(text: string, version: number) {
   const tab = tabs.value.find((t) => t.id === buildDocument.value);
   if (!tab || tab.revision !== version) {
-    buildConflict.value = '构建配置已变化，请保留本次内容，重新打开构建设置核对。';
+    buildConflict.value = t(
+      'The build configuration has changed. Keep your edits and reopen Build Settings to review them.',
+    );
     return;
   }
   const changed = text !== tab.document.source;
@@ -1124,7 +1169,7 @@ async function deleteLab(lab: string) {
   const current = draft.value!.problem.labId === lab;
   projects.value = await api.projects();
   if (current) applyBootstrap(await api.bootstrap());
-  notice.value = '已删除项目：' + lab;
+  notice.value = msg('Experiment deleted: {0}', lab);
 }
 const newKind = ref<'lab' | 'problem' | null>(null),
   newName = ref(''),
@@ -1206,7 +1251,7 @@ function message(e: unknown) {
 }
 function showLpmakeDiagnostic(text: string): boolean {
   if (!isLpmakeDiagnostic(text)) return false;
-  logs.value = 'LPMake 配置检查\n\n' + text + '\n';
+  logEntries.value = [msg('LPMake Configuration Check\n\n{0}\n', text)];
   diagnostics.value = diagnosticCounts(text);
   diagnosticRevision.value++;
   bottomTab.value = 'output';
@@ -1214,7 +1259,7 @@ function showLpmakeDiagnostic(text: string): boolean {
 }
 function reportOperationError(reason: unknown) {
   const text = message(reason);
-  if (!showLpmakeDiagnostic(text)) error.value = text;
+  if (!showLpmakeDiagnostic(text)) error.value = errorText(reason);
 }
 async function action(fn: () => Promise<unknown>, clearMessages = true) {
   if (clearMessages) {
@@ -1309,7 +1354,7 @@ async function recentSource() {
   if (document) {
     closedIds.value = closedIds.value.filter((id) => id !== document.documentId);
     addDocument(document);
-  } else notice.value = '还没有可恢复的源码，可以先新建一份。';
+  } else notice.value = msg('No recent source file is available. Create a new one to get started.');
 }
 function recordState() {
   if (!draft.value) return;
@@ -1333,11 +1378,15 @@ function recordState() {
 function enqueueSave(input: Draft, id: number): Promise<SaveResult> {
   const value = input;
   const tab = tabs.value.find((t) => t.id === value.documentId);
-  if (!tab) return Promise.reject(new Error('请先新建或导入源码'));
+  if (!tab) return Promise.reject(new UIError('Create or import a source file first'));
   if (tab.document.ruleFile && !tab.dirty)
     return Promise.resolve({ path: tab.document.sourceFile ?? '', source: tab.savedSource });
   if (tab.document.ruleFile && rulesDirty.value)
-    return Promise.reject(new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。'));
+    return Promise.reject(
+      new UIError(
+        'Both the test panel and problem file have changed. Keep one set of edits before saving.',
+      ),
+    );
   tab.status = '保存中…';
   if (tab.id === activeId.value) saveStatus.value = tab.status;
   const task = saveTail
@@ -1391,7 +1440,7 @@ function enqueueSave(input: Draft, id: number): Promise<SaveResult> {
       refreshDirty();
       recordState();
       if (result.formatWarning) error.value = result.formatWarning;
-      flashFooter('已保存 · ' + result.path);
+      flashFooter(msg('Saved · {0}', result.path));
       projects.value = await api.projects();
       return result;
     })
@@ -1523,7 +1572,9 @@ function activateTab(id: string, focus = true) {
 async function saveRules() {
   if (!rulesDirty.value) return;
   if (tabs.value.some((tab) => tab.document.ruleFile && tab.dirty))
-    throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+    throw new UIError(
+      'Both the test panel and problem file have changed. Keep one set of edits before saving.',
+    );
   const problem = clone(draft.value!.problem);
   await api.saveProblem(problem, JSON.parse(savedRules));
   savedRules = JSON.stringify(problem);
@@ -1558,7 +1609,9 @@ async function saveAll() {
   clearTimeout(saveTimer);
   await saveTail;
   if (rulesDirty.value && tabs.value.some((tab) => tab.document.ruleFile && tab.dirty))
-    throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+    throw new UIError(
+      'Both the test panel and problem file have changed. Keep one set of edits before saving.',
+    );
   for (const tab of [...tabs.value].filter((item) => item.dirty || tabs.value.length === 1))
     await enqueueSave(
       { ...clone(tab.document), problem: clone(draft.value!.problem) },
@@ -1623,7 +1676,9 @@ async function tabAction(value: string, id = activeId.value) {
     if (choice === 'cancel') return;
     if (choice === 'save') {
       if (rulesDirty.value && tabs.value.some((item) => item.document.ruleFile && item.dirty))
-        throw new Error('测试点面板与题目文件均有修改，请先保留一处修改后再保存。');
+        throw new UIError(
+          'Both the test panel and problem file have changed. Keep one set of edits before saving.',
+        );
       for (const t of targets.filter((item) => item.dirty))
         await enqueueSave(
           { ...clone(t.document), problem: clone(draft.value!.problem) },
@@ -1743,6 +1798,7 @@ function applyBootstrap(state: Awaited<ReturnType<typeof api.bootstrap>>) {
   completionRevision++;
   frameRevision++;
   config.value = state.config;
+  setLanguage(state.config.uiLanguage ?? 'zh-CN');
   projects.value = state.projects;
   version.value = state.version;
   dataRoot.value = state.dataRoot;
@@ -1778,7 +1834,7 @@ async function newSource(value: string) {
   );
   addDocument(created);
   setIdle('ready');
-  flashFooter('已新建 · ' + created.sourceFile);
+  flashFooter(msg('Created · {0}', created.sourceFile));
 }
 async function importSourceFile() {
   const value = await api.importSource(
@@ -1799,7 +1855,7 @@ async function importSourceFile() {
     }
   } else addDocument(value.document);
   await refreshFiles();
-  notice.value = '已导入 ' + value.path + ' · ' + value.encoding;
+  notice.value = msg('Imported {0} · {1}', value.path, value.encoding);
 }
 async function importIO() {
   clearTimeout(saveTimer);
@@ -1822,7 +1878,7 @@ async function importIO() {
   invalidate();
   projects.value = await api.projects();
   if (wasDirty && config.value!.saveMode === 'auto') await saveNow();
-  notice.value = '已导入 ' + problem.testCases.length + ' 个测试点';
+  notice.value = msg('Imported test cases: {0}', problem.testCases.length);
 }
 async function formatCode() {
   if (formatting.value || blocked.value || !canFormat.value) return;
@@ -1836,7 +1892,7 @@ async function formatCode() {
     const formatted = await api.formatCode(draft.value!.source, language, size);
     if (id !== revision || size !== config.value!.indentSize || language !== editorLanguage.value) {
       if (ownsView(owner) && documentId === activeId.value)
-        notice.value = '代码或缩进设置已改变，请重新格式化';
+        notice.value = msg('The code or indentation settings changed. Format the code again.');
       return;
     }
     editor.value?.applyText(formatted);
@@ -1868,10 +1924,10 @@ async function importProject() {
     }
     projects.value = result.projects;
     queueChecks();
-    notice.value = '项目测试点已更新，源码保留。';
+    notice.value = msg('Experiment test cases updated. Your source files are preserved.');
   } else {
     applyBootstrap(result);
-    notice.value = '已导入项目：' + result.draft.problem.labId;
+    notice.value = msg('Experiment imported: {0}', result.draft.problem.labId);
     if (result.editBuild) await openBuildSettings();
   }
 }
@@ -1887,11 +1943,13 @@ async function chooseExport(value: string) {
       value === 'currentTests' ? 'current' : 'project',
       clone(draft.value!.problem),
     );
-    if (file) notice.value = '已导出：' + file;
+    if (file) notice.value = msg('Exported: {0}', file);
     return;
   }
-  if (value === 'source' && !activeTab.value) throw new Error('请先新建或导入源码');
-  if (value === 'project' && !draft.value!.problem.labId) throw new Error('请先选择实验项目');
+  if (value === 'source' && !activeTab.value)
+    throw new UIError('Create or import a source file first');
+  if (value === 'project' && !draft.value!.problem.labId)
+    throw new UIError('Select an experiment first');
   await saveTail;
   exportCurrent.value = snapshot();
   exportBuffers.value = tabs.value.map((t) => ({
@@ -1902,25 +1960,24 @@ async function chooseExport(value: string) {
 }
 function exportDone(file: string) {
   exportKind.value = null;
-  notice.value = '已导出：' + file;
+  notice.value = msg('Exported: {0}', file);
 }
 function showCompilation(c: Compilation) {
   compilationFailed.value = c.status === 'CE';
   diagnostics.value = diagnosticCounts(c.stdout, c.stderr);
   diagnosticRevision.value++;
-  logs.value =
-    '编译命令\n' +
-    (c.commands ?? [c.command])
-      .map((command) => command.map((s) => (/\s/.test(s) ? JSON.stringify(s) : s)).join(' '))
-      .join('\n') +
-    '\n\n' +
-    (c.stdout ? 'stdout\n' + c.stdout + '\n' : '') +
-    (c.stderr ? 'stderr\n' + c.stderr + '\n' : '') +
-    '\n编译状态：' +
-    c.status +
-    ' · ' +
-    c.elapsedMs +
-    ' ms\n';
+  logEntries.value = [
+    msg(
+      'Compile Command\n{0}\n\n{1}{2}\nCompilation: {3} · {4} ms\n',
+      (c.commands ?? [c.command])
+        .map((command) => command.map((s) => (/\s/.test(s) ? JSON.stringify(s) : s)).join(' '))
+        .join('\n'),
+      c.stdout ? 'stdout\n' + c.stdout + '\n' : '',
+      c.stderr ? 'stderr\n' + c.stderr + '\n' : '',
+      c.status,
+      c.elapsedMs,
+    ),
+  ];
 }
 const compileDirty = computed(() =>
   workspaceMode.value
@@ -1948,7 +2005,7 @@ async function compile() {
     compiledReady.value = false;
     compilationFailed.value = false;
     bottomTab.value = 'output';
-    logs.value = '';
+    logEntries.value = [];
     diagnostics.value = { warnings: 0, errors: 0 };
     debugEpoch.value++;
     started = true;
@@ -1967,7 +2024,7 @@ async function compile() {
     compilationFailed.value = started;
     endExecution(id, started ? 'compile-failed' : 'compile-not-started');
     if (!showLpmakeDiagnostic(message(error))) {
-      logs.value = message(error);
+      logEntries.value = [errorText(error)];
       diagnostics.value = diagnosticCounts(logs.value);
       if (!diagnostics.value.errors) diagnostics.value.errors = 1;
       diagnosticRevision.value++;
@@ -1981,7 +2038,7 @@ async function compile() {
 }
 async function debug() {
   if (!compiledReady.value) {
-    notice.value = '请先保存并编译。';
+    notice.value = msg('Save and compile first.');
     return;
   }
   const id = beginExecution('terminal');
@@ -1996,7 +2053,7 @@ async function debug() {
 }
 async function run(ids?: string[]) {
   if (!compiledReady.value) {
-    notice.value = '请先保存并编译。';
+    notice.value = msg('Save and compile first.');
     return;
   }
   const chosen =
@@ -2005,7 +2062,7 @@ async function run(ids?: string[]) {
       draft.value!.problem.testCases.some((test) => test.id === id),
     );
   if (!chosen.length) {
-    notice.value = '请至少选择一个测试点';
+    notice.value = msg('Select at least one test case');
     return;
   }
   const id = beginExecution('judge');
@@ -2019,33 +2076,31 @@ async function run(ids?: string[]) {
     const result = await api.judge(snapshot(), chosen);
     if (!ownsExecution(id)) return;
     if (result.cleanupWarnings?.length)
-      logs.value += '\n[清理未完成] ' + result.cleanupWarnings.join('；');
+      logEntries.value.push(msg('\n[Cleanup Incomplete] {0}', result.cleanupWarnings.join('; ')));
     const coverage = await api.checkState(snapshot());
     if (!ownsExecution(id)) return;
     problemStates.value[draft.value!.problem.problemId] = coverage.state;
     if (result.status === 'error') {
-      error.value = result.error || '评测任务失败';
+      error.value = result.error || t('Testing Failed');
       endExecution(id, 'task-failed');
     } else endExecution(id, result.status === 'cancelled' ? 'stopped' : 'tested');
     for (const c of result.cases) results.value[c.id] = c;
-    logs.value +=
-      '\n' +
-      result.cases
-        .map(
-          (c) =>
-            '测试点 ' +
-            c.id +
-            ' · ' +
-            (c.verdict || c.status) +
-            ' · ' +
-            c.elapsedMs +
-            ' ms' +
-            (c.exitCode !== null ? ' · 退出码 ' + c.exitCode : '') +
-            (c.signal ? ' · ' + c.signal : '') +
-            (c.message ? '\n' + c.message : '') +
-            (c.stderr ? '\nstderr\n' + c.stderr : ''),
-        )
-        .join('\n\n');
+    logEntries.value.push('\n');
+    for (const [index, c] of result.cases.entries()) {
+      if (index) logEntries.value.push('\n\n');
+      logEntries.value.push(
+        msg(
+          'Test Case {0} · {1} · {2} ms{3}{4}{5}{6}',
+          c.id,
+          c.verdict || c.status,
+          c.elapsedMs,
+          c.exitCode !== null ? msg(' · exit code {0}', c.exitCode) : '',
+          c.signal ? ' · ' + c.signal : '',
+          c.message ? '\n' + c.message : '',
+          c.stderr ? '\nstderr\n' + c.stderr : '',
+        ),
+      );
+    }
   } catch (error) {
     if (!ownsExecution(id)) return;
     endExecution(id, 'task-failed');
@@ -2101,6 +2156,12 @@ async function openSettings() {
     reportOperationError(e);
   }
 }
+function previewLanguage(language: 'zh-CN' | 'en-US') {
+  if (!settings.value) return;
+  settings.value.uiLanguage = language;
+  setLanguage(language);
+  void api.previewLanguage(language).catch(reportOperationError);
+}
 async function saveSettings() {
   if (settingsSaving.value) return;
   settingsSaving.value = true;
@@ -2121,6 +2182,7 @@ async function saveSettings() {
         : undefined,
     );
     config.value = result.config;
+    setLanguage(config.value.uiLanguage ?? 'zh-CN');
     dataRoot.value = result.dataRoot;
     compilerLabel.value = result.compilerLabel;
     projects.value = result.projects;
@@ -2145,12 +2207,12 @@ async function saveSettings() {
     if (!resumingExport)
       notice.value =
         oldRoot !== dataRoot.value
-          ? '数据目录：' + dataRoot.value
+          ? t('Data folder: {0}', dataRoot.value)
           : oldCompiler !== compilerLabel.value
             ? compilerLabel.value
-            : '设置已保存';
+            : t('Settings Saved');
   } catch (e) {
-    settingsMessage.value = message(e);
+    settingsMessage.value = errorText(e);
   } finally {
     settingsSaving.value = false;
   }
@@ -2200,7 +2262,7 @@ function resized(axis: keyof LayoutConfig, event: SplitpanesResizedPayload) {
     .catch(() => {})
     .then(() => api.saveLayout(layout))
     .catch((e) => {
-      error.value = '布局未保存：' + message(e);
+      error.value = t('Layout was not saved: {0}', message(e));
     });
 }
 function handleDebugState(state: DebugState) {
@@ -2223,7 +2285,8 @@ function handleDebugState(state: DebugState) {
     };
     debugRunning.value = state.status !== 'compiling';
     bottomTab.value = 'debug';
-    if (state.status === 'stop-failed') error.value = state.message ?? '程序尚未退出，请重试停止。';
+    if (state.status === 'stop-failed')
+      error.value = state.message ?? t('The program has not exited. Try stopping it again.');
     return;
   }
   if (execution.value.kind !== 'terminal') return;
@@ -2239,7 +2302,7 @@ function handleDebugState(state: DebugState) {
   queueChecks();
   if (state.message) terminal.value?.write('\r\n[' + state.message + ']\r\n');
   if (state.status === 'error') {
-    error.value = state.message || '调试启动失败';
+    error.value = state.message || t('Failed to Start Debugging');
     bottomTab.value = 'output';
   }
 }
@@ -2339,8 +2402,10 @@ function installShortcuts() {
               void nextTick(() => fileTree.value?.newSource(config.value!.language));
               return;
             }
-            [...document.querySelectorAll<HTMLButtonElement>('.toolbar-actions button')]
-              .find((b) => b.textContent?.includes('新建源码'))
+            document
+              .querySelector<HTMLButtonElement>(
+                '.toolbar-new-source-trigger, .toolbar-more-trigger',
+              )
               ?.click();
           },
         };
@@ -2391,7 +2456,7 @@ function handleShortcut(event: KeyboardEvent) {
     event.stopPropagation();
   }
 }
-const cacheMessage = ref(''),
+const cacheMessage = ref<UIText>(''),
   clearingCache = ref(false);
 async function clearCache() {
   clearingCache.value = true;
@@ -2399,9 +2464,12 @@ async function clearCache() {
   try {
     const size = await api.clearCache();
     compiledReady.value = false;
-    cacheMessage.value = '已清理 ' + (size / 1024 ** 2).toFixed(1) + ' MB，下一次编译会重建缓存。';
+    cacheMessage.value = msg(
+      'Cleared {0} MB. The cache will be rebuilt when needed.',
+      (size / 1024 ** 2).toFixed(1),
+    );
   } catch (e) {
-    cacheMessage.value = message(e);
+    cacheMessage.value = errorText(e);
   } finally {
     clearingCache.value = false;
   }
@@ -2413,13 +2481,13 @@ watch(
       nextTick(() => {
         projectMenu.value?.closeMenus();
         if (buildReturnFocus?.isConnected) buildReturnFocus.focus();
-        else document.querySelector<HTMLButtonElement>('[aria-label="实验项目"]')?.focus();
+        else document.querySelector<HTMLButtonElement>('[data-lab-selector]')?.focus();
       });
   },
 );
 onMounted(async () => {
   if (!api) {
-    error.value = '请在 LabPad 桌面窗口中打开此页面';
+    error.value = t('Open this page in the LabPad desktop application');
     return;
   }
   disposers.push(
@@ -2437,7 +2505,7 @@ onMounted(async () => {
         setIdle(state.status === 'ended' ? 'native-ended' : 'native-failed');
     }),
     api.onNativeDiagnostic((data) => {
-      logs.value += data;
+      logEntries.value.push(data);
     }),
     api.onFiles((event) => {
       void action(() => applyFileEvent(event), false);
@@ -2450,6 +2518,7 @@ onMounted(async () => {
     }),
   );
   disposers.push(
+    api.onLanguage((language) => setLanguage(language)),
     api.onShortcuts((value) => {
       if (config.value) config.value.shortcuts = value;
       installShortcuts();
@@ -2477,10 +2546,14 @@ watch(newKind, (open, old) => {
   if (old && !open)
     nextTick(() => {
       projectMenu.value?.closeMenus();
-      document.querySelector<HTMLButtonElement>('[aria-label="实验项目"]')?.focus();
+      document.querySelector<HTMLButtonElement>('[data-lab-selector]')?.focus();
     });
 });
 watch(settingsOpen, (open, old) => {
+  if (old && !open && config.value) {
+    setLanguage(config.value.uiLanguage ?? 'zh-CN');
+    void api.previewLanguage(config.value.uiLanguage ?? 'zh-CN');
+  }
   if (old && !open) {
     compilerScanRevision++;
     compilerScanning.value = false;
@@ -2489,7 +2562,7 @@ watch(settingsOpen, (open, old) => {
   if (old && !open && exportKind.value && !settingsSaving.value)
     exportDialog.value?.cancelSettings();
   if (open && exportKind.value)
-    nextTick(() => document.querySelector<HTMLInputElement>('[aria-label="班号"]')?.focus());
+    nextTick(() => document.querySelector<HTMLInputElement>('[data-personal-class]')?.focus());
 });
 watch(notice, (value) => {
   clearTimeout(noticeTimer);
@@ -2697,12 +2770,14 @@ async function foldRight(collapsed: boolean) {
       <span class="version">v{{ version || '0.1.0-dev.9' }}</span>
     </header>
     <div v-if="error" class="alert error" role="alert">
-      <span :class="{ 'source-diagnostic': error.startsWith('LPMake.txt:') }">{{ error }}</span
-      ><button @click="error = ''">关闭</button>
+      <span :class="{ 'source-diagnostic': t(error).startsWith('LPMake.txt:') }">{{
+        t(error)
+      }}</span
+      ><button @click="error = ''">{{ t('Close') }}</button>
     </div>
     <div v-if="!ready" class="loading">
-      <h2>正在准备工作区</h2>
-      <p>加载配置、源码与本地编译器。</p>
+      <h2>{{ t('Preparing Workspace') }}</h2>
+      <p>{{ t('Loading settings, source files, and the local compiler.') }}</p>
     </div>
     <template v-if="ready && draft && config">
       <section
@@ -2712,7 +2787,7 @@ async function foldRight(collapsed: boolean) {
       >
         <div class="project-select">
           <label
-            ><span class="select-label">实验项目</span
+            ><span class="select-label">{{ t('Experiment') }}</span
             ><ProjectSelect
               ref="projectMenu"
               :suspended="!!buildSettings || settingsOpen || !!newKind"
@@ -2726,7 +2801,7 @@ async function foldRight(collapsed: boolean) {
           ><template v-if="!workspaceMode"
             ><span class="path-divider">/</span
             ><label
-              ><span class="select-label">题号</span
+              ><span class="select-label">{{ t('Problem') }}</span
               ><ProblemSelect
                 :value="draft.problem.problemId"
                 :problems="problems"
@@ -2740,8 +2815,10 @@ async function foldRight(collapsed: boolean) {
             <template v-if="workspaceMode && nativeActive"
               ><button
                 class="primary icon-action"
-                :title="nativeState.status === 'paused' ? '继续（F5）' : '暂停'"
-                :aria-label="nativeState.status === 'paused' ? '继续调试' : '暂停调试'"
+                :title="nativeState.status === 'paused' ? t('Continue (F5)') : t('Pause')"
+                :aria-label="
+                  nativeState.status === 'paused' ? t('Continue Debugging') : t('Pause Debugging')
+                "
                 :disabled="nativeStarting"
                 @click="
                   action(() =>
@@ -2752,9 +2829,9 @@ async function foldRight(collapsed: boolean) {
                 <ActionIcon :name="nativeState.status === 'paused' ? 'play' : 'pause'" /></button
               ><button
                 v-for="control in [
-                  ['next', '单步跳过', 'F10'],
-                  ['stepIn', '单步进入', 'F11'],
-                  ['stepOut', '单步跳出', 'Shift+F11'],
+                  ['next', t('Step Over'), 'F10'],
+                  ['stepIn', t('Step Into'), 'F11'],
+                  ['stepOut', t('Step Out'), 'Shift+F11'],
                 ] as const"
                 class="icon-action"
                 :aria-label="control[1]"
@@ -2765,16 +2842,16 @@ async function foldRight(collapsed: boolean) {
                 <ActionIcon :name="control[0]" /></button
               ><button
                 class="icon-action"
-                title="重启调试"
-                aria-label="重启调试"
+                :title="t('Restart Debugging')"
+                :aria-label="t('Restart Debugging')"
                 :disabled="nativeStarting"
                 @click="action(() => startNative(true))"
               >
                 <ActionIcon name="restart" /></button
               ><button
                 class="icon-action debug-stop"
-                title="停止调试"
-                aria-label="停止调试"
+                :title="t('Stop Debugging')"
+                :aria-label="t('Stop Debugging')"
                 :disabled="nativeStarting"
                 @click="action(() => api.nativeStop())"
               >
@@ -2783,18 +2860,18 @@ async function foldRight(collapsed: boolean) {
               ><button
                 class="primary"
                 :disabled="blocked || (!activeTab && !workspaceMode)"
-                :title="'编译（' + shortcutLabel('run') + '）'"
+                :title="t('Compile ({0})', shortcutLabel('run'))"
                 @click="action(compile)"
               >
-                <ActionIcon name="build" />编译</button
+                <ActionIcon name="build" />{{ t('Compile') }}</button
               ><button
                 class="stop"
-                title="停止"
-                aria-label="停止"
+                :title="t('Stop')"
+                :aria-label="t('Stop')"
                 :disabled="!busy"
                 @click="action(stop)"
               >
-                <ActionIcon name="stop" /><span class="stop-label">停止</span>
+                <ActionIcon name="stop" /><span class="stop-label">{{ t('Stop') }}</span>
               </button></template
             ><span
               class="phase"
@@ -2810,11 +2887,12 @@ async function foldRight(collapsed: boolean) {
               owner="toolbar"
               v-if="!workspaceMode"
               :theme="config.theme"
-              label="新建源码"
+              :label="t('New Source')"
+              trigger-class="toolbar-new-source-trigger"
               @close-auto-focus="keepTreeEditFocus"
               :items="[
-                { label: 'C 源码（.c）', value: 'c' },
-                { label: 'C++ 源码（.cpp）', value: 'cpp' },
+                { label: t('C Source (.c)'), value: 'c' },
+                { label: t('C++ Source (.cpp)'), value: 'cpp' },
               ]"
               :disabled="blocked"
               @select="action(() => fileAction(() => newSource($event)))"
@@ -2822,11 +2900,11 @@ async function foldRight(collapsed: boolean) {
             <ActionMenu
               owner="toolbar"
               :theme="config.theme"
-              label="导入"
+              :label="t('Import')"
               :items="[
-                { label: '导入源码', value: 'source' },
-                { label: '导入测试点', value: 'io' },
-                { label: '导入实验项目', value: 'project' },
+                { label: t('Import Source'), value: 'source' },
+                { label: t('Import Test Cases'), value: 'io' },
+                { label: t('Import Experiment'), value: 'project' },
               ]"
               :disabled="blocked"
               @select="action(() => chooseImport($event))"
@@ -2834,27 +2912,32 @@ async function foldRight(collapsed: boolean) {
             <ActionMenu
               owner="toolbar"
               :theme="config.theme"
-              label="导出"
+              :label="t('Export')"
               :items="[
-                { label: '导出源码', value: 'source' },
-                { label: '导出实验项目', value: 'project' },
-                { label: '导出当前测试点', value: 'currentTests', separator: true },
-                { label: '导出项目测试点', value: 'projectTests' },
+                { label: t('Export Source'), value: 'source' },
+                { label: t('Export Experiment'), value: 'project' },
+                { label: t('Export Current Test Cases'), value: 'currentTests', separator: true },
+                { label: t('Export Experiment Test Cases'), value: 'projectTests' },
               ]"
               :disabled="blocked"
               @select="action(() => chooseExport($event))"
             />
-            <button class="settings-button" :disabled="fileBusy" @click="openSettings">
-              ⚙ 设置
+            <button
+              class="settings-button"
+              :aria-label="t('Settings')"
+              :disabled="fileBusy"
+              @click="openSettings"
+            >
+              {{ t('⚙ Settings') }}
             </button>
           </div>
           <ActionMenu
             owner="toolbar"
             :theme="config.theme"
-            label="保存"
+            :label="t('Save')"
             :items="[
-              { label: '保存当前', value: 'current' },
-              { label: '保存全部', value: 'all' },
+              { label: t('Save Current'), value: 'current' },
+              { label: t('Save All'), value: 'all' },
             ]"
             :disabled="fileBusy || (!tabs.length && !rulesDirty)"
             @select="action(() => chooseSave($event))"
@@ -2863,7 +2946,7 @@ async function foldRight(collapsed: boolean) {
             owner="toolbar"
             v-if="compactToolbar"
             :theme="config.theme"
-            label="更多"
+            :label="t('More')"
             compact
             trigger-class="toolbar-more-trigger"
             :items="toolbarItems"
@@ -2967,16 +3050,18 @@ async function foldRight(collapsed: boolean) {
                       @cursor="reportCursor"
                     />
                     <div v-else class="editor-empty">
-                      <strong>代码在这里等你</strong>
-                      <p>新建一份源码，或导入已有文件，继续编写。</p>
+                      <strong>{{ t('Ready for Your Code') }}</strong>
+                      <p>
+                        {{ t('Create a source file or import an existing one to get started.') }}
+                      </p>
                       <div class="empty-editor-actions">
                         <ActionMenu
                           :theme="config.theme"
-                          label="新建源码"
+                          :label="t('New Source')"
                           @close-auto-focus="keepTreeEditFocus"
                           :items="[
-                            { label: 'C 源码（.c）', value: 'c' },
-                            { label: 'C++ 源码（.cpp）', value: 'cpp' },
+                            { label: t('C Source (.c)'), value: 'c' },
+                            { label: t('C++ Source (.cpp)'), value: 'cpp' },
                           ]"
                           :disabled="blocked"
                           @select="
@@ -2987,7 +3072,7 @@ async function foldRight(collapsed: boolean) {
                             )
                           "
                         /><button :disabled="blocked" @click="action(recentSource)">
-                          最近源码
+                          {{ t('Recent Sources') }}
                         </button>
                       </div>
                     </div>
@@ -2995,18 +3080,19 @@ async function foldRight(collapsed: boolean) {
                       <span
                         v-if="inactiveSource"
                         class="build-excluded"
-                        title="检查 LPMake 的 add_files 与 remove_files"
-                        >当前源码未参与构建</span
+                        :title="t('Check add_files and remove_files in LPMake')"
+                        >{{ t('This File Is Not Included in the Build') }}</span
                       ><span
                         v-else-if="workspaceMode && membershipMessage"
                         class="build-excluded"
                         :title="membershipMessage"
-                        >请检查 LPMake</span
+                        >{{ t('Check LPMake') }}</span
                       ><span v-else
-                        >{{ draft.language === 'c' ? 'C' : 'C++' }} · 空格：{{
-                          config.indentSize
-                        }}</span
-                      ><span>{{ config.saveMode === 'auto' ? '自动保存' : '手动保存' }}</span>
+                        >{{ draft.language === 'c' ? 'C' : 'C++' }}{{ t('· Spaces:')
+                        }}{{ config.indentSize }}</span
+                      ><span>{{
+                        config.saveMode === 'auto' ? t('Auto Save') : t('Manual Save')
+                      }}</span>
                     </div>
                   </div>
                 </div></Pane
@@ -3022,13 +3108,18 @@ async function foldRight(collapsed: boolean) {
                 ><div ref="rightHeader" class="pane-heading cases-heading">
                   <button
                     class="icon-action right-collapse"
-                    title="收起右区"
-                    aria-label="收起右区"
+                    :title="t('Collapse Right Panel')"
+                    :aria-label="t('Collapse Right Panel')"
                     @click="foldRight(true)"
                   >
                     <ActionIcon name="chevronRight" />
                   </button>
-                  <div v-show="showRightTabs" class="right-tabs" role="tablist" aria-label="右区">
+                  <div
+                    v-show="showRightTabs"
+                    class="right-tabs"
+                    role="tablist"
+                    :aria-label="t('Right Panel')"
+                  >
                     <button
                       v-show="showBothRightTabs || rightTab === 'tests'"
                       role="tab"
@@ -3036,7 +3127,7 @@ async function foldRight(collapsed: boolean) {
                       :class="{ active: rightTab === 'tests' }"
                       @click="rightTab = 'tests'"
                     >
-                      测试点</button
+                      {{ t('Test Cases') }}</button
                     ><button
                       v-if="workspaceMode"
                       v-show="showBothRightTabs || rightTab === 'debug'"
@@ -3045,7 +3136,7 @@ async function foldRight(collapsed: boolean) {
                       :class="{ active: rightTab === 'debug' }"
                       @click="rightTab = 'debug'"
                     >
-                      调试<i v-if="nativeActive" class="live-dot"></i>
+                      {{ t('Debug') }}<i v-if="nativeActive" class="live-dot"></i>
                     </button>
                   </div>
                   <template v-if="rightTab === 'tests'"
@@ -3062,7 +3153,7 @@ async function foldRight(collapsed: boolean) {
                             ? 'mixed'
                             : 'false'
                       "
-                      aria-label="选择全部测试点"
+                      :aria-label="t('Select All Test Cases')"
                       :disabled="!!busy"
                       @click="toggleAllTests"
                     >
@@ -3081,7 +3172,7 @@ async function foldRight(collapsed: boolean) {
                     ><button
                       class="run-test-icon primary icon-action"
                       :disabled="blocked || !compiledReady || !selectedCases.length"
-                      :title="compiledReady ? runHint : '请先保存并编译'"
+                      :title="compiledReady ? runHint : t('Save and compile first')"
                       :aria-label="runHint"
                       @click="action(() => run())"
                     >
@@ -3093,16 +3184,18 @@ async function foldRight(collapsed: boolean) {
                         class="case-extra-actions"
                         ><button
                           :disabled="blocked"
-                          title="比较规则与时限保存在此 JSON 中"
+                          :title="t('Comparison rules and time limits are saved in this JSON file')"
                           @click="action(() => api.showProblemFile(snapshot()))"
                         >
-                          题目文件</button
+                          {{ t('Problem File') }}</button
                         ><button :disabled="blocked" @click="action(() => fileAction(reload))">
-                          重新加载</button
-                        ><button :disabled="blocked" @click="addCase">＋ 新增</button></span
+                          {{ t('Reload') }}</button
+                        ><button :disabled="blocked" @click="addCase">
+                          {{ t('+ Add') }}
+                        </button></span
                       ><ActionMenu
                         :theme="config.theme"
-                        label="更多"
+                        :label="t('More')"
                         :compact="!fullHeader"
                         :items="testHeaderItems"
                         @select="(value) => action(() => testHeaderAction(value))"
@@ -3111,8 +3204,8 @@ async function foldRight(collapsed: boolean) {
                     ><div class="debug-header-actions">
                       <button
                         class="run-test-icon primary icon-action"
-                        aria-label="开始调试"
-                        :title="'开始调试（' + shortcutLabel('debugStart') + '）'"
+                        :aria-label="t('Start Debugging')"
+                        :title="t('Start Debugging ({0})', shortcutLabel('debugStart'))"
                         :disabled="blocked || nativeActive"
                         @click="action(() => startNative())"
                       >
@@ -3122,12 +3215,12 @@ async function foldRight(collapsed: boolean) {
                         :disabled="blocked || nativeActive"
                         @click="action(openBuildSettings)"
                       >
-                        构建设置…
+                        {{ t('Build Settings…') }}
                       </button>
                       <ActionMenu
                         :theme="config.theme"
                         v-if="debugHeaderItems.length"
-                        label="更多调试操作"
+                        :label="t('More Debug Actions')"
                         :compact="!fullHeader"
                         :items="debugHeaderItems"
                         @select="
@@ -3159,12 +3252,15 @@ async function foldRight(collapsed: boolean) {
                 />
                 <div v-show="rightTab === 'tests'" class="cases-list">
                   <div v-if="!draft.problem.testCases.length" class="empty-state">
-                    <h3>直接运行，或添加测试点</h3>
+                    <h3>{{ t('Run Your Program or Add Test Cases') }}</h3>
                     <p>
-                      没有测试点时，编译成功后进入下方终端。<br />需要比较输出时，导入测试点
-                      或新增测试点。
+                      {{
+                        t(
+                          'With no test cases, a successful compilation starts the program in the terminal.',
+                        )
+                      }}<br />{{ t('Import or add test cases to compare the output.') }}
                     </p>
-                    <button :disabled="blocked" @click="addCase">＋ 新增测试点</button>
+                    <button :disabled="blocked" @click="addCase">{{ t('+ Add Test Case') }}</button>
                   </div>
                   <article
                     v-for="(test, index) in draft.problem.testCases"
@@ -3182,27 +3278,27 @@ async function foldRight(collapsed: boolean) {
                           v-model="selectedCases"
                           type="checkbox"
                           :value="test.id"
-                          :aria-label="'选择测试点 ' + test.id"
+                          :aria-label="t('Select Test Case {0}', test.id)"
                           :disabled="blocked"
                         /><span class="case-number">{{ index + 1 }}</span
-                        >测试点 {{ test.id }}</strong
+                        >{{ t('Test Cases') }}{{ test.id }}</strong
                       >
                       <div>
                         <button
                           :disabled="blocked || !compiledReady"
-                          :aria-label="'运行测试点 ' + test.id"
+                          :aria-label="t('Run Test Case {0}', test.id)"
                           @click="action(() => run([test.id]))"
                         >
                           <ActionIcon name="play" :size="13" /></button
                         ><span class="verdict" :class="results[test.id]?.verdict?.toLowerCase()">{{
                           results[test.id]?.verdict ||
                           (results[test.id]?.status === 'cancelled'
-                            ? '已停止'
+                            ? t('Stopped')
                             : finished
-                              ? '未运行'
+                              ? t('Not Run')
                               : busy === 'judge'
-                                ? '等待中'
-                                : '未运行')
+                                ? t('Pending')
+                                : t('Not Run'))
                         }}</span
                         ><ResultHelp v-if="results[test.id]?.verdict" :theme="config.theme" /><span
                           v-if="results[test.id]"
@@ -3211,7 +3307,7 @@ async function foldRight(collapsed: boolean) {
                         ><button
                           class="delete"
                           :disabled="blocked"
-                          aria-label="删除测试点"
+                          :aria-label="t('Delete Test Case')"
                           @click="draft.problem.testCases.splice(index, 1)"
                         >
                           ×
@@ -3220,32 +3316,32 @@ async function foldRight(collapsed: boolean) {
                     </div>
                     <div class="io-pair">
                       <label
-                        >标准输入 <span>stdin</span
+                        >{{ t('Input') }}<span>stdin</span
                         ><textarea
                           v-model="test.input"
                           :disabled="blocked"
-                          :aria-label="'标准输入 ' + test.id"
-                          placeholder="允许空输入"
+                          :aria-label="t('Input {0}', test.id)"
+                          :placeholder="t('Empty input is allowed')"
                           spellcheck="false"
                         ></textarea></label
                       ><label
-                        >预期输出 <span>expected</span
+                        >{{ t('Expected Output') }}<span>expected</span
                         ><textarea
                           v-model="test.expectedOutput"
                           :disabled="blocked"
-                          :aria-label="'预期输出 ' + test.id"
-                          placeholder="填写完整标准输出"
+                          :aria-label="t('Expected Output {0}', test.id)"
+                          :placeholder="t('Enter the complete expected output')"
                           spellcheck="false"
                         ></textarea>
                       </label>
                     </div>
                     <div class="actual-heading">
-                      <span>实际输出</span
+                      <span>{{ t('Actual Output') }}</span
                       ><button
                         v-if="results[test.id]"
                         @click="diffOpen[test.id] = !diffOpen[test.id]"
                       >
-                        {{ diffOpen[test.id] ? '查看原文' : '查看 Diff' }}
+                        {{ diffOpen[test.id] ? t('Show Original') : t('Show Diff') }}
                       </button>
                     </div>
                     <OutputDiff
@@ -3254,7 +3350,9 @@ async function foldRight(collapsed: boolean) {
                       :actual="results[test.id].stdout"
                     />
                     <pre v-else class="actual-output">{{
-                      results[test.id] ? results[test.id].stdout || '（空输出）' : '（尚无输出）'
+                      results[test.id]
+                        ? results[test.id].stdout || t('(empty output)')
+                        : t('(no output yet)')
                     }}</pre>
                     <pre v-if="results[test.id]?.message" class="checker-message">{{
                       results[test.id].message
@@ -3263,18 +3361,22 @@ async function foldRight(collapsed: boolean) {
                 </div>
               </Pane>
             </Splitpanes>
-            <aside v-if="rightCollapsed" class="right-rail" aria-label="已收起的右区">
+            <aside
+              v-if="rightCollapsed"
+              class="right-rail"
+              :aria-label="t('Collapsed Right Panel')"
+            >
               <button
                 class="icon-action"
-                aria-label="展开右区"
-                title="展开右区"
+                :aria-label="t('Expand Right Panel')"
+                :title="t('Expand Right Panel')"
                 @click="foldRight(false)"
               >
                 <ActionIcon name="chevronLeft" /></button
               ><template v-if="rightTab === 'tests'"
                 ><button
                   class="run-test-icon primary icon-action"
-                  :title="compiledReady ? runHint : '请先保存并编译'"
+                  :title="compiledReady ? runHint : t('Save and compile first')"
                   :aria-label="runHint"
                   :disabled="blocked || !compiledReady || !selectedCases.length"
                   @click="action(() => run())"
@@ -3287,10 +3389,10 @@ async function foldRight(collapsed: boolean) {
                 <i v-if="nativeActive" class="live-dot"></i
                 >{{
                   nativeState.status === 'paused'
-                    ? '调试已暂停'
+                    ? t('Debugging Paused')
                     : nativeActive
-                      ? '调试运行中'
-                      : '调试未运行'
+                      ? t('Debugging')
+                      : t('Not Debugging')
                 }}
               </button>
             </aside>
@@ -3300,9 +3402,9 @@ async function foldRight(collapsed: boolean) {
             <div class="bottom-heading">
               <div class="bottom-tabs">
                 <button :class="{ active: bottomTab === 'output' }" @click="bottomTab = 'output'">
-                  输出</button
+                  {{ t('Output') }}</button
                 ><button :class="{ active: bottomTab === 'debug' }" @click="bottomTab = 'debug'">
-                  终端 <i v-if="debugRunning" class="live-dot"></i>
+                  {{ t('Terminal') }}<i v-if="debugRunning" class="live-dot"></i>
                 </button>
               </div>
               <DiagnosticCounts
@@ -3312,21 +3414,25 @@ async function foldRight(collapsed: boolean) {
               />
               <div v-show="bottomTab === 'debug'" class="small-actions">
                 <button :disabled="blocked || !compiledReady" @click="action(debug)">
-                  运行程序</button
-                ><button :disabled="!debugRunning" @click="terminal?.eof()">发送 EOF</button
-                ><button :disabled="!busy" @click="action(stop)">■ 停止程序</button
-                ><button @click="terminal?.clear()">清空显示</button>
+                  {{ t('Run Program') }}</button
+                ><button :disabled="!debugRunning" @click="terminal?.eof()">
+                  {{ t('Send EOF') }}</button
+                ><button :disabled="!busy" @click="action(stop)">{{ t('■ Stop Program') }}</button
+                ><button @click="terminal?.clear()">{{ t('Clear Output') }}</button>
               </div>
               <div v-show="bottomTab === 'output'" class="small-actions">
                 <ResultHelp v-if="compilationFailed" :theme="config.theme" /><button
-                  @click="logs = ''"
+                  @click="logEntries = []"
                 >
-                  清空显示
+                  {{ t('Clear Output') }}
                 </button>
               </div>
             </div>
             <pre v-show="bottomTab === 'output'" class="output-log" data-testid="output">{{
-              logs || '点击“编译”。有测试点时再选择“运行全部测试点”；没有测试点时自动进入终端。'
+              logs ||
+              t(
+                'Click Compile, then run the test cases. With no test cases, the program starts in the terminal.',
+              )
             }}</pre>
             <div v-show="bottomTab === 'debug'" class="terminal-wrapper">
               <DebugTerminal
@@ -3345,14 +3451,16 @@ async function foldRight(collapsed: boolean) {
             </div></section></Pane
       ></Splitpanes>
       <footer class="statusbar">
-        <div class="status-hint" role="status" :title="footerHint">
+        <div class="status-hint" role="status" :title="t(footerHint)">
           <Transition name="status-slide" mode="out-in"
-            ><span :key="footerHint">{{ footerHint }}</span></Transition
+            ><span :key="t(footerHint)">{{ t(footerHint) }}</span></Transition
           >
         </div>
-        <span class="cursor-position" aria-label="光标位置"
-          >行 {{ cursor.line }} · 列 {{ cursor.column
-          }}<span v-if="cursor.selectionChars"> · 已选 {{ cursor.selectionChars }}</span></span
+        <span class="cursor-position" :aria-label="t('Cursor Position')"
+          >{{ t('Ln') }}{{ cursor.line }}{{ t('· Col') }}{{ cursor.column
+          }}<span v-if="cursor.selectionChars"
+            >{{ t('· Selected') }}{{ cursor.selectionChars }}</span
+          ></span
         >
       </footer>
     </template>
@@ -3375,11 +3483,13 @@ async function foldRight(collapsed: boolean) {
             <div class="settings-title">
               <div>
                 <span class="eyebrow">PREFERENCES</span
-                ><DialogTitle as-child><h2 id="settings-title">设置</h2></DialogTitle>
+                ><DialogTitle as-child
+                  ><h2 id="settings-title">{{ t('Settings') }}</h2></DialogTitle
+                >
               </div>
               <button
                 class="close-button"
-                aria-label="关闭设置"
+                :aria-label="t('Close Settings')"
                 :disabled="settingsSaving"
                 @click="settingsOpen = false"
               >
@@ -3387,57 +3497,87 @@ async function foldRight(collapsed: boolean) {
               </button>
             </div>
             <div v-if="settingsMessage" class="settings-message" role="alert">
-              {{ settingsMessage }}
+              {{ t(settingsMessage) }}
             </div>
             <fieldset class="settings-scroll" :disabled="settingsSaving">
               <section>
-                <h3>个人信息</h3>
-                <p>填写学号后，导出的文件名会自动加上学号。留空也可以导出。</p>
+                <h3>{{ t('Personal Information') }}</h3>
+                <p>
+                  {{
+                    t(
+                      'Your student ID is added to exported filenames. You can also export without it.',
+                    )
+                  }}
+                </p>
                 <div class="field-grid">
                   <label
-                    >班号<input
+                    >{{ t('Class')
+                    }}<input
                       v-model="settings.classId"
-                      aria-label="班号"
-                      placeholder="例如 9527" /></label
+                      :aria-label="t('Class')"
+                      data-personal-class
+                      :placeholder="t('e.g. 9527')" /></label
                   ><label
-                    >姓名<input
+                    >{{ t('Name')
+                    }}<input
                       v-model="settings.name"
-                      aria-label="姓名"
-                      placeholder="例如 马冬梅" /></label
+                      :aria-label="t('Name')"
+                      :placeholder="t('e.g. Alex Chen')" /></label
                   ><label
-                    >学号<input
+                    >{{ t('Student ID')
+                    }}<input
                       v-model="settings.studentId"
-                      aria-label="学号"
-                      placeholder="例如 7355608"
+                      :aria-label="t('Student ID')"
+                      :placeholder="t('e.g. 7355608')"
                   /></label>
                 </div>
               </section>
               <section>
-                <h3>编辑与保存</h3>
+                <h3>{{ t('Editing and Saving') }}</h3>
+                <label
+                  >{{ t('Interface Language') }}
+                  <select
+                    :value="settings.uiLanguage ?? 'zh-CN'"
+                    :aria-label="t('Interface Language')"
+                    @change="
+                      previewLanguage(
+                        ($event.target as HTMLSelectElement).value as 'zh-CN' | 'en-US',
+                      )
+                    "
+                  >
+                    <option value="zh-CN">{{ t('Simplified Chinese') }}</option>
+                    <option value="en-US">{{ t('English') }}</option>
+                  </select>
+                </label>
+
                 <div class="field-grid two">
                   <label
-                    >保存方式<select v-model="settings.saveMode" aria-label="保存方式">
-                      <option value="manual">手动保存（默认）</option>
-                      <option value="auto">自动保存</option>
+                    >{{ t('Save Mode')
+                    }}<select v-model="settings.saveMode" :aria-label="t('Save Mode')">
+                      <option value="manual">{{ t('Manual Save (default)') }}</option>
+                      <option value="auto">{{ t('Auto Save') }}</option>
                     </select></label
                   ><label
-                    >源码语言<select v-model="settings.language" aria-label="源码语言">
+                    >{{ t('Source Language')
+                    }}<select v-model="settings.language" :aria-label="t('Source Language')">
                       <option value="c">C（.c）</option>
                       <option value="cpp">C++（.cpp）</option>
                     </select></label
                   ><label
-                    >Tab / 缩进空格数<select
+                    >{{ t('Tab / Indent Size')
+                    }}<select
                       v-model.number="settings.indentSize"
-                      aria-label="Tab / 缩进空格数"
+                      :aria-label="t('Tab / Indent Size')"
                     >
-                      <option :value="1">1 个空格</option>
-                      <option :value="2">2 个空格</option>
-                      <option :value="4">4 个空格（默认）</option>
+                      <option :value="1">{{ t('1 space') }}</option>
+                      <option :value="2">{{ t('2 spaces') }}</option>
+                      <option :value="4">{{ t('4 spaces (default)') }}</option>
                     </select></label
                   ><label
-                    >主题<select v-model="settings.theme" aria-label="主题">
-                      <option value="dark">暗色 · VS Code</option>
-                      <option value="light">亮色 · VS Code</option>
+                    >{{ t('Theme')
+                    }}<select v-model="settings.theme" :aria-label="t('Theme')">
+                      <option value="dark">{{ t('Dark · VS Code') }}</option>
+                      <option value="light">{{ t('Light · VS Code') }}</option>
                     </select></label
                   >
                 </div>
@@ -3445,61 +3585,83 @@ async function foldRight(collapsed: boolean) {
                   ><input
                     v-model="settings.formatOnSave"
                     type="checkbox"
-                    aria-label="保存时自动格式化"
-                  />保存时自动格式化（clang-format）</label
+                    :aria-label="t('Format on Save')"
+                  />{{ t('Format on Save (clang-format)') }}</label
                 ><label class="checkbox-field"
-                  ><input v-model="settings.completionEnabled" type="checkbox" />基础代码补全</label
+                  ><input v-model="settings.completionEnabled" type="checkbox" />{{
+                    t('Basic Code Completion')
+                  }}</label
                 >
                 <div class="field-grid two">
                   <label
-                    >界面缩放<ZoomSelect
-                      v-model="settings.zoomFactor"
-                      :theme="settings.theme" /></label
+                    >{{ t('Interface Zoom')
+                    }}<ZoomSelect v-model="settings.zoomFactor" :theme="settings.theme" /></label
                   ><label
-                    >快捷键<button
-                      aria-label="设置快捷键…"
+                    >{{ t('Keyboard Shortcuts')
+                    }}<button
+                      :aria-label="t('Configure Shortcuts…')"
                       @click="action(() => api.openShortcuts())"
                     >
-                      设置快捷键…
+                      {{ t('Configure Shortcuts…') }}
                     </button></label
                   >
                 </div>
-                <p>导入的源码保存在数据目录；保存更新当前副本。</p>
+                <p>
+                  {{
+                    t(
+                      'Imported source files are kept in the data folder. Saving updates the current copy.',
+                    )
+                  }}
+                </p>
                 <TypographySettings
                   v-model="settingsTypography"
                   @valid="typographyValid = $event"
                 />
               </section>
               <section>
-                <h3>数据位置</h3>
+                <h3>{{ t('Data Location') }}</h3>
                 <PathField
                   v-model="settingsRoot"
-                  label="数据保存位置"
+                  :label="t('Data Folder')"
                   kind="directory"
                   @valid="pathValidity.data = $event"
                 />
-                <p>请选择已存在的文件夹。更换位置时复制现有资料，原目录保留。</p>
+                <p>
+                  {{
+                    t(
+                      'Choose an existing folder. Changing the location copies your data and keeps the original folder.',
+                    )
+                  }}
+                </p>
               </section>
               <section>
                 <div class="settings-section-heading">
-                  <h3>编译器</h3>
+                  <h3>{{ t('Compiler') }}</h3>
                   <button
                     v-if="settings.compiler.mode === 'custom'"
                     :disabled="compilerScanning || !!busy"
                     @click="action(detectInstalledCompilers)"
                   >
-                    {{ compilerScanning ? '正在检测…' : '自动检测' }}
+                    {{ compilerScanning ? t('Detecting…') : t('Detect') }}
                   </button>
                 </div>
-                <p>内置 Zig 启动时静默预热，自动使用可用核心；缓存超过 2 GB 时自动回收。</p>
+                <p>
+                  {{
+                    t(
+                      'Built-in Zig warms up in the background and uses available CPU cores. Its cache is limited to 2 GB.',
+                    )
+                  }}
+                </p>
                 <div class="field-grid">
                   <label
-                    >使用方式<select v-model="settings.compiler.mode" aria-label="编译器使用方式">
-                      <option value="builtin">内置 Zig</option>
-                      <option value="custom">自定义编译器</option>
+                    >{{ t('Mode')
+                    }}<select v-model="settings.compiler.mode" :aria-label="t('Compiler Mode')">
+                      <option value="builtin">{{ t('Built-in Zig') }}</option>
+                      <option value="custom">{{ t('Custom Compiler') }}</option>
                     </select></label
                   ><label v-if="settings.compiler.mode === 'custom'"
-                    >编译器类型<select v-model="settings.compiler.kind" aria-label="编译器类型">
+                    >{{ t('Compiler Type')
+                    }}<select v-model="settings.compiler.kind" :aria-label="t('Compiler Type')">
                       <option value="zig">Zig</option>
                       <option value="gcc">GCC</option>
                       <option value="clang">Clang</option>
@@ -3509,12 +3671,12 @@ async function foldRight(collapsed: boolean) {
                 <div v-if="settings.compiler.mode === 'custom'" class="compiler-paths">
                   <PathField
                     v-model="settings.compiler.cPath"
-                    label="C 编译器路径"
+                    :label="t('C Compiler Path')"
                     kind="executable"
                     @valid="pathValidity.c = $event"
                   /><PathField
                     v-model="settings.compiler.cppPath"
-                    label="C++ 编译器路径"
+                    :label="t('C++ Compiler Path')"
                     kind="executable"
                     :allow-empty="settings.compiler.kind === 'zig' || settings.language === 'c'"
                     @valid="pathValidity.cpp = $event"
@@ -3522,8 +3684,8 @@ async function foldRight(collapsed: boolean) {
                 </div>
                 <div class="cache-controls">
                   <button :disabled="!!busy || clearingCache" @click="clearCache">
-                    {{ clearingCache ? '正在清理…' : '清理编译缓存' }}</button
-                  ><span role="status">{{ cacheMessage }}</span>
+                    {{ clearingCache ? t('Cleaning…') : t('Clear Compiler Cache') }}</button
+                  ><span role="status">{{ t(cacheMessage) }}</span>
                 </div>
               </section>
               <section>
@@ -3532,7 +3694,7 @@ async function foldRight(collapsed: boolean) {
                   :open="parameterExpanded"
                   @toggle="parameterExpanded = ($event.target as HTMLDetailsElement).open"
                 >
-                  <summary>高级编译参数</summary>
+                  <summary>{{ t('Advanced Compiler Arguments') }}</summary>
                   <ParameterSettings
                     :lab="parameterLab"
                     :workspace="parameterWorkspace"
@@ -3545,10 +3707,11 @@ async function foldRight(collapsed: boolean) {
                 </details>
               </section>
               <section>
-                <h3>终端</h3>
+                <h3>{{ t('Terminal') }}</h3>
                 <div class="field-grid two">
                   <label
-                    >程序时限（毫秒，留空则手动停止）<input
+                    >{{ t('Program Time Limit (ms; leave blank to stop manually)')
+                    }}<input
                       :value="settings.debugTimeLimitMs ?? ''"
                       @input="
                         settings.debugTimeLimitMs =
@@ -3559,13 +3722,15 @@ async function foldRight(collapsed: boolean) {
                       type="number"
                       min="1" /></label
                   ><label
-                    >终端显示缓冲（行）<input
+                    >{{ t('Terminal Scrollback (lines)')
+                    }}<input
                       v-model.number="settings.terminalBufferLines"
                       type="number"
                       min="100"
                       max="100000" /></label
                   ><label
-                    >输入历史上限（字节）<input
+                    >{{ t('Input History Limit (bytes)')
+                    }}<input
                       v-model.number="settings.terminalHistoryBytes"
                       type="number"
                       min="1024"
@@ -3577,13 +3742,14 @@ async function foldRight(collapsed: boolean) {
             </fieldset>
             <div class="settings-footer">
               <DialogActions
-                ><button :disabled="settingsSaving" @click="settingsOpen = false">取消</button
+                ><button :disabled="settingsSaving" @click="settingsOpen = false">
+                  {{ t('Cancel') }}</button
                 ><button
                   class="primary"
                   :disabled="!!busy || settingsSaving || !validSettingsPaths"
                   @click="saveSettings"
                 >
-                  {{ settingsSaving ? '保存中…' : '保存设置' }}
+                  {{ settingsSaving ? t('Saving…') : t('Save Settings') }}
                 </button></DialogActions
               >
             </div>
@@ -3603,14 +3769,15 @@ async function foldRight(collapsed: boolean) {
             aria-labelledby="compiler-picker-title"
             @keydown.esc.stop.prevent="compilerChoiceOpen = false"
           >
-            <h2 id="compiler-picker-title">自动检测编译器</h2>
+            <h2 id="compiler-picker-title">{{ t('Detect Compilers') }}</h2>
             <template v-if="detectedCompilers.length"
-              ><p>选择后填写类型和路径，保存设置后生效。</p>
+              ><p>
+                {{ t('Choose a compiler to fill in its type and paths, then save the settings.') }}
+              </p>
               <label class="checkbox-field"
-                ><input
-                  v-model="useRecommended"
-                  type="checkbox"
-                />同时使用推荐参数（更新全局配置）</label
+                ><input v-model="useRecommended" type="checkbox" />{{
+                  t('Also use recommended arguments (updates global defaults)')
+                }}</label
               >
               <div class="compiler-options">
                 <label
@@ -3626,7 +3793,9 @@ async function foldRight(collapsed: boolean) {
                   /><span
                     ><strong
                       >{{ candidate.name
-                      }}<small v-if="!candidate.compiler.cppPath"> · 仅 C</small></strong
+                      }}<small v-if="!candidate.compiler.cppPath">{{
+                        t('· C only')
+                      }}</small></strong
                     ><span>{{ candidate.version }}</span
                     ><code>{{ candidate.compiler.cPath }}</code
                     ><small v-if="candidate.target">{{ candidate.target }}</small></span
@@ -3634,17 +3803,19 @@ async function foldRight(collapsed: boolean) {
                 >
               </div></template
             >
-            <p v-else class="compiler-not-found">LabPad在常用路径未找到可支持的编译器</p>
+            <p v-else class="compiler-not-found">
+              {{ t('LabPad found no supported compiler in common installation locations.') }}
+            </p>
             <DialogActions class="compiler-picker-actions"
               ><button @click="compilerChoiceOpen = false">
-                {{ detectedCompilers.length ? '取消' : '关闭' }}</button
+                {{ detectedCompilers.length ? t('Cancel') : t('Close') }}</button
               ><button
                 v-if="detectedCompilers.length"
                 class="primary"
                 :disabled="!selectedCompiler"
                 @click="useDetectedCompiler"
               >
-                使用此编译器
+                {{ t('Use This Compiler') }}
               </button></DialogActions
             >
           </section></DialogContent
@@ -3663,29 +3834,30 @@ async function foldRight(collapsed: boolean) {
           >
             <DialogTitle as-child
               ><h2 id="create-title">
-                {{ newKind === 'lab' ? '新建项目' : '新建题号' }}
+                {{ newKind === 'lab' ? t('New Experiment') : t('New Problem') }}
               </h2></DialogTitle
             ><label v-if="newKind === 'lab'"
-              >项目类型<select v-model="newMode" aria-label="项目类型">
-                <option value="problem-set">题集 · 单文件练习</option>
-                <option value="project">项目 · 一个程序</option>
+              >{{ t('Experiment Type')
+              }}<select v-model="newMode" :aria-label="t('Experiment Type')">
+                <option value="problem-set">{{ t('Problem Set · Single-File Exercises') }}</option>
+                <option value="project">{{ t('Project · One Program') }}</option>
               </select></label
             ><label
-              >{{ newKind === 'lab' ? '项目名称' : '题号'
+              >{{ newKind === 'lab' ? t('Experiment Name') : t('Problem')
               }}<input
                 ref="newNameInput"
                 v-model="newName"
-                :aria-label="newKind === 'lab' ? '项目名称' : '新题号'"
-                :placeholder="newKind === 'lab' ? '例如 实验2' : '例如 Lab 2-1'"
+                :aria-label="newKind === 'lab' ? t('Experiment Name') : t('New Problem ID')"
+                :placeholder="newKind === 'lab' ? t('e.g. Experiment 2') : t('e.g. Lab 2-1')"
                 :disabled="newSaving"
                 @keydown.enter="createItem"
                 autofocus
             /></label>
             <p v-if="newMessage" class="field-error" role="alert">{{ newMessage }}</p>
             <DialogActions class="create-actions"
-              ><button :disabled="newSaving" @click="newKind = null">取消</button
+              ><button :disabled="newSaving" @click="newKind = null">{{ t('Cancel') }}</button
               ><button class="primary" :disabled="newSaving || !newName.trim()" @click="createItem">
-                新建
+                {{ t('Create') }}
               </button></DialogActions
             >
           </section></DialogContent
@@ -3722,20 +3894,29 @@ async function foldRight(collapsed: boolean) {
       ><div v-if="conditionDialog" class="modal-backdrop">
         <DialogContent as-child
           ><section class="create-dialog" role="dialog" aria-labelledby="condition-title">
-            <DialogTitle as-child><h2 id="condition-title">条件断点</h2></DialogTitle>
+            <DialogTitle as-child
+              ><h2 id="condition-title">{{ t('Conditional Breakpoint') }}</h2></DialogTitle
+            >
             <p>{{ conditionDialog.path }}:{{ conditionDialog.line }}</p>
             <label
-              >条件表达式<input
+              >{{ t('Condition')
+              }}<input
                 v-model="conditionDialog.value"
-                aria-label="断点条件"
-                placeholder="例如 i == 10"
+                :aria-label="t('Breakpoint Condition')"
+                :placeholder="t('e.g. i == 10')"
                 maxlength="1024"
                 @keydown.enter.prevent="applyCondition"
             /></label>
-            <p>条件成立时暂停；留空改为普通断点。</p>
+            <p>
+              {{
+                t('Pause when the condition is true. Leave it blank for an ordinary breakpoint.')
+              }}
+            </p>
             <DialogActions class="create-actions"
-              ><button @click="conditionDialog = undefined">取消</button
-              ><button class="primary" @click="applyCondition">应用</button></DialogActions
+              ><button @click="conditionDialog = undefined">{{ t('Cancel') }}</button
+              ><button class="primary" @click="applyCondition">
+                {{ t('Apply') }}
+              </button></DialogActions
             >
           </section></DialogContent
         >

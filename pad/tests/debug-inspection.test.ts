@@ -1,3 +1,4 @@
+import type { UIError } from '../shared/i18n';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NativeDebugger } from '../core/debug/session';
@@ -39,17 +40,32 @@ test('variables and watch replies are bound to a unique session and selected-fra
   delayed = pending;
   command = 'variables';
   const variables = session.variables(1, 0, old);
-  const rejected = assert.rejects(variables, /Debug context has changed/);
+  const rejected = assert.rejects(
+    variables,
+    (error: UIError) =>
+      error.localization?.key ===
+      'Debug context has changed. Refresh variables in the current paused frame.',
+  );
   await session.selectFrame(2);
   pending.resolve({ variables: [{ name: 'OLD', value: 'stale' }] });
   await rejected;
   assert.equal(session.state.variables[0].name, 'CURRENT_2');
-  await assert.rejects(session.variables(1, 0, old), /Debug context has changed/);
+  await assert.rejects(
+    session.variables(1, 0, old),
+    (error: UIError) =>
+      error.localization?.key ===
+      'Debug context has changed. Refresh variables in the current paused frame.',
+  );
   const watchPending = deferred<any>();
   delayed = watchPending;
   command = 'evaluate';
   const watch = session.evaluate('value', session.state.inspectionId);
-  const watchRejected = assert.rejects(watch, /Debug context has changed/);
+  const watchRejected = assert.rejects(
+    watch,
+    (error: UIError) =>
+      error.localization?.key ===
+      'Debug context has changed. Refresh variables in the current paused frame.',
+  );
   await session.selectFrame(1);
   assert.notEqual(session.state.inspectionId, old);
   watchPending.resolve({ result: 'OLD', variablesReference: 0 });
@@ -61,7 +77,9 @@ test('variables and watch replies are bound to a unique session and selected-fra
   assert.notEqual(other.state.inspectionId, session.state.inspectionId);
   await assert.rejects(
     other.variables(1, 0, session.state.inspectionId),
-    /Debug context has changed/,
+    (error: UIError) =>
+      error.localization?.key ===
+      'Debug context has changed. Refresh variables in the current paused frame.',
   );
 });
 test('a delayed stack trace from an earlier pause cannot replace the latest frames', async () => {

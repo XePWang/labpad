@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t, uiLanguage, errorText, type UIText } from '../i18n';
+
 import DialogActions from './DialogActions';
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { DialogRoot, DialogContent, DialogTitle } from 'reka-ui';
@@ -14,7 +16,7 @@ const props = defineProps<{
     preview: (source: string) => Promise<BuildPreview>;
   }>(),
   emit = defineEmits<{ apply: [text: string, revision: number]; close: [] }>();
-const error = ref(''),
+const error = ref<UIText>(''),
   original = props.source,
   version = props.revision,
   previewValue = ref<BuildPreview>(),
@@ -24,7 +26,7 @@ let initial: ReturnType<typeof parse> | undefined;
 try {
   initial = parse(original);
 } catch (e) {
-  error.value = String(e);
+  error.value = errorText(e);
 }
 const target = ref(initial?.spec.target ?? ''),
   language = ref(initial?.spec.language === 'cpp' ? 'c++' : (initial?.spec.language ?? '')),
@@ -34,15 +36,15 @@ const target = ref(initial?.spec.target ?? ''),
   optimize = ref(initial?.spec.optimize ?? '');
 const lists: { command: Command; label: string; value: string }[] = initial
   ? [
-      ['add_files', '源文件 / Glob', initial.spec.sources],
-      ['remove_files', '排除文件', initial.spec.exclude],
-      ['add_includedirs', '包含目录', initial.spec.includeDirs],
-      ['add_defines', '宏定义', initial.spec.defines],
-      ['add_linkdirs', '库目录', initial.spec.linkDirs],
-      ['add_links', '链接库', initial.spec.links],
-      ['add_cflags', 'C 参数', initial.spec.cflags],
-      ['add_cxxflags', 'C++ 参数', initial.spec.cxxflags],
-      ['add_ldflags', '链接参数', initial.spec.ldflags],
+      ['add_files', 'Source Files / Globs', initial.spec.sources],
+      ['remove_files', 'Excluded Files', initial.spec.exclude],
+      ['add_includedirs', 'Include Directories', initial.spec.includeDirs],
+      ['add_defines', 'Preprocessor Definitions', initial.spec.defines],
+      ['add_linkdirs', 'Library Directories', initial.spec.linkDirs],
+      ['add_links', 'Libraries', initial.spec.links],
+      ['add_cflags', 'C Arguments', initial.spec.cflags],
+      ['add_cxxflags', 'C++ Arguments', initial.spec.cxxflags],
+      ['add_ldflags', 'Linker Arguments', initial.spec.ldflags],
     ].map(([command, label, values]) => ({
       command: command as Command,
       label: label as string,
@@ -76,7 +78,7 @@ async function refresh(id: number) {
   } catch (e) {
     if (id === request) {
       previewValue.value = undefined;
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = errorText(e);
     }
   } finally {
     if (id === request) previewBusy.value = false;
@@ -92,6 +94,7 @@ watch(
       mode.value,
       optimize.value,
       fields.value,
+      uiLanguage.value,
     ]),
   () => {
     clearTimeout(timer);
@@ -114,7 +117,7 @@ async function apply() {
     await props.preview(text);
     emit('apply', text, version);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = errorText(e);
   } finally {
     applying.value = false;
   }
@@ -146,17 +149,24 @@ function fallback(language: 'c' | 'cpp') {
           @keydown.esc.stop.prevent="!applying && emit('close')"
           role="dialog"
           aria-modal="true"
-          aria-label="项目构建设置"
+          :aria-label="t('Project Build Settings')"
         >
           <DialogTitle as-child
-            ><h2>构建设置 · {{ lab }}</h2></DialogTitle
+            ><h2>{{ t('Build Settings ·') }}{{ lab }}</h2></DialogTitle
           >
-          <p>{{ compilerLabel }} · 修改应用到 LPMake 标签，保存该标签或保存全部后落盘。</p>
+          <p>
+            {{ compilerLabel
+            }}{{
+              t(
+                '· Changes update the LPMake tab. Save that tab or use Save All to write them to disk.',
+              )
+            }}
+          </p>
           <fieldset class="build-inputs" :disabled="applying">
             <p
               v-if="error || conflict"
               class="field-error"
-              :class="{ 'source-diagnostic': error.startsWith('LPMake.txt:') }"
+              :class="{ 'source-diagnostic': t(error).startsWith('LPMake.txt:') }"
               role="alert"
             >
               {{ conflict || error }}
@@ -164,15 +174,17 @@ function fallback(language: 'c' | 'cpp') {
             <div v-if="valid" class="build-settings-fields">
               <div class="field-grid two">
                 <label
-                  >编译语言<select v-model="language">
-                    <option value="">按文件扩展名</option>
-                    <option value="c">C（覆盖扩展名）</option>
-                    <option value="c++">C++（覆盖扩展名）</option>
+                  >{{ t('Language Override')
+                  }}<select v-model="language">
+                    <option value="">{{ t('Use File Extensions') }}</option>
+                    <option value="c">{{ t('C (override extensions)') }}</option>
+                    <option value="c++">{{ t('C++ (override extensions)') }}</option>
                   </select></label
                 >
                 <label
-                  >构建模式<select v-model="mode">
-                    <option value="">默认 · debug</option>
+                  >{{ t('Build Mode')
+                  }}<select v-model="mode">
+                    <option value="">{{ t('Default · debug') }}</option>
                     <option value="debug">debug</option>
                     <option value="release">release</option></select
                   ><small v-for="i in notes('mode')" :key="i.message" class="parameter-note">{{
@@ -180,9 +192,10 @@ function fallback(language: 'c' | 'cpp') {
                   }}</small></label
                 >
                 <label
-                  >C 标准<input
+                  >{{ t('C Standard')
+                  }}<input
                     v-model="cStandard"
-                    :placeholder="'默认 · ' + fallback('c')"
+                    :placeholder="t('Default · {0}', fallback('c'))"
                   /><small
                     v-for="i in notes('cStandard')"
                     :key="i.message"
@@ -191,9 +204,10 @@ function fallback(language: 'c' | 'cpp') {
                   ></label
                 >
                 <label
-                  >C++ 标准<input
+                  >{{ t('C++ Standard')
+                  }}<input
                     v-model="cppStandard"
-                    :placeholder="'默认 · ' + fallback('cpp')"
+                    :placeholder="t('Default · {0}', fallback('cpp'))"
                   /><small
                     v-for="i in notes('cppStandard')"
                     :key="i.message"
@@ -202,8 +216,9 @@ function fallback(language: 'c' | 'cpp') {
                   ></label
                 >
                 <label
-                  >优化<select v-model="optimize">
-                    <option value="">跟随模式</option>
+                  >{{ t('Optimization')
+                  }}<select v-model="optimize">
+                    <option value="">{{ t('Use Build Mode') }}</option>
                     <option v-for="v in ['O0', 'O1', 'O2', 'O3', 'Os']" :value="v">
                       {{ v }}
                     </option></select
@@ -213,22 +228,26 @@ function fallback(language: 'c' | 'cpp') {
                 >
               </div>
               <details open class="build-group">
-                <summary>文件与目录</summary>
-                <label>目标名称<input v-model="target" /></label>
+                <summary>{{ t('Files and Directories') }}</summary>
+                <label>{{ t('Target Name') }}<input v-model="target" /></label>
                 <div class="field-grid two">
                   <label
                     v-for="field in fields.filter((f) =>
                       ['add_files', 'remove_files', 'add_includedirs'].includes(f.command),
                     )"
                     :key="field.command"
-                    >{{ field.label
+                    >{{ t(field.label)
                     }}<textarea v-model="field.value" rows="3" spellcheck="false"></textarea>
                   </label>
                 </div>
               </details>
               <details class="build-group">
-                <summary>高级</summary>
-                <p>每行一个路径或参数；额外参数按声明顺序传入。</p>
+                <summary>{{ t('Advanced') }}</summary>
+                <p>
+                  {{
+                    t('One path or argument per line. Extra arguments retain their declared order.')
+                  }}
+                </p>
                 <div class="field-grid two">
                   <label
                     v-for="field in fields.filter(
@@ -237,12 +256,12 @@ function fallback(language: 'c' | 'cpp') {
                     :key="field.command"
                     >{{
                       field.command === 'add_cflags'
-                        ? '额外 C 编译参数'
+                        ? t('Extra C Compiler Arguments')
                         : field.command === 'add_cxxflags'
-                          ? '额外 C++ 编译参数'
+                          ? t('Extra C++ Compiler Arguments')
                           : field.command === 'add_ldflags'
-                            ? '额外链接参数'
-                            : field.label
+                            ? t('Extra Linker Arguments')
+                            : t(field.label)
                     }}<textarea v-model="field.value" rows="3" spellcheck="false"></textarea
                     ><small
                       v-for="i in notes(fieldKey(field.command))"
@@ -258,9 +277,9 @@ function fallback(language: 'c' | 'cpp') {
             </div>
           </fieldset>
           <DialogActions class="create-actions"
-            ><button :disabled="applying" @click="emit('close')">取消</button
+            ><button :disabled="applying" @click="emit('close')">{{ t('Cancel') }}</button
             ><button v-if="valid" class="primary" :disabled="applying" @click="apply">
-              {{ applying ? '正在核对…' : '应用' }}
+              {{ applying ? t('Checking…') : t('Apply') }}
             </button></DialogActions
           >
         </section></DialogContent

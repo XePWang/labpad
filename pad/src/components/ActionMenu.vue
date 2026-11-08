@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n';
 import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
 import {
   DropdownMenuRoot,
@@ -84,14 +85,14 @@ function closeMenu(event: Event) {
             <span class="menu-check" aria-hidden="true">{{
               item.checked === 'indeterminate' ? '−' : item.checked ? '✓' : ''
             }}</span
-            >{{ item.label }}
+            >{{ t(item.label) }}
           </DropdownMenuCheckboxItem>
           <DropdownMenuItem
             v-else
             class="action-menu-item"
             :disabled="item.disabled"
             @select="emit('select', item.value)"
-            >{{ item.label }}</DropdownMenuItem
+            >{{ t(item.label) }}</DropdownMenuItem
           >
         </template>
       </DropdownMenuContent>

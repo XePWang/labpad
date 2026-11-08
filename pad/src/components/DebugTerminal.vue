@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { errorText, uiLanguage } from '../i18n';
+import { t } from '../i18n';
+
 import { fallbackTextStyle, type TextStyle } from '../typography';
 import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
 import { Terminal } from '@xterm/xterm';
@@ -79,8 +82,7 @@ async function readLoop(id: number) {
           if (result.clear) readline.clearOutput();
           if (result.output) await write(result.output.replace(/\r?\n/g, '\r\n') + '\r\n');
         } catch (error) {
-          if (id === generation)
-            await write((error instanceof Error ? error.message : String(error)) + '\r\n');
+          if (id === generation) await write(t(errorText(error)) + '\r\n');
         } finally {
           if (id === generation) executing = false;
         }
@@ -123,7 +125,7 @@ async function begin(preserve = false) {
   } catch (error) {
     if (id === generation) {
       if (terminal) terminal.options.disableStdin = true;
-      await write((error instanceof Error ? error.message : String(error)) + '\r\n');
+      await write(t(errorText(error)) + '\r\n');
     }
   }
 }
@@ -176,8 +178,7 @@ function key(event: KeyboardEvent) {
         else if (values.length) void write(values.join('  ') + '\r\n');
       })
       .catch((error) => {
-        if (current())
-          void write((error instanceof Error ? error.message : String(error)) + '\r\n');
+        if (current()) void write(t(errorText(error)) + '\r\n');
       });
     return false;
   }
@@ -216,7 +217,16 @@ function key(event: KeyboardEvent) {
   if (command === 'eof' && props.running) eof();
   return false;
 }
+function localizeTerminal() {
+  Terminal.strings.promptLabel = t('Terminal Input');
+  Terminal.strings.tooMuchOutput = t(
+    'Too much output to announce. Navigate the terminal rows to read it.',
+  );
+  terminal?.textarea?.setAttribute('aria-label', t('Terminal Input'));
+}
+watch(uiLanguage, localizeTerminal);
 onMounted(() => {
+  localizeTerminal();
   terminal = new Terminal({
     allowProposedApi: true,
     screenReaderMode: false,
@@ -241,7 +251,7 @@ onMounted(() => {
   terminal.onData(() => {
     inputEpoch++;
   });
-  terminal.textarea?.setAttribute('aria-label', '终端输入');
+  terminal.textarea?.setAttribute('aria-label', t('Terminal Input'));
   observer = new ResizeObserver(() => {
     if (host.value?.offsetWidth) {
       refit();

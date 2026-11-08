@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../shared/i18n';
 import { cleanupAll, addCleanupNotes, cleanupText } from './cleanup';
 import { mkdir, opendir, rm, lstat } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,7 +36,8 @@ export class CompilerCache {
         });
       } catch (e: any) {
         if (e.code !== 'ELOCKED') throw e;
-        if (!wait) throw new Error('另一个 LabPad 正在编译，请稍后清理');
+        if (!wait)
+          throw new UIError('Another LabPad instance is compiling. Try cleaning the cache later.');
         await delay(150, undefined, { signal });
       }
     }
@@ -61,7 +63,9 @@ export class CompilerCache {
       failure = error instanceof Error ? error : new Error(String(error));
       throw failure;
     } finally {
-      const warnings = await cleanupAll([{ label: '编译缓存租约', run: release }]);
+      const warnings = await cleanupAll([
+        { label: localize('Compiler Cache Lease'), run: release },
+      ]);
       if (failure) addCleanupNotes(failure, warnings);
       else if (warnings.length) throw Error(cleanupText(warnings).trim());
     }

@@ -1,3 +1,4 @@
+import { UIError } from '../shared/i18n';
 import type { IPty } from 'node-pty';
 export interface PtyExit {
   exitCode: number;
@@ -72,7 +73,7 @@ export function managePty(
           finished,
           new Promise<never>((_, reject) => {
             timer = setTimeout(
-              () => reject(Error('程序尚未退出，请重试停止。')),
+              () => reject(new UIError('The program has not exited. Try stopping it again.')),
               options.stopTimeoutMs ?? 2500,
             );
           }),

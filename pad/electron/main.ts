@@ -1,3 +1,10 @@
+import {
+  t as localize,
+  setLanguage as setUILanguage,
+  UIError,
+  currentLanguage,
+  type UILanguage,
+} from '../shared/i18n';
 import { readEditableFile } from '../core/read-file';
 import { managePty } from '../core/pty-session';
 import { remapPath, replacedPath } from '../shared/file-changes';
@@ -192,7 +199,7 @@ const send = (channel: string, value: unknown) => {
 const debugState = (state: DebugState) => send('debug:state', state),
   judgeEvent = (event: JudgeEvent) => send('judge:event', event);
 function requireIdle() {
-  if (active) throw new Error('请先停止正在运行的任务');
+  if (active) throw new UIError('Stop the running task first');
 }
 async function reserveExecution<T>(run: (abort: AbortController) => Promise<T>): Promise<T> {
   requireIdle();
@@ -254,19 +261,36 @@ function scheduleWarmup() {
 }
 function handle(channel: string, fn: (...args: any[]) => any) {
   ipcMain.handle(channel, (event, ...args) => {
-    if (event.sender !== win.webContents) throw new Error('无效窗口');
-    return fn(...args);
+    if (event.sender !== win.webContents) throw new UIError('Invalid window');
+    return Promise.resolve()
+      .then(() => fn(...args))
+      .catch((error) => {
+        if (error instanceof UIError && error.message === error.originalMessage)
+          return {
+            $labpadError: {
+              name: error.name,
+              message: error.message,
+              localization: error.localization,
+            },
+          };
+        throw error;
+      });
   });
 }
 async function validatePath(value: string, kind: PathKind, allowEmpty = false) {
-  if (!value.trim()) return { valid: allowEmpty, message: allowEmpty ? '' : '请填写路径' };
-  if (!path.isAbsolute(value.trim())) return { valid: false, message: '请输入完整路径' };
+  if (!value.trim())
+    return { valid: allowEmpty, message: allowEmpty ? '' : localize('Enter a path') };
+  if (!path.isAbsolute(value.trim()))
+    return { valid: false, message: localize('Enter an absolute path') };
   try {
     const info = await stat(value.trim());
     if (kind === 'directory' ? !info.isDirectory() : !info.isFile())
       return {
         valid: false,
-        message: kind === 'directory' ? '请选择文件夹' : '请选择编译器可执行文件',
+        message:
+          kind === 'directory'
+            ? localize('Choose a folder')
+            : localize('Choose a compiler executable'),
       };
     await access(value.trim(), kind === 'directory' ? constants.W_OK : constants.X_OK);
     return { valid: true, message: '' };
@@ -275,10 +299,10 @@ async function validatePath(value: string, kind: PathKind, allowEmpty = false) {
       valid: false,
       message:
         e.code === 'ENOENT'
-          ? '路径不存在，请重新选择或输入'
+          ? localize('Path not found. Choose or enter another path.')
           : e.code === 'EACCES'
-            ? '没有访问该路径的权限'
-            : '无法访问路径：' + e.message,
+            ? localize('You do not have permission to access this path')
+            : localize('Cannot access the path: {0}', e.message),
     };
   }
 }
@@ -423,7 +447,11 @@ async function workspaceBootstrap() {
     sourcePath: draft.sourceFile ?? null,
     version: app.getVersion(),
     ...(state.inheritDefaults !== undefined
-      ? { warning: '旧版构建配置暂未迁移，请先修复 LPMake.txt 的错误并保存。' }
+      ? {
+          warning: localize(
+            'Legacy build settings have not been migrated. Fix the errors in LPMake.txt and save it first.',
+          ),
+        }
       : {}),
     workspace: {
       scope: storage.workspace.root(lab),
@@ -452,7 +480,10 @@ async function persist(value: Draft): Promise<SaveResult> {
               options.indentSize,
             );
           } catch (e) {
-            formatWarning = '格式化失败，已保存原文：' + String(e);
+            formatWarning = localize(
+              'Formatting failed. The original text was saved: {0}',
+              String(e),
+            );
           }
         snapshot.source = await storage.workspace.save(snapshot, { rules: false });
         if (
@@ -505,7 +536,10 @@ async function persist(value: Draft): Promise<SaveResult> {
             options.indentSize,
           );
         } catch (e) {
-          formatWarning = '格式化失败，已保存原文：' + (e instanceof Error ? e.message : String(e));
+          formatWarning = localize(
+            'Formatting failed. The original text was saved: {0}',
+            e instanceof Error ? e.message : String(e),
+          );
         }
       }
       await storage.save(snapshot, { rules: false });
@@ -545,7 +579,7 @@ async function persist(value: Draft): Promise<SaveResult> {
 async function selectDraft(lab: string, problem: string, language: Language, preferStored = true) {
   requireIdle();
   selection(lab, problem);
-  if (!['c', 'cpp'].includes(language)) throw new Error('无效语言');
+  if (!['c', 'cpp'].includes(language)) throw new UIError('Invalid language');
   await saves;
   await storage.flush();
   if (await storage.workspace.isProject(lab)) {
@@ -581,7 +615,7 @@ async function settingsResult() {
     projects: await storage.projects(),
     compilerLabel: await compiler
       .info(config.compiler)
-      .catch((e: Error) => '编译器尚不可用：' + e.message),
+      .catch((e: Error) => localize('Compiler is not ready: {0}', e.message)),
   };
 }
 async function bootstrap() {
@@ -654,7 +688,7 @@ async function messageBox(options: Electron.MessageBoxOptions) {
   );
   const result = await dialog.showMessageBox(win, {
     ...options,
-    buttons: order.map((i) => options.buttons?.[i] ?? '确定'),
+    buttons: order.map((i) => options.buttons?.[i] ?? localize('OK')),
     defaultId: order.indexOf(options.defaultId ?? 0),
     cancelId: order.indexOf(options.cancelId ?? 0),
   });
@@ -663,9 +697,9 @@ async function messageBox(options: Electron.MessageBoxOptions) {
 async function confirmUnsaved() {
   const result = await messageBox({
     type: 'question',
-    title: '保存修改',
-    message: '源码、构建设置或测试点有未保存的修改。',
-    buttons: ['保存', '不保存', '取消'],
+    title: localize('Save Changes'),
+    message: localize('Source files, build settings, or test cases have unsaved changes.'),
+    buttons: [localize('Save'), localize('Don’t Save'), localize('Cancel')],
     defaultId: 0,
     cancelId: 2,
     noLink: true,
@@ -674,7 +708,7 @@ async function confirmUnsaved() {
 }
 async function startDebug(value: Draft, abort: AbortController) {
   const context = await programContext(value);
-  if (!context.saved) throw Error('请先保存参与编译的文件，再编译。');
+  if (!context.saved) throw new UIError('Save the files included in the build before compiling.');
   const program = compiledProgram.require(context.key),
     settings = structuredClone(config);
   const task = (async () => {
@@ -705,12 +739,14 @@ async function startDebug(value: Draft, abort: AbortController) {
       const result = await io.finished;
       return {
         status: abort.signal.aborted ? 'stopped' : 'exited',
-        message: abort.signal.aborted ? '程序已停止' : '退出码 ' + result.exitCode,
+        message: abort.signal.aborted
+          ? localize('Program Stopped')
+          : localize('Exit code {0}', result.exitCode),
       } as DebugState;
     } catch (error) {
       return {
         status: abort.signal.aborted ? 'stopped' : 'error',
-        message: abort.signal.aborted ? '程序已停止' : String(error),
+        message: abort.signal.aborted ? localize('Program Stopped') : String(error),
       } as DebugState;
     } finally {
       if (timer) clearTimeout(timer);
@@ -789,7 +825,9 @@ function nativeView() {
 async function nativeFileGuard(lab: string, files: string[]) {
   if (!nativeActive() || nativeLab !== lab) return;
   if (files.some((file) => Object.keys(nativeSnapshot).some((source) => under(source, file))))
-    throw Error('文件正在参与调试，请先停止调试，再移动、重命名、删除或覆盖。');
+    throw new UIError(
+      'This file is in the current debug session. Stop debugging before moving, renaming, deleting, or replacing it.',
+    );
 }
 function emitFileChanges(
   lab: string,
@@ -810,7 +848,7 @@ async function terminalProcess(
   reportExit = true,
   publishExit = true,
 ) {
-  if (terminal) throw Error('终端中已有程序正在运行。');
+  if (terminal) throw new UIError('A program is already running in the terminal.');
   const session = ++debugSession;
   const executable = process.platform === 'win32' ? compiler.paths.processHost! : '/bin/sh';
   const command =
@@ -850,7 +888,7 @@ async function terminalProcess(
     if (publishExit)
       debugState({
         status: 'exited',
-        ...(reportExit ? { message: '退出码 ' + result.exitCode } : {}),
+        ...(reportExit ? { message: localize('Exit code {0}', result.exitCode) } : {}),
       });
     onExit?.();
     return result;
@@ -862,17 +900,22 @@ async function terminalProcess(
 async function beginNative(value: Draft, breakpoints: SourceBreakpoint[], abort: AbortController) {
   await stopWarmup();
   const context = await programContext(value);
-  if (!context.draft.workspace) throw Error('断点调试仅用于项目。');
-  if (!context.saved) throw Error('请先保存源码和构建配置。');
+  if (!context.draft.workspace)
+    throw new UIError('Breakpoint debugging is available for projects only.');
+  if (!context.saved) throw new UIError('Save the source files and build configuration first.');
   const plan = draftPlan(context.draft, context.options),
     optimized = plan.units.some((u) => u.args.some((a) => /^-(O[123s]|Ofast|g0)$/.test(a)));
   if (optimized || plan.units.some((u) => !u.args.some((a) => /^(-g|-[g]gdb\d*)$/.test(a)))) {
     const answer = await messageBox({
       type: 'warning',
-      title: '检查调试配置',
-      message: '当前参数可能影响断点与变量显示。',
-      detail: '建议在项目构建设置中使用 Debug 模式，并保留 -g、-O0。',
-      buttons: ['继续调试', '打开构建设置', '取消'],
+      title: localize('Check Debug Configuration'),
+      message: localize('The current arguments may affect breakpoints and variable inspection.'),
+      detail: localize('Use Debug mode in Project Build Settings and keep -g and -O0.'),
+      buttons: [
+        localize('Continue Debugging'),
+        localize('Open Build Settings'),
+        localize('Cancel'),
+      ],
       defaultId: 1,
       cancelId: 2,
       noLink: true,
@@ -1025,7 +1068,7 @@ async function shellFor(value: Draft) {
     store = storage;
   const files = await store.fileService(draft.problem.labId, draft.problem.problemId);
   const key = JSON.stringify([files.root, await store.workspace.isProject(draft.problem.labId)]);
-  if (store !== storage) throw Error('数据目录已改变，请重试。');
+  if (store !== storage) throw new UIError('The data folder changed. Try again.');
   if (!terminalShell || terminalShellKey !== key) {
     requireIdle();
     for (const target of terminalTargets.values()) {
@@ -1077,7 +1120,7 @@ async function runMakeCommand(
     await previous?.program.cleanup();
     terminalTargets.delete(directory);
     await cleanBuildDirectory(target, owner);
-    return '已清理当前配置的构建产物。';
+    return localize('Build outputs for this configuration were removed.');
   }
   if (action === 'build') {
     terminalTargets.delete(directory);
@@ -1094,14 +1137,17 @@ async function runMakeCommand(
       if (prepared.compilation.status !== 'success') {
         await prepared.cleanup();
         return prepared.compilation.status === 'cancelled'
-          ? '构建已停止。'
-          : '构建失败，请查看“输出”。';
+          ? localize('Build Stopped.')
+          : localize('Build failed. See Output.');
       }
       const checksum = createHash('sha256')
         .update(await readFile(prepared.executable))
         .digest('hex');
       terminalTargets.set(directory, { key, program: prepared, checksum });
-      return '构建完成：./' + path.posix.join(cwd, 'build', path.basename(prepared.executable));
+      return localize(
+        'Build complete: ./{0}',
+        path.posix.join(cwd, 'build', path.basename(prepared.executable)),
+      );
     } finally {
       if (active === task) {
         active = undefined;
@@ -1117,7 +1163,9 @@ async function runMakeCommand(
       .update(await readFile(previous.program.executable))
       .digest('hex') !== previous.checksum
   )
-    throw Error('当前配置尚未构建，或文件已变化。请先执行 lpmake build。');
+    throw new UIError(
+      'This configuration has not been built, or its files changed. Run lpmake build first.',
+    );
   abort.signal.throwIfAborted();
   const io = await terminalProcess(
       [previous.program.executable],
@@ -1152,10 +1200,12 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
   if (request.action === 'delete') {
     const result = await messageBox({
       type: 'warning',
-      title: '删除文件',
-      message: '删除所选的 ' + request.paths.length + ' 项？',
-      detail: '包含所选文件夹内的文件及未保存的修改。此操作无法撤销。',
-      buttons: ['删除', '取消'],
+      title: localize('Delete Files'),
+      message: localize('Delete the {0} selected items?', request.paths.length),
+      detail: localize(
+        'Includes files inside the selected folders and unsaved changes. This cannot be undone.',
+      ),
+      buttons: [localize('Delete'), localize('Cancel')],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
@@ -1180,13 +1230,19 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
   } catch (error) {
     if (!(error instanceof FileConflict)) throw error;
     if (['newFile', 'newFolder', 'rename'].includes(request.action))
-      throw Error('该名称已存在，请换一个名称：' + error.files.join('、'));
+      throw new UIError(
+        'That name already exists. Choose a different name: {0}',
+        error.files.join('、'),
+      );
     const answer = await messageBox({
       type: 'warning',
-      title: '同名文件',
-      message: '目标位置已有同名文件。',
-      detail: error.files.join('\n') + '\n替换会覆盖目标文件及其中未保存的修改。',
-      buttons: ['替换', '保留两者', '跳过', '取消'],
+      title: localize('Filename Conflict'),
+      message: localize('Files with the same names already exist at the destination.'),
+      detail: localize(
+        '{0}\nReplacing will overwrite the destination files and their unsaved changes.',
+        error.files.join('\n'),
+      ),
+      buttons: [localize('Replace'), localize('Keep Both'), localize('Skip'), localize('Cancel')],
       defaultId: 3,
       cancelId: 3,
       noLink: true,
@@ -1233,6 +1289,8 @@ async function initialize() {
     storage = new Storage(await realpath(value.dataDirectory));
   }
   config = await storage.init();
+  setUILanguage(config.uiLanguage ?? 'zh-CN');
+  installApplicationMenu();
   initialized = true;
   win.webContents.setZoomFactor(config.zoomFactor);
   void cleanInactiveRuntime();
@@ -1258,7 +1316,7 @@ async function initialize() {
   });
   handle('workspace:sources', async (lab: string, text: string) => {
     if (typeof text !== 'string' || !(await storage.workspace.isProject(lab)))
-      throw new Error('项目无效');
+      throw new UIError('Invalid experiment');
     return (await resolveBuild(parseMake(text).spec, storage.workspace.root(lab))).units.map(
       (u) => u.path,
     );
@@ -1270,7 +1328,7 @@ async function initialize() {
     storage.openFile(lab, problem, file, config.language),
   );
   handle('workspace:view', async (lab: string, value: any) => {
-    if (!(await storage.workspace.isProject(lab))) throw new Error('请选择多文件项目');
+    if (!(await storage.workspace.isProject(lab))) throw new UIError('Select a project');
     const update: any = {};
     for (const key of [
       'activeFile',
@@ -1282,7 +1340,7 @@ async function initialize() {
     ])
       if (Object.hasOwn(value, key)) update[key] = value[key];
     if (update.openFiles) {
-      if (!Array.isArray(update.openFiles)) throw new Error('打开文件列表无效');
+      if (!Array.isArray(update.openFiles)) throw new UIError('Invalid open-file list');
       update.openFiles.forEach(workspacePath);
     }
     if (update.activeFile) workspacePath(update.activeFile);
@@ -1293,7 +1351,7 @@ async function initialize() {
         update.sidebarWidth < 120 ||
         update.sidebarWidth > 420)
     )
-      throw new Error('侧栏宽度无效');
+      throw new UIError('Invalid sidebar width');
     await storage.workspace.update(lab, update);
   });
   handle('files:view', async (lab: string, value: any) => {
@@ -1301,7 +1359,7 @@ async function initialize() {
     for (const key of ['expanded', 'sidebarWidth', 'sidebarCollapsed', 'rightCollapsed'])
       if (Object.hasOwn(value, key)) update[key] = value[key];
     if (update.expanded) {
-      if (!Array.isArray(update.expanded)) throw new Error('文件夹列表无效');
+      if (!Array.isArray(update.expanded)) throw new UIError('Invalid folder list');
       update.expanded.forEach(workspacePath);
     }
     if (
@@ -1310,10 +1368,10 @@ async function initialize() {
         update.sidebarWidth < 120 ||
         update.sidebarWidth > 420)
     )
-      throw new Error('侧栏宽度无效');
+      throw new UIError('Invalid sidebar width');
     for (const k of ['sidebarCollapsed', 'rightCollapsed'])
       if (update[k] !== undefined && typeof update[k] !== 'boolean')
-        throw new Error('视图状态无效');
+        throw new UIError('Invalid view state');
     await storage.saveFileView(lab, update);
   });
   handle('completion:files', async (lab: string, problem: string) => {
@@ -1347,7 +1405,7 @@ async function initialize() {
     else if (action === 'reveal') {
       if (files.length) shell.showItemInFolder(paths[0]);
       else await shell.openPath(paths[0]);
-    } else throw Error('文件操作无效');
+    } else throw new UIError('Invalid file operation');
     return paths;
   });
   handle(
@@ -1356,10 +1414,10 @@ async function initialize() {
       (
         await messageBox({
           type: 'question',
-          title: '文件已在外部修改',
-          message: file + ' 已被其他程序修改。',
-          detail: '重新加载会替换编辑区中尚未保存的内容。',
-          buttons: ['重新加载', '保留编辑区内容'],
+          title: localize('File Changed on Disk'),
+          message: localize('{0} was changed by another program.', file),
+          detail: localize('Reloading replaces the unsaved content in the editor.'),
+          buttons: [localize('Reload'), localize('Keep Editor Contents')],
           defaultId: 1,
           cancelId: 1,
           noLink: true,
@@ -1392,19 +1450,21 @@ async function initialize() {
     requireIdle();
     await saves;
     if (await storage.workspace.isProject(lab))
-      throw new Error('项目构建参数由 LPMake.txt 管理，请编辑构建配置。');
+      throw new UIError(
+        'Project build arguments are managed by LPMake.txt. Edit the build configuration.',
+      );
     if (!value.inheritDefaults) {
-      assertParameters(value.cArgs, 'C 参数');
-      assertParameters(value.cppArgs, 'C++ 参数');
-      assertParameters(value.linkArgs, '链接参数');
+      assertParameters(value.cArgs, localize('C Arguments'));
+      assertParameters(value.cppArgs, localize('C++ Arguments'));
+      assertParameters(value.linkArgs, localize('Linker Arguments'));
     }
     await storage.saveBuildOptions(lab, value);
   });
   handle('project:delete', async (lab: string) => {
     await saves;
-    filePart(lab, '项目名称');
+    filePart(lab, localize('Experiment Name'));
     const project = (await storage.projects()).find((p) => p.labId === lab);
-    if (!project) throw new Error('项目已不存在');
+    if (!project) throw new UIError('The experiment no longer exists');
     let files = 0,
       tests = 0;
     if (project.mode === 'project') {
@@ -1417,25 +1477,28 @@ async function initialize() {
       }
     const choice = await messageBox({
       type: 'warning',
-      title: '删除实验项目',
-      message: '删除“' + lab + '”？',
-      detail:
-        '将删除本项目的 ' +
-        files +
-        ' 份文件、' +
-        tests +
-        ' 个测试点、项目配置及本地记录。' +
-        (documentDirty && currentDocument?.problem.labId === lab ? '\n包含未保存的修改。' : '') +
-        (active && currentDocument?.problem.labId === lab ? '\n正在运行的任务会停止。' : '') +
-        '\n此操作无法撤销。原始导入文件及其他项目保留。',
-      buttons: ['取消', '删除整个项目'],
+      title: localize('Delete Experiment'),
+      message: localize('Delete “{0}”?', lab),
+      detail: localize(
+        'This deletes {0} files, {1} test cases, settings, and local records from this experiment.{2}{3}\nThis cannot be undone. Original imported files and other experiments are kept.',
+        files,
+        tests,
+        documentDirty && currentDocument?.problem.labId === lab
+          ? localize('\nIncludes unsaved changes.')
+          : '',
+        active && currentDocument?.problem.labId === lab
+          ? localize('\nThe running task will be stopped.')
+          : '',
+      ),
+      buttons: [localize('Cancel'), localize('Delete Entire Experiment')],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
     });
     if (choice.response !== 1) return false;
     if (active) {
-      if (currentDocument?.problem.labId !== lab) throw new Error('请等当前任务结束后再删除项目');
+      if (currentDocument?.problem.labId !== lab)
+        throw new UIError('Wait for the current task to finish before deleting the experiment');
       await stop();
     }
     await stopWarmup();
@@ -1506,13 +1569,13 @@ async function initialize() {
   handle('export:choices', async (buffers: Draft[]) => {
     requireIdle();
     await saves;
-    if (!currentDocument) throw new Error('请先选择实验项目');
+    if (!currentDocument) throw new UIError('Select an experiment first');
     return exportChoices(storage, currentDocument, buffers.map(validateDraft));
   });
   handle('export:preview', async (kind: string, values: Draft[], includeConfig = false) => {
     requireIdle();
     await saves;
-    if (!values.length) throw new Error('请至少选择一份源码');
+    if (!values.length) throw new UIError('Select at least one source file');
     const drafts = values.map(validateDraft);
     if (await storage.workspace.isProject(drafts[0].problem.labId)) {
       if (kind === 'project') {
@@ -1532,13 +1595,15 @@ async function initialize() {
           (!record ||
             record.fingerprint !== fingerprint(d, options, await inputIdentity(d, options)) ||
             record.total !== d.problem.testCases.length) &&
-          !preview.warnings.some((w) => w.startsWith('尚未全部通过'))
+          !preview.warnings.some((w) => w.startsWith(localize('Not All Tests Passed')))
         )
-          preview.warnings.unshift('尚未全部通过：内容或规则已改变，请重新测试。');
+          preview.warnings.unshift(
+            localize('Not all tests passed: the source or rules changed. Run the tests again.'),
+          );
         return preview;
       }
       const d = await buildInput(drafts[0]);
-      if (!d.file) throw new Error('请先选择文件');
+      if (!d.file) throw new UIError('Select a file first');
       const name = path.basename(d.file),
         preview = await prepareWorkspaceProject(
           storage,
@@ -1552,9 +1617,9 @@ async function initialize() {
       if (
         record?.fingerprint !==
           fingerprint(d, await draftOptions(d), await inputIdentity(d, await draftOptions(d))) &&
-        !preview.warnings.some((w) => w.startsWith('尚未全部通过'))
+        !preview.warnings.some((w) => w.startsWith(localize('Not All Tests Passed')))
       )
-        preview.warnings.unshift('尚未全部通过：请先测试当前项目。');
+        preview.warnings.unshift(localize('Not all tests passed: test the current project first.'));
       return {
         kind: 'source',
         name,
@@ -1588,24 +1653,33 @@ async function initialize() {
       !Array.isArray(value.files) ||
       !value.files.length
     )
-      throw new Error('导出内容无效');
-    filePart(value.name, '导出文件名');
+      throw new UIError('Invalid export contents');
+    filePart(value.name, localize('Export Filename'));
     for (const f of value.files) {
       if (f.name !== 'labpad.project.json') workspacePath(f.name);
-      if (typeof f.source !== 'string') throw new Error('导出内容无效');
+      if (typeof f.source !== 'string') throw new UIError('Invalid export contents');
     }
     const ext =
       value.kind === 'project' ? 'zip' : path.extname(value.files[0].name).slice(1) || 'txt';
     const selected = await dialog.showSaveDialog(win, {
-      title: value.kind === 'project' ? '导出实验项目 · 选择保存位置' : '导出源码 · 选择保存位置',
+      title:
+        value.kind === 'project'
+          ? localize('Export Experiment · Choose Save Location')
+          : localize('Export Source · Choose Save Location'),
       defaultPath: value.name,
-      filters: [{ name: value.kind === 'project' ? 'ZIP 压缩包' : '源码文件', extensions: [ext] }],
+      filters: [
+        {
+          name: value.kind === 'project' ? localize('ZIP Archive') : localize('Source Files'),
+          extensions: [ext],
+        },
+      ],
     });
     if (selected.canceled || !selected.filePath) return null;
     const file = path.extname(selected.filePath)
       ? selected.filePath
       : selected.filePath + '.' + ext;
-    if (path.extname(file).toLowerCase() !== '.' + ext) throw new Error('请选择 .' + ext + ' 文件');
+    if (path.extname(file).toLowerCase() !== '.' + ext)
+      throw new UIError('Choose a .{0} file', ext);
     if (value.kind === 'project')
       await writeFileAtomic(
         file,
@@ -1621,7 +1695,7 @@ async function initialize() {
       await storage.workspace.create(name, config.language);
       return selectDraft(name, '', config.language);
     }
-    if (mode !== 'problem-set') throw new Error('项目类型无效');
+    if (mode !== 'problem-set') throw new UIError('Invalid experiment type');
     const carry = currentDocument && structuredClone(currentDocument);
     await storage.createLab(name);
     const next = await selectDraft(name, '', config.language);
@@ -1681,7 +1755,7 @@ async function initialize() {
       : storage.openDocuments(lab, problem, language),
   );
   handle('document:activate', async (id: string, file?: string) => {
-    if (!currentDocument) throw new Error('尚未打开文件');
+    if (!currentDocument) throw new UIError('No file is open');
     if (
       currentDocument.file &&
       (await storage.workspace.isProject(currentDocument.problem.labId))
@@ -1712,17 +1786,17 @@ async function initialize() {
     return storage.newVersion(value, fromTemplate === true);
   });
   handle('clipboard:write', (text: string) => {
-    if (typeof text !== 'string') throw new Error('复制内容无效');
+    if (typeof text !== 'string') throw new UIError('Invalid clipboard content');
     clipboard.writeText(text);
   });
   handle('path:show-file', async (file: string) => {
     if (typeof file !== 'string' || !path.isAbsolute(file))
-      throw new Error('请选择已保存的源码文件');
+      throw new UIError('Choose a saved source file');
     try {
       if (!(await stat(file)).isFile()) throw new Error();
       await access(file, constants.R_OK);
     } catch {
-      throw new Error('文件不存在或无法访问，请先保存源码');
+      throw new UIError('The file is missing or inaccessible. Save the source first.');
     }
     shell.showItemInFolder(file);
   });
@@ -1746,7 +1820,7 @@ async function initialize() {
       height: 750,
       minWidth: 540,
       minHeight: 480,
-      title: 'LabPad · 快捷键',
+      title: localize('LabPad · Keyboard Shortcuts'),
       icon: iconPath,
       backgroundColor: config.theme === 'light' ? '#ffffff' : '#1e1e1e',
       autoHideMenuBar: true,
@@ -1771,11 +1845,16 @@ async function initialize() {
       });
   });
   ipcMain.handle('shortcuts:get', (event) => {
-    if (event.sender !== shortcutWindow?.webContents) throw new Error('无效窗口');
-    return { shortcuts: config.shortcuts, theme: config.theme, platform: process.platform };
+    if (event.sender !== shortcutWindow?.webContents) throw new UIError('Invalid window');
+    return {
+      uiLanguage: currentLanguage(),
+      shortcuts: config.shortcuts,
+      theme: config.theme,
+      platform: process.platform,
+    };
   });
   ipcMain.handle('shortcuts:save', async (event, value: unknown) => {
-    if (event.sender !== shortcutWindow?.webContents) throw new Error('无效窗口');
+    if (event.sender !== shortcutWindow?.webContents) throw new UIError('Invalid window');
     const shortcuts = structuredClone(validateShortcuts(value));
     await saves;
     config = { ...config, shortcuts };
@@ -1786,7 +1865,10 @@ async function initialize() {
   handle('path:validate', validatePath);
   handle('path:choose', async (kind: PathKind, current: string) => {
     const result = await dialog.showOpenDialog(win, {
-      title: kind === 'directory' ? '选择数据保存位置' : '选择编译器可执行文件',
+      title:
+        kind === 'directory'
+          ? localize('Choose Data Folder')
+          : localize('Choose Compiler Executable'),
       defaultPath: current || undefined,
       properties: kind === 'directory' ? ['openDirectory'] : ['openFile'],
     });
@@ -1820,9 +1902,9 @@ async function initialize() {
         }),
       );
       if (project) {
-        filePart(project.lab, '项目名称');
+        filePart(project.lab, localize('Experiment Name'));
         if (project.lab !== config.currentLab || (await storage.workspace.isProject(project.lab)))
-          throw new Error('当前实验已变化，请重新打开设置。');
+          throw new UIError('The current experiment changed. Reopen Settings.');
       }
       await requirePath(dataRoot, 'directory');
       const target = await realpath(dataRoot.trim());
@@ -1832,7 +1914,7 @@ async function initialize() {
         await requirePath(next.compiler.cPath, 'executable');
         if (next.compiler.cppPath) await requirePath(next.compiler.cppPath, 'executable');
         else if (next.language === 'cpp' && next.compiler.kind !== 'zig')
-          throw new Error('请填写 C++ 编译器路径');
+          throw new UIError('Enter the C++ compiler path');
       }
       await compiler.info(next.compiler);
       if (target !== (await realpath(storage.root))) {
@@ -1849,6 +1931,8 @@ async function initialize() {
         storage = replacement;
       } else await storage.saveSettings(next, project);
       config = next;
+      setUILanguage(next.uiLanguage ?? 'zh-CN');
+      installApplicationMenu();
       win.webContents.setZoomFactor(next.zoomFactor);
       scheduleWarmup();
       nativeTheme.themeSource = next.theme;
@@ -1858,7 +1942,7 @@ async function initialize() {
   );
   handle('source:format', (source: string, language: Language, indentSize: number) => {
     if (typeof source !== 'string' || !['c', 'cpp'].includes(language))
-      throw new Error('源码数据无效');
+      throw new UIError('Invalid source data');
     return formatter.format(source, language, indentSize);
   });
   handle('layout:save', async (value: unknown) => {
@@ -1883,9 +1967,9 @@ async function initialize() {
     requireIdle();
     await saves;
     const selected = await dialog.showOpenDialog(win, {
-      title: '导入单文件源码',
+      title: localize('Import Source File'),
       properties: ['openFile'],
-      filters: [{ name: 'C / C++ 源码', extensions: sourceExtensions }],
+      filters: [{ name: localize('C / C++ Source Files'), extensions: sourceExtensions }],
     });
     if (selected.canceled) return null;
     const file = selected.filePaths[0];
@@ -1925,10 +2009,12 @@ async function initialize() {
       if (await exists(target)) {
         const choice = await messageBox({
           type: 'question',
-          title: '替换项目文件',
-          message: '“' + name + '”已存在，是否替换？',
-          detail: '当前文件及其未保存修改将被替换。原始导入文件保留。',
-          buttons: ['取消', '替换'],
+          title: localize('Replace Project File'),
+          message: localize('“{0}” already exists. Replace it?', name),
+          detail: localize(
+            'The current file and its unsaved changes will be replaced. The original imported file is kept.',
+          ),
+          buttons: [localize('Cancel'), localize('Replace')],
           defaultId: 0,
           cancelId: 0,
           noLink: true,
@@ -1952,7 +2038,7 @@ async function initialize() {
         document,
       };
     }
-    if (!isSourceFile(file)) throw new Error('请选择 C / C++ 源码文件');
+    if (!isSourceFile(file)) throw new UIError('Choose a C / C++ source file');
     const document = await storage.importSource(config.currentLab, config.currentProblem, file);
     currentDocument = document;
     config = { ...config, sourceFile: null, language: document.language };
@@ -1990,9 +2076,9 @@ async function initialize() {
         ? structuredClone(currentDocument)
         : await storage.load(lab, problem, config.language);
     const selected = await dialog.showOpenDialog(win, {
-      title: '导入测试点 · 当前题目',
+      title: localize('Import Test Cases · Current Problem'),
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: '标准 I/O', extensions: ['json', 'in', 'out', 'ans'] }],
+      filters: [{ name: localize('Standard I/O'), extensions: ['json', 'in', 'out', 'ans'] }],
     });
     if (selected.canceled) return null;
     const patch =
@@ -2002,13 +2088,13 @@ async function initialize() {
         : { testCases: (await importPairs(selected.filePaths, lab, problem)).testCases };
     const choice = await messageBox({
       type: 'question',
-      title: '导入测试点',
-      message: '导入 ' + patch.testCases!.length + ' 个测试点',
-      detail:
-        '当前有 ' +
-        current.problem.testCases.length +
-        ' 个测试点。覆盖会替换现有测试点；追加会保留原点及其比较规则。',
-      buttons: ['取消', '覆盖现有测试点', '追加到末尾'],
+      title: localize('Import Test Cases'),
+      message: localize('Import Test Cases ({0})', patch.testCases!.length),
+      detail: localize(
+        'There are {0} existing test cases. Replace overwrites them; Append keeps them and their comparison rules.',
+        current.problem.testCases.length,
+      ),
+      buttons: [localize('Cancel'), localize('Replace Existing Test Cases'), localize('Append')],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -2024,10 +2110,16 @@ async function initialize() {
     ) {
       const answer = await messageBox({
         type: 'question',
-        title: '测试限制',
-        message: '导入文件包含不同的时限或输出上限。',
-        detail: '这些限制作用于整题。追加测试点时，可以保留当前限制。',
-        buttons: ['取消', '保留当前限制', '采用导入限制'],
+        title: localize('Test Limits'),
+        message: localize('The imported file specifies a different time limit or output limit.'),
+        detail: localize(
+          'These limits apply to the whole problem. When appending test cases, you can keep the current limits.',
+        ),
+        buttons: [
+          localize('Cancel'),
+          localize('Keep Current Limits'),
+          localize('Use Imported Limits'),
+        ],
         defaultId: 1,
         cancelId: 0,
         noLink: true,
@@ -2038,21 +2130,25 @@ async function initialize() {
     const imported = mergeTests(current.problem, patch, mode, adoptLimits);
     const confirm = await messageBox({
       type: 'question',
-      title: '确认导入',
-      message:
-        (mode === 'replace' ? '覆盖后' : '追加后') +
-        '共 ' +
-        imported.problem.testCases.length +
-        ' 个测试点',
-      detail:
+      title: localize('Confirm Import'),
+      message: localize(
+        '{0}: {1} test cases',
+        mode === 'replace' ? localize('After replacing') : localize('After appending'),
+        imported.problem.testCases.length,
+      ),
+      detail: localize(
+        '{0}\nRun the tests again after importing.',
         (mode === 'append'
-          ? '原测试点及其比较规则保留。'
-          : '仅替换测试点及文件中明确给出的规则，源码保留。') +
-        (imported.renamed.length
-          ? '\n编号冲突已调整：' + imported.renamed.map((x) => x.from + ' → ' + x.to).join('、')
-          : '') +
-        '\n导入后需要重新测试。',
-      buttons: ['取消', '导入'],
+          ? localize('Existing test cases and their comparison rules are kept.')
+          : localize(
+              'Replaces the test cases and rules explicitly supplied in the file. Source files are kept.',
+            )) +
+          (imported.renamed.length
+            ? localize('\nConflicting IDs were renamed: ') +
+              imported.renamed.map((x) => x.from + ' → ' + x.to).join('、')
+            : ''),
+      ),
+      buttons: [localize('Cancel'), localize('Import')],
       defaultId: 1,
       cancelId: 0,
       noLink: true,
@@ -2069,9 +2165,9 @@ async function initialize() {
     requireIdle();
     await saves;
     const selected = await dialog.showOpenDialog(win, {
-      title: '导入实验项目',
+      title: localize('Import Experiment'),
       properties: ['openFile'],
-      filters: [{ name: '实验项目 JSON', extensions: ['json', 'zip'] }],
+      filters: [{ name: localize('Experiment JSON'), extensions: ['json', 'zip'] }],
     });
     if (selected.canceled) return null;
     const value = (
@@ -2085,10 +2181,10 @@ async function initialize() {
     if (target && !testsOnly) {
       const choice = await messageBox({
         type: 'question',
-        title: '导入实验项目',
-        message: '“' + target.labId + '”已存在。',
-        detail: '更新测试点会保留源码、模板和正在编辑的内容。',
-        buttons: ['取消', '更新测试点', '导入副本'],
+        title: localize('Import Experiment'),
+        message: localize('“{0}” already exists.', target.labId),
+        detail: localize('Updating test cases keeps source files, templates, and unsaved edits.'),
+        buttons: [localize('Cancel'), localize('Update Test Cases'), localize('Import Copy')],
         defaultId: 1,
         cancelId: 0,
         noLink: true,
@@ -2098,9 +2194,13 @@ async function initialize() {
     }
     if (update) {
       const incoming = parseProjectTests(value);
-      if (!target) throw new Error('未找到项目“' + incoming.labId + '”，请先导入完整项目。');
+      if (!target)
+        throw new UIError(
+          'Experiment “{0}” was not found. Import the complete experiment first.',
+          incoming.labId,
+        );
       if (incoming.mode !== (target.mode ?? 'problem-set'))
-        throw new Error('项目模式不符，无法更新测试点。');
+        throw new UIError('The experiment modes do not match. Test cases cannot be updated.');
       if (incoming.mode === 'project') {
         const current =
           currentDocument?.problem.labId === target.labId
@@ -2109,10 +2209,16 @@ async function initialize() {
         const tests = mergeTests(current, incoming.tests!, 'replace').problem;
         const answer = await messageBox({
           type: 'question',
-          title: '更新项目测试点',
-          message: '更新“' + target.labId + '”的 ' + tests.testCases.length + ' 个测试点',
-          detail: '源码、LPMake与未保存编辑保留。空测试集将清空现有测试点。',
-          buttons: ['取消', '更新测试点'],
+          title: localize('Update Experiment Test Cases'),
+          message: localize(
+            'Update Test Cases for “{0}” ({1})',
+            target.labId,
+            tests.testCases.length,
+          ),
+          detail: localize(
+            'Source files, LPMake, and unsaved edits are kept. An empty test set clears the existing test cases.',
+          ),
+          buttons: [localize('Cancel'), localize('Update Test Cases')],
           defaultId: 0,
           cancelId: 0,
           noLink: true,
@@ -2124,7 +2230,10 @@ async function initialize() {
       }
       const missing = incoming.problems!.filter((p) => !target.problems.includes(p.problemId));
       if (missing.length)
-        throw new Error('以下题号不存在：' + missing.map((p) => p.problemId).join('、'));
+        throw new UIError(
+          'These problem IDs were not found: {0}',
+          missing.map((p) => p.problemId).join('、'),
+        );
       const rules = await Promise.all(
         incoming.problems!.map(async (p) => {
           const current =
@@ -2137,20 +2246,22 @@ async function initialize() {
       );
       const choice = await messageBox({
         type: 'question',
-        title: '更新项目测试点',
-        message: '更新“' + target.labId + '”的 ' + rules.length + ' 道题目',
-        detail:
+        title: localize('Update Experiment Test Cases'),
+        message: localize('Update Problems in “{0}” ({1})', target.labId, rules.length),
+        detail: localize(
+          '{0}\nSource files and unsaved edits are kept. Problems not listed here stay unchanged.',
           rules
             .map(
               (p) =>
                 p.problemId +
                 '：' +
                 p.testCases.length +
-                ' 个测试点' +
-                (!p.testCases.length ? '（将清空）' : ''),
+                localize(' test cases') +
+                (!p.testCases.length ? localize(' (will be cleared)') : ''),
             )
-            .join('\n') + '\n源码及未保存编辑保留；未列出的题目不变。',
-        buttons: ['取消', '更新测试点'],
+            .join('\n'),
+        ),
+        buttons: [localize('Cancel'), localize('Update Test Cases')],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
@@ -2187,11 +2298,14 @@ async function initialize() {
     if (workspace?.templateFilled) {
       const answer = await messageBox({
         type: 'info',
-        title: '项目构建配置',
-        message: '原项目未提供 LPMake.txt，已填充默认模板',
-        detail:
-          '可修改源文件匹配、包含目录及编译参数。忽略后仍使用默认模板，构建时可按诊断自行调整。',
-        buttons: ['修改配置', '忽略'],
+        title: localize('Project Build Configuration'),
+        message: localize(
+          'The experiment did not include LPMake.txt. A default template has been added.',
+        ),
+        detail: localize(
+          'You can edit the source patterns, include directories, and compiler arguments. Ignore keeps the default template; use the build diagnostics to adjust it later.',
+        ),
+        buttons: [localize('Edit Configuration'), localize('Ignore')],
         defaultId: 0,
         cancelId: 1,
         noLink: true,
@@ -2205,10 +2319,10 @@ async function initialize() {
     await saves;
     const problem = validateProblem(value);
     let content: unknown = exportIO(problem),
-      name = (problem.problemId || problem.labId || '测试点') + '.io.json';
+      name = (problem.problemId || problem.labId || localize('Test Cases')) + '.io.json';
     if (kind === 'project') {
       const target = (await storage.projects()).find((p) => p.labId === problem.labId);
-      if (!target) throw new Error('请先选择实验项目');
+      if (!target) throw new UIError('Select an experiment first');
       if (target.mode === 'project') {
         content = {
           schemaVersion: 2,
@@ -2229,9 +2343,12 @@ async function initialize() {
         content = exportProjectTests(problem.labId, rules);
         name = problem.labId + '.tests.json';
       }
-    } else if (kind !== 'current') throw new Error('导出类型无效');
+    } else if (kind !== 'current') throw new UIError('Invalid export type');
     const file = await dialog.showSaveDialog(win, {
-      title: kind === 'project' ? '导出项目测试点' : '导出当前测试点',
+      title:
+        kind === 'project'
+          ? localize('Export Experiment Test Cases')
+          : localize('Export Current Test Cases'),
       defaultPath: name,
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
@@ -2247,8 +2364,24 @@ async function initialize() {
       return;
     }
     const file = storage.paths(d.problem.labId, d.problem.problemId, d.language).problem;
-    if (!(await exists(file))) throw new Error('请先保存当前题目，再打开题目文件');
+    if (!(await exists(file)))
+      throw new UIError('Save the current problem before opening its rule file');
     shell.showItemInFolder(file);
+  });
+  ipcMain.handle('ui:language:get', (event) => {
+    if (event.sender !== win.webContents && event.sender !== shortcutWindow?.webContents)
+      throw new UIError('Invalid window');
+    return currentLanguage();
+  });
+  handle('ui:language', (language: UILanguage) => {
+    if (!['zh-CN', 'en-US'].includes(language)) throw new Error('Invalid interface language.');
+    setUILanguage(language);
+    installApplicationMenu();
+    for (const window of BrowserWindow.getAllWindows())
+      if (window !== win && !window.isDestroyed()) {
+        window.webContents.send('ui:language', language);
+        window.setTitle(localize('LabPad · Keyboard Shortcuts'));
+      }
   });
   handle('compile:state', async (value: Draft) => {
     let saved = false;
@@ -2264,10 +2397,10 @@ async function initialize() {
   handle('compile:confirm', async () => {
     const result = await messageBox({
       type: 'question',
-      title: '保存后编译',
-      message: '有未保存的修改。',
-      detail: '编译使用已保存的文件。',
-      buttons: ['保存并编译', '取消'],
+      title: localize('Save Before Compiling'),
+      message: localize('There are unsaved changes.'),
+      detail: localize('Compilation uses saved files.'),
+      buttons: [localize('Save and Compile'), localize('Cancel')],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -2279,7 +2412,8 @@ async function initialize() {
       await stopWarmup();
       await compiledProgram.clear();
       const context = await programContext(value);
-      if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
+      if (!context.saved)
+        throw new UIError('Save the files included in the build before compiling.');
       const task = compiledProgram.compile(
         context.key,
         context.draft,
@@ -2302,7 +2436,8 @@ async function initialize() {
   handle('judge', async (value: Draft, ids?: string[]) =>
     reserveExecution(async (abort) => {
       const context = await programContext(value);
-      if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
+      if (!context.saved)
+        throw new UIError('Save the files included in the build before compiling.');
       const d = context.draft,
         options = context.options,
         program = compiledProgram.require(context.key);
@@ -2328,7 +2463,8 @@ async function initialize() {
   handle('terminal:context', async (value: Draft) => (await shellFor(value)).context());
   handle('terminal:command', async (value: Draft, text: string) => {
     if (active && nativeSession && !nativeActive()) await active;
-    if (typeof text !== 'string' || Buffer.byteLength(text) > 1048576) throw Error('命令过长。');
+    if (typeof text !== 'string' || Buffer.byteLength(text) > 1048576)
+      throw new UIError('The command is too long.');
     const draft = validateDraft(value),
       shell = await shellFor(draft);
     await shell.context();
@@ -2358,10 +2494,12 @@ async function initialize() {
       (
         await messageBox({
           type: 'question',
-          title: '保存并重启',
-          message: '源码或构建配置有未保存的修改。',
-          detail: '保存完成后会停止当前调试，重新编译并启动。',
-          buttons: ['保存并重启', '取消'],
+          title: localize('Save and Restart'),
+          message: localize('Source files or build configuration have unsaved changes.'),
+          detail: localize(
+            'After saving, the current debug session stops. The project is then recompiled and restarted.',
+          ),
+          buttons: [localize('Save and Restart'), localize('Cancel')],
           defaultId: 0,
           cancelId: 1,
           noLink: true,
@@ -2373,23 +2511,24 @@ async function initialize() {
   );
   handle('native:control', async (action: string) => {
     if (!nativeSession || !['continue', 'pause', 'next', 'stepIn', 'stepOut'].includes(action))
-      throw Error('没有可操作的调试会话。');
+      throw new UIError('No active debug session');
     await nativeSession.control(action as 'continue');
     return nativeView();
   });
   handle('native:stop', stop);
   handle('native:frame', async (id: number) => {
-    if (!Number.isSafeInteger(id) || !nativeSession) throw Error('调用帧无效');
+    if (!Number.isSafeInteger(id) || !nativeSession) throw new UIError('Invalid stack frame');
     await nativeSession.selectFrame(id);
     return nativeView();
   });
   handle('native:variables', async (ref: number, start = 0, inspectionId?: string) => {
-    if (!Number.isSafeInteger(ref) || ref < 1 || !nativeSession) throw Error('变量无效');
+    if (!Number.isSafeInteger(ref) || ref < 1 || !nativeSession)
+      throw new UIError('Invalid variable');
     return nativeSession.variables(ref, start, inspectionId);
   });
   handle('native:watch', async (expression: string, inspectionId?: string) => {
     if (typeof expression !== 'string' || expression.length > 1024 || !nativeSession)
-      throw Error('监视表达式无效');
+      throw new UIError('Invalid watch expression');
     return nativeSession.evaluate(expression, inspectionId);
   });
   handle('native:breakpoints', async (values: SourceBreakpoint[]) => {
@@ -2417,7 +2556,7 @@ async function initialize() {
           !Array.isArray(value.watches) ||
           value.watches.length > 100
         )
-          throw Error('调试视图设置无效');
+          throw new UIError('Invalid debug view settings');
         const breakpoints = value.breakpoints.map((b) => {
           workspacePath(b.path);
           if (
@@ -2427,7 +2566,7 @@ async function initialize() {
             (b.condition !== undefined &&
               (typeof b.condition !== 'string' || b.condition.length > 1024))
           )
-            throw Error('断点设置无效');
+            throw new UIError('Invalid breakpoint settings');
           return {
             path: b.path,
             line: b.line,
@@ -2436,7 +2575,7 @@ async function initialize() {
           };
         });
         if (value.watches.some((w) => typeof w !== 'string' || w.length > 1024))
-          throw Error('监视设置无效');
+          throw new UIError('Invalid watch settings');
         await storage.workspace.update(lab, { debugView: { breakpoints, watches: value.watches } });
       }
       return (await storage.workspace.read(lab)).debugView ?? { breakpoints: [], watches: [] };
@@ -2470,27 +2609,27 @@ async function initialize() {
       } catch {}
   });
 }
-app.whenReady().then(async () => {
+function installApplicationMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
       {
-        label: '编辑',
+        label: localize('Edit'),
         submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
+          { role: 'undo', label: localize('Undo') },
+          { role: 'redo', label: localize('Redo') },
           { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
+          { role: 'cut', label: localize('Cut') },
+          { role: 'copy', label: localize('Copy') },
+          { role: 'paste', label: localize('Paste') },
+          { role: 'selectAll', label: localize('Select All') },
         ],
       },
       {
-        label: '视图',
+        label: localize('View'),
         submenu: [
           {
-            label: '实际大小',
+            label: localize('Actual Size'),
             accelerator: 'CommandOrControl+0',
             click: () => {
               win.webContents.setZoomFactor(1);
@@ -2501,16 +2640,20 @@ app.whenReady().then(async () => {
               }
             },
           },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
+          { role: 'zoomIn', label: localize('Zoom In') },
+          { role: 'zoomOut', label: localize('Zoom Out') },
           {
             role: 'togglefullscreen',
+            label: localize('Toggle Full Screen'),
             accelerator: process.platform === 'darwin' ? 'Control+Command+F' : 'Control+Shift+F11',
           },
         ],
       },
     ] as Electron.MenuItemConstructorOptions[]),
   );
+}
+app.whenReady().then(async () => {
+  installApplicationMenu();
   const icon = nativeImage.createFromPath(iconPath);
   if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
   win = new BrowserWindow({
@@ -2553,7 +2696,10 @@ app.whenReady().then(async () => {
   try {
     await initialize();
   } catch (e) {
-    dialog.showErrorBox('无法打开 LabPad 数据目录', storage.root + '\n\n' + String(e));
+    dialog.showErrorBox(
+      localize('Cannot Open the LabPad Data Folder'),
+      storage.root + '\n\n' + String(e),
+    );
     await compiler.dispose();
     await formatter.dispose();
     win.destroy();
@@ -2597,7 +2743,7 @@ app.whenReady().then(async () => {
         app.quit();
       } catch (e) {
         closing = false;
-        dialog.showErrorBox('尚未保存', String(e));
+        dialog.showErrorBox(localize('Not Saved'), String(e));
       }
     })();
   });

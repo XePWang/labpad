@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { t } from '../i18n';
+
 import { hasNewFocus } from '../menu-focus';
 import { isCodeFile } from '../../shared/file-language';
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
@@ -212,7 +214,7 @@ async function submit() {
   const value = edit.value;
   if (!value || saving.value) return;
   if (!value.name.trim()) {
-    value.error = '请输入' + (value.directory ? '文件夹名' : '文件名');
+    value.error = t('Enter a {0}', value.directory ? t('folder name') : t('filename'));
     return;
   }
   const name = (value.parent ? value.parent + '/' : '') + value.name;
@@ -463,37 +465,37 @@ defineExpose({
 });
 </script>
 <template>
-  <aside ref="host" class="file-tree" aria-label="文件区">
+  <aside ref="host" class="file-tree" :aria-label="t('File Explorer')">
     <div class="tree-heading">
-      <strong>文件</strong
+      <strong>{{ t('Files') }}</strong
       ><small v-if="selected.length > 1" class="tree-selection-count">{{ selected.length }}</small>
       <button
-        title="新建文件"
-        aria-label="新建文件"
+        :title="t('New File')"
+        :aria-label="t('New File')"
         :disabled="disabled || saving"
         @click="begin('newFile')"
       >
         <ActionIcon name="filePlus" />
       </button>
       <button
-        title="新建文件夹"
-        aria-label="新建文件夹"
+        :title="t('New Folder')"
+        :aria-label="t('New Folder')"
         :disabled="disabled || saving"
         @click="begin('newFolder')"
       >
         <ActionIcon name="folderPlus" />
       </button>
       <button
-        title="刷新文件"
-        aria-label="刷新文件"
+        :title="t('Refresh Files')"
+        :aria-label="t('Refresh Files')"
         :disabled="saving"
         @click="emit('action', 'refresh', [])"
       >
         <ActionIcon name="refresh" />
       </button>
       <button
-        title="折叠全部文件夹"
-        aria-label="折叠全部文件夹"
+        :title="t('Collapse All Folders')"
+        :aria-label="t('Collapse All Folders')"
         :disabled="saving || !expanded.length"
         @click="
           cancel();
@@ -550,8 +552,8 @@ defineExpose({
                   ><input
                     :ref="setInput"
                     v-model="edit.name"
-                    aria-label="项目内路径"
-                    :placeholder="edit.directory ? '文件夹名' : '文件名'"
+                    :aria-label="t('Path within Project')"
+                    :placeholder="edit.directory ? t('folder name') : t('filename')"
                     :disabled="saving"
                     :aria-invalid="!!edit.error"
                     :aria-describedby="edit.error ? 'tree-edit-error' : undefined"
@@ -563,11 +565,9 @@ defineExpose({
                   />
                 </div>
                 <label v-if="edit.action === 'rename' && project" class="tree-edit-option"
-                  ><input
-                    v-model="edit.syncReferences"
-                    type="checkbox"
-                    @blur="blur"
-                  />同步构建引用</label
+                  ><input v-model="edit.syncReferences" type="checkbox" @blur="blur" />{{
+                    t('Update Build References')
+                  }}</label
                 >
                 <p
                   v-if="edit.error"
@@ -634,59 +634,61 @@ defineExpose({
                     :data-theme="theme"
                     @close-auto-focus="contextClosed"
                   >
-                    <ContextMenuItem class="tab-menu-item" @select="menu('open', row.file)"
-                      >打开</ContextMenuItem
-                    >
+                    <ContextMenuItem class="tab-menu-item" @select="menu('open', row.file)">{{
+                      t('Open')
+                    }}</ContextMenuItem>
                     <ContextMenuItem
                       v-if="row.file.directory"
                       class="tab-menu-item"
                       @select="menu('newFile', row.file)"
-                      >新建文件…</ContextMenuItem
+                      >{{ t('New File…') }}</ContextMenuItem
                     >
                     <ContextMenuItem
                       v-if="row.file.directory"
                       class="tab-menu-item"
                       @select="menu('newFolder', row.file)"
-                      >新建文件夹…</ContextMenuItem
+                      >{{ t('New Folder…') }}</ContextMenuItem
                     >
                     <ContextMenuSeparator class="tab-menu-separator" />
-                    <ContextMenuItem class="tab-menu-item" @select="menu('copy', row.file)"
-                      >复制</ContextMenuItem
-                    >
+                    <ContextMenuItem class="tab-menu-item" @select="menu('copy', row.file)">{{
+                      t('Copy')
+                    }}</ContextMenuItem>
                     <ContextMenuItem
                       class="tab-menu-item"
                       :disabled="protectedSelected"
                       @select="menu('cut', row.file)"
-                      >剪切</ContextMenuItem
+                      >{{ t('Cut') }}</ContextMenuItem
                     >
                     <ContextMenuItem
                       class="tab-menu-item"
                       :disabled="!canPaste"
                       @select="menu('paste', row.file)"
-                      >粘贴</ContextMenuItem
+                      >{{ t('Paste') }}</ContextMenuItem
                     >
                     <ContextMenuItem
                       class="tab-menu-item"
                       :disabled="selected.length !== 1 || protectedSelected"
                       @select="menu('rename', row.file)"
-                      >重命名…</ContextMenuItem
+                      >{{ t('Rename…') }}</ContextMenuItem
                     >
                     <ContextMenuSeparator class="tab-menu-separator" />
-                    <ContextMenuItem class="tab-menu-item" @select="menu('copyPath', row.file)"
-                      >复制路径</ContextMenuItem
+                    <ContextMenuItem class="tab-menu-item" @select="menu('copyPath', row.file)">{{
+                      t('Copy Path')
+                    }}</ContextMenuItem>
+                    <ContextMenuItem
+                      class="tab-menu-item"
+                      @select="menu('copyRelative', row.file)"
+                      >{{ t('Copy Relative Path') }}</ContextMenuItem
                     >
-                    <ContextMenuItem class="tab-menu-item" @select="menu('copyRelative', row.file)"
-                      >复制相对路径</ContextMenuItem
-                    >
-                    <ContextMenuItem class="tab-menu-item" @select="menu('reveal', row.file)"
-                      >在文件管理器中显示</ContextMenuItem
-                    >
+                    <ContextMenuItem class="tab-menu-item" @select="menu('reveal', row.file)">{{
+                      t('Reveal in File Manager')
+                    }}</ContextMenuItem>
                     <ContextMenuSeparator class="tab-menu-separator" />
                     <ContextMenuItem
                       class="tab-menu-item"
                       :disabled="protectedSelected"
                       @select="menu('delete', row.file)"
-                      >删除…</ContextMenuItem
+                      >{{ t('Delete…') }}</ContextMenuItem
                     >
                   </ContextMenuContent></ContextMenuPortal
                 ></ContextMenuRoot
@@ -716,7 +718,7 @@ defineExpose({
               rootSelected = true;
               menu('newFile');
             "
-            >新建文件…</ContextMenuItem
+            >{{ t('New File…') }}</ContextMenuItem
           >
           <ContextMenuItem
             class="tab-menu-item"
@@ -724,7 +726,7 @@ defineExpose({
               rootSelected = true;
               menu('newFolder');
             "
-            >新建文件夹…</ContextMenuItem
+            >{{ t('New Folder…') }}</ContextMenuItem
           >
           <ContextMenuItem
             class="tab-menu-item"
@@ -733,18 +735,18 @@ defineExpose({
               rootSelected = true;
               menu('paste');
             "
-            >粘贴</ContextMenuItem
+            >{{ t('Paste') }}</ContextMenuItem
           >
           <ContextMenuSeparator class="tab-menu-separator" />
-          <ContextMenuItem class="tab-menu-item" @select="emit('action', 'refresh', [])"
-            >刷新文件</ContextMenuItem
-          >
-          <ContextMenuItem class="tab-menu-item" @select="emit('expand', [])"
-            >折叠全部文件夹</ContextMenuItem
-          >
-          <ContextMenuItem class="tab-menu-item" @select="emit('action', 'reveal', [])"
-            >在文件管理器中显示</ContextMenuItem
-          >
+          <ContextMenuItem class="tab-menu-item" @select="emit('action', 'refresh', [])">{{
+            t('Refresh Files')
+          }}</ContextMenuItem>
+          <ContextMenuItem class="tab-menu-item" @select="emit('expand', [])">{{
+            t('Collapse All Folders')
+          }}</ContextMenuItem>
+          <ContextMenuItem class="tab-menu-item" @select="emit('action', 'reveal', [])">{{
+            t('Reveal in File Manager')
+          }}</ContextMenuItem>
         </ContextMenuContent></ContextMenuPortal
       ></ContextMenuRoot
     >

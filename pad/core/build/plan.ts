@@ -1,3 +1,4 @@
+import { t as localize } from '../../shared/i18n';
 import { isSourceFile, sourceLanguage } from '../../shared/file-language';
 import path from 'node:path';
 import { sourceNames } from './glob';
@@ -65,29 +66,29 @@ function compileLayers(
           withDefaultStandard(inherited, language).length - inherited.length,
         );
   return [
-    { label: '语言标准兜底', args: fallback },
-    { label: '本机默认参数', args: [...inherited] },
+    { label: localize('Default Language Standard'), args: fallback },
+    { label: localize('Global Compiler Defaults'), args: [...inherited] },
     {
-      label: 'LPMake 语言标准',
+      label: localize('LPMake Language Standard'),
       args: spec.standards[language] ? ['-std=' + spec.standards[language]] : [],
     },
     {
-      label: '构建模式 · ' + spec.mode,
+      label: localize('Build Mode · {0}', spec.mode),
       args: spec.mode === 'debug' ? ['-g', '-O0', '-UNDEBUG'] : ['-O2', '-DNDEBUG'],
     },
-    { label: '显式优化', args: spec.optimize ? ['-' + spec.optimize] : [] },
+    { label: localize('Explicit Optimization'), args: spec.optimize ? ['-' + spec.optimize] : [] },
     {
-      label: '包含目录与宏',
+      label: localize('Include Directories and Definitions'),
       args: [
         ...[...new Set(spec.includeDirs.map(relative))].map((d) => '-I' + path.join(root, d)),
         ...spec.defines.map((d) => '-D' + d),
       ],
     },
     {
-      label: '额外 ' + (language === 'c' ? 'C' : 'C++') + ' 编译参数',
+      label: localize('Extra {0} Compiler Arguments', language === 'c' ? 'C' : 'C++'),
       args: [...(language === 'c' ? spec.cflags : spec.cxxflags)],
     },
-    { label: 'LabPad 编译语言', args: ['-x', language === 'c' ? 'c' : 'c++'] },
+    { label: localize('LabPad Source Language'), args: ['-x', language === 'c' ? 'c' : 'c++'] },
   ].filter((g) => g.args.length);
 }
 function linkLayers(
@@ -98,15 +99,15 @@ function linkLayers(
   target?: string,
 ): ParameterLayer[] {
   return [
-    { label: '本机默认链接参数', args: inherit ? [...base.link] : [] },
+    { label: localize('Global Linker Defaults'), args: inherit ? [...base.link] : [] },
     {
-      label: '库目录与链接库',
+      label: localize('Library Directories and Libraries'),
       args: [
         ...spec.linkDirs.map((d) => '-L' + path.join(root, relative(d))),
         ...spec.links.filter((l) => l !== 'm' || !msvcTarget(target)).map((l) => '-l' + l),
       ],
     },
-    { label: '额外链接参数', args: [...spec.ldflags] },
+    { label: localize('Extra Linker Arguments'), args: [...spec.ldflags] },
   ].filter((g) => g.args.length);
 }
 export function projectPlan(
@@ -170,10 +171,10 @@ export function independentMake(text: string, base: Defaults): string {
     link: base.link.map(escape),
   };
   const c = compileLayers(previous, 'c', defaults, true, '$(projectdir)')
-    .filter((g) => g.label !== 'LabPad 编译语言')
+    .filter((g) => g.label !== localize('LabPad Source Language'))
     .flatMap((g) => g.args);
   const cpp = compileLayers(previous, 'cpp', defaults, true, '$(projectdir)')
-    .filter((g) => g.label !== 'LabPad 编译语言')
+    .filter((g) => g.label !== localize('LabPad Source Language'))
     .flatMap((g) => g.args);
   const link = linkLayers(previous, defaults, true, '$(projectdir)').flatMap((g) => g.args);
   let result = text;
@@ -308,7 +309,9 @@ export function previewPlan(draft: Draft, config: CompilerContext): BuildPreview
         ? compileLayers(spec, language, base, false, '<project>')
         : [
             {
-              label: '本机或题集参数（含语言标准兜底）',
+              label: localize(
+                'Global or Problem-Set Arguments (with the default language standard)',
+              ),
               args: plan.units.find((u) => u.language === language)!.args,
             },
           ],
@@ -332,12 +335,11 @@ export function previewPlan(draft: Draft, config: CompilerContext): BuildPreview
           severity: 'warning',
           field: language === 'c' ? 'cStandard' : 'cppStandard',
           language,
-          message:
-            '额外 ' +
-            (language === 'c' ? 'C' : 'C++') +
-            ' 参数中的标准 ' +
-            own.standard +
-            ' 将覆盖此项。',
+          message: localize(
+            'The standard {1} in extra {0} arguments overrides this setting.',
+            language === 'c' ? 'C' : 'C++',
+            own.standard,
+          ),
         });
       if (
         own.optimization &&
@@ -347,20 +349,23 @@ export function previewPlan(draft: Draft, config: CompilerContext): BuildPreview
           severity: 'warning',
           field: 'optimize',
           language,
-          message:
-            '额外 ' +
-            (language === 'c' ? 'C' : 'C++') +
-            ' 参数中的 ' +
-            full.optimization +
-            ' 将覆盖模式或优化设置。',
+          message: localize(
+            'The option {1} in extra {0} arguments overrides the build mode or optimization setting.',
+            language === 'c' ? 'C' : 'C++',
+            full.optimization,
+          ),
         });
       if (own.symbols === '-g0')
-        issues.push({ severity: 'info', field: 'mode', message: '额外参数 -g0 将关闭调试符号。' });
+        issues.push({
+          severity: 'info',
+          field: 'mode',
+          message: localize('The extra argument -g0 disables debug symbols.'),
+        });
       if (own.ndebug !== undefined)
         issues.push({
           severity: 'info',
           field: 'mode',
-          message: '额外参数对 NDEBUG 的最终设置：' + full.ndebug + '。',
+          message: localize('Effective NDEBUG setting from extra arguments: {0}.', full.ndebug),
         });
       issues.push(...relativePathAdvice(extra, language));
     }
@@ -368,7 +373,9 @@ export function previewPlan(draft: Draft, config: CompilerContext): BuildPreview
       issues.push({
         severity: 'info',
         field: 'link',
-        message: '当前目标的数学函数由 C 运行库提供，链接时无需单独传入 -lm。',
+        message: localize(
+          'The target’s C runtime provides math functions. Linking does not need a separate -lm.',
+        ),
       });
     issues.push(
       ...relativePathAdvice(spec.ldflags, 'link'),
@@ -386,16 +393,30 @@ export function previewPlan(draft: Draft, config: CompilerContext): BuildPreview
           ...group,
           args: group.args.map((arg) => expandProjectArgument(arg, '<project>')),
         }))
-      : [{ label: '本机或题集链接参数', args: plan.linkArgs }],
+      : [{ label: localize('Global or Problem-Set Linker Arguments'), args: plan.linkArgs }],
     units: plan.units.map((u) => ({ ...u, summary: argumentSummary(u.args) })),
     linkArgs: plan.linkArgs,
     issues: [...new Map(issues.map((i) => [i.field + i.message, i])).values()],
     origins: draft.workspace
-      ? ['LPMake.txt', '标准与模式', '目录与宏', '额外参数', 'LabPad 受控参数']
-      : ['本机或题集参数', '语言标准兜底', 'LabPad 受控参数'],
+      ? [
+          'LPMake.txt',
+          localize('Standards and Build Mode'),
+          localize('Directories and Definitions'),
+          localize('Extra Arguments'),
+          localize('Arguments Managed by LabPad'),
+        ]
+      : [
+          localize('Global or Problem-Set Arguments'),
+          localize('Default Language Standard'),
+          localize('Arguments Managed by LabPad'),
+        ],
     workDirectories: {
-      compile: draft.workspace ? '<project>（源码快照）' : '<run>（运行临时目录）',
-      link: draft.workspace ? '<build>（构建目录）' : '<run>（运行临时目录）',
+      compile: draft.workspace
+        ? localize('<project> (source snapshot)')
+        : localize('<run> (temporary runtime directory)'),
+      link: draft.workspace
+        ? localize('<build> (build directory)')
+        : localize('<run> (temporary runtime directory)'),
     },
   };
 }

@@ -51,6 +51,7 @@ export interface EditorCursor {
   focused: boolean;
 }
 export interface Config {
+  uiLanguage?: 'zh-CN' | 'en-US';
   typography?: Typography;
   schemaVersion: 1;
   classId: string;
@@ -216,6 +217,10 @@ export interface FileEvent {
   files: WorkspaceFile[];
 }
 export interface Bridge {
+  interfaceLanguage(): Promise<'zh-CN' | 'en-US'>;
+  previewLanguage(language: 'zh-CN' | 'en-US'): Promise<void>;
+  onLanguage(callback: (language: 'zh-CN' | 'en-US') => void): () => void;
+
   terminalContext(draft: Draft): Promise<TerminalContext>;
   terminalCommand(
     draft: Draft,
@@ -335,6 +340,7 @@ export interface Bridge {
   workspaceState(drafts: Draft[], dirty: boolean, edits?: WorkspaceEdits): void;
   openShortcuts(): Promise<void>;
   shortcutSettings(): Promise<{
+    uiLanguage?: 'zh-CN' | 'en-US';
     shortcuts: Record<string, string[]>;
     theme: 'light' | 'dark';
     platform: string;

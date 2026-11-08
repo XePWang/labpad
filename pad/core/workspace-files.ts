@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../shared/i18n';
 import { readEditableFile, readFileLimited } from './read-file';
 import { EDITOR_FILE_BYTES } from '../shared/resource-limits';
 import { isCodeFile } from '../shared/file-language';
@@ -56,7 +57,8 @@ export function snapshotEntries(snapshot: WorkspaceSnapshot): Record<string, Buf
     Object.entries(snapshot.files).map(([name, text]) => [name, Buffer.from(text, 'utf8')]),
   );
   for (const [name, base64] of Object.entries(snapshot.binaryFiles ?? {})) {
-    if (Object.hasOwn(entries, name)) throw Error('文件同时具有文本和二进制内容：' + name);
+    if (Object.hasOwn(entries, name))
+      throw new UIError('File contains both text and binary representations: {0}', name);
     entries[name] = Buffer.from(base64, 'base64');
   }
   return entries;
@@ -89,18 +91,19 @@ export async function directorySnapshot(
         e.name.startsWith('.labpad-txn-')
       )
         continue;
-      if (e.isSymbolicLink()) throw Error('项目中存在符号链接：' + name);
+      if (e.isSymbolicLink()) throw new UIError('The project contains a symbolic link: {0}', name);
       if (e.isDirectory()) {
         if (!(await managedBuild(path.join(dir, e.name))))
           await walk(path.join(dir, e.name), name + '/');
       } else if (e.isFile()) {
         if (!includeFile(name)) continue;
         if (name !== 'labpad.project.json') workspacePath(name);
-        if (Object.keys(entries).length >= 4096) throw Error('项目超过4096项 / 64MB限制');
+        if (Object.keys(entries).length >= 4096)
+          throw new UIError('The project exceeds the 4,096-entry or 64 MB limit');
         const content = await readFileLimited(
           path.join(dir, e.name),
           Math.min(EDITOR_FILE_BYTES, 64 * 1024 ** 2 - bytes),
-          '项目文件超过 8 MB 或项目内容超过 64 MB，无法读取。',
+          localize('A project file exceeds 8 MB or the project exceeds 64 MB and cannot be read.'),
         );
         bytes += content.length;
         entries[name] = content;

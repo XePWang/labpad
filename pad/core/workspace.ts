@@ -1,3 +1,4 @@
+import { t as localize, UIError } from '../shared/i18n';
 import { readEditableFile } from './read-file';
 import { isSourceFile, isCodeFile, editorLanguage } from '../shared/file-language';
 import { directorySnapshot } from './workspace-files';
@@ -25,7 +26,7 @@ export class WorkspaceStore {
   private tail: Promise<unknown> = Promise.resolve();
   constructor(readonly dataRoot: string) {}
   root(lab: string) {
-    return path.join(this.dataRoot, 'projects', filePart(lab, '项目名称'));
+    return path.join(this.dataRoot, 'projects', filePart(lab, localize('Experiment Name')));
   }
   metadata(lab: string) {
     return path.join(this.root(lab), '.labpad-project.json');
@@ -51,10 +52,10 @@ export class WorkspaceStore {
       value.labId !== lab ||
       (value.inheritDefaults !== undefined && typeof value.inheritDefaults !== 'boolean')
     )
-      throw new Error('项目状态格式无效');
+      throw new UIError('Invalid project state format');
     validateProblem(value.tests);
     if (value.tests.labId !== lab || value.tests.problemId !== '')
-      throw new Error('工作区测试目标不符');
+      throw new UIError('The workspace test target does not match');
     return value;
   }
   private async write(lab: string, state: WorkspaceState) {
@@ -95,7 +96,9 @@ export class WorkspaceStore {
               .filter((r) => r.status === 'rejected')
               .map((r) => (r as PromiseRejectedResult).reason),
           ],
-          '保存失败，恢复原文件时也发生错误；编辑草稿仍保留。',
+          localize(
+            'Saving failed, and the original file could not be restored. Your editor draft is kept.',
+          ),
         );
       throw error;
     }
@@ -126,7 +129,7 @@ export class WorkspaceStore {
       current = path.join(current, parts[i]);
       try {
         if ((await lstat(current)).isSymbolicLink())
-          throw new Error('项目文件不支持符号链接：' + file);
+          throw new UIError('Project files do not support symbolic links: {0}', file);
       } catch (e: any) {
         if (e.code === 'ENOENT' && allowMissing) break;
         throw e;
@@ -143,7 +146,7 @@ export class WorkspaceStore {
     const pkg = value ? parseWorkspacePackage(value) : undefined,
       root = this.root(lab);
     await mkdir(path.dirname(root), { recursive: true });
-    if (await exists(root)) throw new Error('项目已存在');
+    if (await exists(root)) throw new UIError('The experiment already exists');
     const temporary = await mkdtemp(path.join(this.dataRoot, '.workspace-'));
     try {
       const files = pkg
@@ -196,11 +199,12 @@ export class WorkspaceStore {
       bytes.includes(0) &&
       !((bytes[0] === 255 && bytes[1] === 254) || (bytes[0] === 254 && bytes[1] === 255))
     )
-      throw Error('这是二进制文件，请在文件管理器中查看。');
+      throw new UIError('This is a binary file. View it in the file manager.');
     const decoded = decodeText(bytes);
     let forced: Language | undefined;
     try {
-      forced = parse((await readEditableFile(await this.path(lab, 'LPMake.txt'))).toString('utf8')).spec.language;
+      forced = parse((await readEditableFile(await this.path(lab, 'LPMake.txt'))).toString('utf8'))
+        .spec.language;
     } catch {
       /* A broken build configuration must remain editable. */
     }
@@ -240,7 +244,7 @@ export class WorkspaceStore {
             decodeText(Buffer.from(snapshot.binaryFiles![d.file], 'base64')).encoding,
           ).toString('base64');
         else if (!(await exists(await this.path(lab, d.file, true))))
-          throw new Error('编辑文件已不存在：' + d.file);
+          throw new UIError('The file being edited no longer exists: {0}', d.file);
       }
     return {
       ...snapshot,
@@ -249,7 +253,7 @@ export class WorkspaceStore {
     };
   }
   async save(draft: Draft, { rules: saveRules = true } = {}) {
-    if (!draft.file) throw new Error('请选择项目文件');
+    if (!draft.file) throw new UIError('Choose a project file');
     const lab = draft.problem.labId,
       target = await this.path(lab, draft.file);
     return this.enqueue(async () => {

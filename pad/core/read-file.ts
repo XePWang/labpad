@@ -1,3 +1,4 @@
+import { UIError, t as localize } from '../shared/i18n';
 import { cleanupAll, addCleanupNotes, cleanupText } from './cleanup';
 import {
   EDITOR_FILE_BYTES,
@@ -20,7 +21,7 @@ export async function readFileLimited(
   let failure: Error | undefined;
   try {
     const info = await handle.stat();
-    if (!info.isFile()) throw new Error('请选择普通文件。');
+    if (!info.isFile()) throw new UIError('Choose a regular file.');
     if (info.size > limit) throw new Error(message);
     const chunks: Buffer[] = [];
     let size = 0;
@@ -37,7 +38,9 @@ export async function readFileLimited(
     failure = error instanceof Error ? error : new Error(String(error));
     throw failure;
   } finally {
-    const warnings = await cleanupAll([{ label: '文件句柄', run: () => handle.close() }]);
+    const warnings = await cleanupAll([
+      { label: localize('File Handle'), run: () => handle.close() },
+    ]);
     if (failure) addCleanupNotes(failure, warnings);
     else if (warnings.length) throw Error(cleanupText(warnings).trim());
   }
@@ -47,13 +50,21 @@ export const readEditableFile = (file: string) =>
   readFileLimited(
     file,
     EDITOR_FILE_BYTES,
-    '文件超过 8 MB，无法在编辑器中打开。请在文件管理器中查看。',
+    localize(
+      'This file exceeds 8 MB and cannot be opened in the editor. View it in the file manager.',
+    ),
   );
 export const readArchiveFile = (file: string) =>
   readFileLimited(
     file,
     ARCHIVE_FILE_BYTES,
-    '压缩包超过 100 MB，无法导入。请移除构建产物后重新打包。',
+    localize(
+      'This archive exceeds 100 MB. Remove build outputs and create a new archive before importing.',
+    ),
   );
 export const readConfigFile = (file: string) =>
-  readFileLimited(file, CONFIG_FILE_BYTES, '配置文件超过 100 MB，无法导入。');
+  readFileLimited(
+    file,
+    CONFIG_FILE_BYTES,
+    localize('This configuration file exceeds 100 MB and cannot be imported.'),
+  );

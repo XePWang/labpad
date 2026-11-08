@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { t, uiLanguage } from '../i18n';
+import { editorLocale } from '../editor/phrases';
+import { closeCompletion } from '@codemirror/autocomplete';
+
 import { isCodeFile, isLpmake } from '../../shared/file-language';
 import { fallbackTextStyle, type TextStyle } from '../typography';
 import { Prec } from '@codemirror/state';
@@ -25,7 +29,13 @@ import {
   foldInside,
 } from '@codemirror/language';
 import { indentUnit } from '@codemirror/language';
-import { openSearchPanel } from '@codemirror/search';
+import {
+  openSearchPanel,
+  closeSearchPanel,
+  searchPanelOpen,
+  getSearchQuery,
+  setSearchQuery,
+} from '@codemirror/search';
 import { diff } from '@codemirror/merge';
 import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
 import {
@@ -71,7 +81,8 @@ const readOnly = new Compartment(),
   syntax = new Compartment(),
   completion = new Compartment(),
   debugView = new Compartment(),
-  typography = new Compartment();
+  typography = new Compartment(),
+  locale = new Compartment();
 const lpLanguage = LRLanguage.define({
   parser: parser.configure({
     props: [
@@ -120,8 +131,8 @@ class BreakMarker extends GutterMarker {
       (!b.enabled ? 'disabled' : b.verified ? 'verified' : 'pending') +
       (b.condition ? ' conditional' : '');
     el.title =
-      (b.condition ? '条件：' + b.condition + ' · ' : '') +
-      (b.message ?? (b.verified ? '已验证断点' : '待验证断点'));
+      (b.condition ? t('Condition: {0} · ', b.condition) : '') +
+      (b.message ?? (b.verified ? t('Verified Breakpoint') : t('Unverified Breakpoint')));
     el.setAttribute('aria-label', el.title);
     return el;
   }
@@ -281,7 +292,7 @@ function extensions(id = props.documentId) {
       EditorState.readOnly.of(!!props.disabled),
       EditorView.editable.of(!props.disabled),
     ]),
-    EditorView.contentAttributes.of({ 'aria-label': '源码编辑器' }),
+    locale.of(editorLocale()),
     EditorView.theme({
       '&': { height: '100%' },
       '.cm-scroller': { overflow: 'auto' },
@@ -367,6 +378,7 @@ watch(
       view.setState(saved?.state ?? EditorState.create({ doc: text, extensions: extensions(id) }));
       view.dispatch({
         effects: [
+          locale.reconfigure(editorLocale()),
           typography.reconfigure(textAppearance()),
           syntax.reconfigure(language()),
           completion.reconfigure(completions()),
@@ -436,6 +448,37 @@ watch(
   () => view?.dispatch({ effects: debugView.reconfigure(debugExtensions()) }),
   { deep: true },
 );
+watch(uiLanguage, () => {
+  for (const saved of states.values()) {
+    saved.state = saved.state.update({ effects: locale.reconfigure(editorLocale()) }).state;
+  }
+  if (!view) return;
+  const editor = view;
+  const wasOpen = searchPanelOpen(editor.state);
+  const focused = document.activeElement as HTMLElement | null;
+  const field =
+    focused instanceof HTMLInputElement && focused.closest('.cm-search')
+      ? { name: focused.name, from: focused.selectionStart, to: focused.selectionEnd }
+      : undefined;
+  const query = getSearchQuery(editor.state);
+  closeCompletion(editor);
+  if (wasOpen) closeSearchPanel(editor);
+  editor.dispatch({
+    effects: [locale.reconfigure(editorLocale()), debugView.reconfigure(debugExtensions())],
+  });
+  if (wasOpen) {
+    openSearchPanel(editor);
+    editor.dispatch({ effects: setSearchQuery.of(query) });
+    if (field) {
+      const input = editor.dom.querySelector<HTMLInputElement>(
+        `.cm-search input[name="${field.name}"]`,
+      );
+      input?.focus();
+      if (input && field.from !== null && field.to !== null)
+        input.setSelectionRange(field.from, field.to);
+    } else if (focused?.isConnected) focused.focus({ preventScroll: true });
+  }
+});
 onBeforeUnmount(() => {
   states.clear();
   view?.destroy();

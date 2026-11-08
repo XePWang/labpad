@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { computed as localeComputed } from 'vue';
+const noneLabel = localeComputed(() => t('<None>'));
+import { t } from '../i18n';
+
 import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
 import { ref, watch, computed } from 'vue';
 import {
@@ -79,13 +83,14 @@ function remove(lab: string) {
         >
           <DropdownMenuTrigger
             role="combobox"
-            aria-label="实验项目"
+            data-lab-selector
+            :aria-label="t('Experiment')"
             aria-haspopup="listbox"
             :aria-expanded="open"
             :data-value="value"
             :disabled="disabled || suspended"
             class="problem-trigger"
-            ><span>{{ value || '&lt;无&gt;' }}</span
+            ><span>{{ value || noneLabel }}</span
             ><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path
                 d="m3 5 4 4 4-4"
@@ -111,7 +116,7 @@ function remove(lab: string) {
               :aria-selected="!value"
               class="problem-option"
               @select="change('')"
-              >&lt;无&gt;</DropdownMenuItem
+              >{{ noneLabel }}</DropdownMenuItem
             >
             <ContextMenuRoot
               v-for="p in projects"
@@ -125,7 +130,9 @@ function remove(lab: string) {
                   class="problem-option"
                   @select="change(p.labId)"
                   ><span>{{ p.labId }}</span
-                  ><small>{{ p.mode === 'project' ? '项目' : '题集' }}</small></DropdownMenuItem
+                  ><small>{{
+                    p.mode === 'project' ? t('Project') : t('Problem Set')
+                  }}</small></DropdownMenuItem
                 ></ContextMenuTrigger
               ><ContextMenuPortal
                 ><ContextMenuContent
@@ -133,11 +140,12 @@ function remove(lab: string) {
                   @close-auto-focus="restoreMenuFocus"
                   class="tab-context"
                   :data-theme="theme"
-                  ><ContextMenuItem class="tab-menu-item" @select="build(p.labId)"
-                    >构建设置…</ContextMenuItem
-                  ><ContextMenuItem class="tab-menu-item" @select="remove(p.labId)"
-                    >删除项目…</ContextMenuItem
-                  ></ContextMenuContent
+                  ><ContextMenuItem class="tab-menu-item" @select="build(p.labId)">{{
+                    t('Build Settings…')
+                  }}</ContextMenuItem
+                  ><ContextMenuItem class="tab-menu-item" @select="remove(p.labId)">{{
+                    t('Delete Experiment…')
+                  }}</ContextMenuItem></ContextMenuContent
                 ></ContextMenuPortal
               ></ContextMenuRoot
             >
@@ -145,14 +153,14 @@ function remove(lab: string) {
               class="problem-option"
               :disabled="!value"
               @select="build(value)"
-              >构建设置…</DropdownMenuItem
+              >{{ t('Build Settings…') }}</DropdownMenuItem
             >
             <DropdownMenuItem
               role="option"
               :aria-selected="false"
               class="problem-option"
               @select="change('@new:lab')"
-              >＋ 新建项目…</DropdownMenuItem
+              >{{ t('+ New Experiment…') }}</DropdownMenuItem
             >
           </DropdownMenuContent></DropdownMenuRoot
         ></span
@@ -167,12 +175,12 @@ function remove(lab: string) {
           class="tab-menu-item"
           :disabled="disabled || !value"
           @select="build(value)"
-          >构建设置…</ContextMenuItem
+          >{{ t('Build Settings…') }}</ContextMenuItem
         ><ContextMenuItem
           class="tab-menu-item"
           :disabled="disabled || !value"
           @select="remove(value)"
-          >删除项目…</ContextMenuItem
+          >{{ t('Delete Experiment…') }}</ContextMenuItem
         ></ContextMenuContent
       ></ContextMenuPortal
     ></ContextMenuRoot
