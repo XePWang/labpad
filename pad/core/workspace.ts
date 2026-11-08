@@ -1,3 +1,4 @@
+import { readEditableFile } from './read-file';
 import { isSourceFile, isCodeFile, editorLanguage } from '../shared/file-language';
 import { directorySnapshot } from './workspace-files';
 import { FileService } from './files';
@@ -71,7 +72,7 @@ export class WorkspaceStore {
     };
   }
   private async commitSource(lab: string, target: string, source: string, state: WorkspaceState) {
-    const oldSource = await readFile(target),
+    const oldSource = await readEditableFile(target),
       oldMetadata = await readFile(this.metadata(lab));
     try {
       const bytes = sourceBytes(source, decodeText(oldSource).encoding);
@@ -104,7 +105,7 @@ export class WorkspaceStore {
       const state = (await readJSON(this.metadata(lab))) as WorkspaceState;
       if (!Object.hasOwn(state, 'inheritDefaults')) return;
       const target = await this.path(lab, 'LPMake.txt'),
-        text = decodeText(await readFile(target)).text;
+        text = decodeText(await readEditableFile(target)).text;
       let source = text;
       if (state.inheritDefaults)
         try {
@@ -190,7 +191,7 @@ export class WorkspaceStore {
   async open(lab: string, file: string): Promise<LoadedDraft> {
     const state = await this.read(lab),
       target = await this.path(lab, file),
-      bytes = await readFile(target);
+      bytes = await readEditableFile(target);
     if (
       bytes.includes(0) &&
       !((bytes[0] === 255 && bytes[1] === 254) || (bytes[0] === 254 && bytes[1] === 255))
@@ -199,7 +200,7 @@ export class WorkspaceStore {
     const decoded = decodeText(bytes);
     let forced: Language | undefined;
     try {
-      forced = parse(await readFile(await this.path(lab, 'LPMake.txt'), 'utf8')).spec.language;
+      forced = parse((await readEditableFile(await this.path(lab, 'LPMake.txt'))).toString('utf8')).spec.language;
     } catch {
       /* A broken build configuration must remain editable. */
     }

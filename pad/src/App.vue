@@ -1791,6 +1791,7 @@ async function run(ids?: string[]) {
   try {
     const result = await api.judge(snapshot(), chosen);
     if (!ownsExecution(id)) return;
+    if (result.cleanupWarnings?.length) logs.value += '\n[清理未完成] ' + result.cleanupWarnings.join('；');
     const coverage = await api.checkState(snapshot());
     if (!ownsExecution(id)) return;
     problemStates.value[draft.value!.problem.problemId] = coverage.state;

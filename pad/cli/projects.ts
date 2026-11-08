@@ -1,3 +1,4 @@
+import { readArchiveFile } from '../core/read-file';
 import { directorySnapshot } from '../core/workspace-files';
 import { ConfigError } from '../shared/lpmake';
 import { readdir, lstat, readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -83,7 +84,7 @@ export async function collectProjects(
       try {
         if (entry.isSymbolicLink()) throw new Error('收件目录中存在符号链接');
         if (entry.isFile() && /\.zip$/i.test(entry.name))
-          await candidate(origin, await archiveSnapshot(await readFile(full)));
+          await candidate(origin, await archiveSnapshot(await readArchiveFile(full)));
         else if (entry.isDirectory()) {
           const children = await readdir(full, { withFileTypes: true }),
             direct = children.some(

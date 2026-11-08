@@ -1,3 +1,4 @@
+import { cleanupAll } from './cleanup';
 import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { sandboxCommand } from './sandbox';
@@ -144,8 +145,27 @@ export async function judge(
     if (result.status === 'error')
       result.error = error instanceof Error ? error.message : String(error);
   } finally {
-    if (runDirectory) await rm(runDirectory, { recursive: true, force: true });
-    if (!retained) await prepared?.cleanup();
+    const warnings = await cleanupAll([
+      {
+        label: '测试运行目录',
+        run: async () => {
+          if (runDirectory)
+            await rm(runDirectory, {
+              recursive: true,
+              force: true,
+              maxRetries: 3,
+              retryDelay: 100,
+            });
+        },
+      },
+      {
+        label: '临时编译目录',
+        run: async () => {
+          if (!retained) await prepared?.cleanup();
+        },
+      },
+    ]);
+    if (warnings.length) result.cleanupWarnings = warnings;
   }
   return result;
 }

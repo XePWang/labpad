@@ -136,6 +136,7 @@ export interface CaseResult {
   message: string;
 }
 export interface JudgeResult {
+  cleanupWarnings?: string[];
   status: 'completed' | 'cancelled' | 'error';
   compilation?: Compilation;
   cases: CaseResult[];

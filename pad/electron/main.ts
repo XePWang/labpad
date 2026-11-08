@@ -1,3 +1,4 @@
+import { readEditableFile } from '../core/read-file';
 import { managePty } from '../core/pty-session';
 import { remapPath, replacedPath } from '../shared/file-changes';
 import { isCodeFile, isHeaderFile, isSourceFile, sourceExtensions } from '../shared/file-language';
@@ -354,7 +355,7 @@ async function savedBuildInput(value: Draft) {
       : storage.paths(d.problem.labId, d.problem.problemId, d.language).source;
     if (!(await exists(file))) saved = false;
     else {
-      const text = decodeText(await readFile(file)).text;
+      const text = decodeText(await readEditableFile(file)).text;
       saved = text === d.source;
       d.source = text;
     }
@@ -1902,7 +1903,7 @@ async function initialize() {
       const folder = destination ? workspacePath(destination) : '',
         name = workspacePath((folder ? folder + '/' : '') + path.basename(file)),
         target = await storage.workspace.path(config.currentLab, name, true),
-        decoded = (await import('../core/storage')).decodeText(await readFile(file));
+        decoded = (await import('../core/storage')).decodeText(await readEditableFile(file));
       if ((await exists(target)) && (await realpath(file)) === (await realpath(target))) {
         const document = await storage.workspace.open(config.currentLab, name);
         return {

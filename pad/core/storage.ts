@@ -1,3 +1,4 @@
+import { readEditableFile, readConfigFile } from './read-file';
 import { remapPath } from '../shared/file-changes';
 import { isSourceFile, sourceLanguage, editorLanguage } from '../shared/file-language';
 import { defaultTypography } from '../shared/typography';
@@ -84,7 +85,7 @@ export async function writeSource(file: string, source: string, encoding = 'UTF-
 }
 export async function readJSON(file: string): Promise<unknown> {
   return JSON.parse(
-    new TextDecoder('utf-8', { fatal: true }).decode(await readFile(file)).replace(/^\uFEFF/, ''),
+    new TextDecoder('utf-8', { fatal: true }).decode(await readConfigFile(file)).replace(/^\uFEFF/, ''),
   );
 }
 export async function exists(file: string) {
@@ -295,7 +296,7 @@ export class Storage {
     }
     if (binding) {
       try {
-        const decoded = decodeText(await readFile(binding.path));
+        const decoded = decodeText(await readEditableFile(binding.path));
         return {
           language,
           source: decoded.text,
@@ -310,7 +311,7 @@ export class Storage {
     const draft: LoadedDraft = {
       language,
       source: (await exists(p.source))
-        ? decodeText(await readFile(p.source)).text
+        ? decodeText(await readEditableFile(p.source)).text
         : defaultSource(language),
       problem,
     };
@@ -438,7 +439,7 @@ export class Storage {
     const file = this.documentPath(labId, problemId, version);
     const present = await exists(file);
     const decoded = present
-      ? decodeText(await readFile(file))
+      ? decodeText(await readEditableFile(file))
       : { text: version.starter ?? defaultSource(version.language), encoding: version.encoding };
     return {
       file: version.file,
@@ -471,7 +472,7 @@ export class Storage {
         const old = state.documents[i];
         if (!old.externalPath || !(await exists(old.externalPath))) continue;
         const adopted = await this.managedVersion(labId, problemId, old, state.documents),
-          decoded = decodeText(await readFile(old.externalPath));
+          decoded = decodeText(await readEditableFile(old.externalPath));
         await mkdir(this.paths(labId, problemId, old.language).dir, { recursive: true });
         await writeSource(this.documentPath(labId, problemId, adopted), decoded.text);
         state.documents[i] = adopted;
@@ -490,12 +491,12 @@ export class Storage {
             source = state.starters[lang] ?? defaultSource(lang);
           if (binding) {
             source = (await exists(binding.path))
-              ? decodeText(await readFile(binding.path)).text
+              ? decodeText(await readEditableFile(binding.path)).text
               : legacy.source;
             file = await this.nextSourceFile(labId, problemId, lang, state.documents);
             await mkdir(p.dir, { recursive: true });
             await writeSource(path.join(p.dir, file), source);
-          } else if (await exists(p.source)) source = decodeText(await readFile(p.source)).text;
+          } else if (await exists(p.source)) source = decodeText(await readEditableFile(p.source)).text;
           else {
             await mkdir(p.dir, { recursive: true });
             await writeSource(p.source, source);
@@ -574,7 +575,7 @@ export class Storage {
     forceCopy = false,
   ): Promise<LoadedDraft> {
     const language: Language = sourceLanguage(file) ?? 'c',
-      decoded = decodeText(await readFile(file)),
+      decoded = decodeText(await readEditableFile(file)),
       legacy = await this.load(labId, problemId, language);
     await this.openDocuments(labId, problemId, language);
     return this.enqueue(async () => {
@@ -1086,7 +1087,7 @@ export class Storage {
         id: randomUUID(),
         file: name,
         language,
-        encoding: decodeText(await readFile(target)).encoding,
+        encoding: decodeText(await readEditableFile(target)).encoding,
         starter: current.starters[language] ?? defaultSource(language),
       });
       registered.add(name);
@@ -1191,7 +1192,7 @@ export class Storage {
       await this.enqueue(() => this.reconcileSources(lab, problem, [{ to: name }]));
       return this.openFile(lab, problem, name, language);
     }
-    const bytes = await readFile(target);
+    const bytes = await readEditableFile(target);
     if (
       bytes.includes(0) &&
       !((bytes[0] === 255 && bytes[1] === 254) || (bytes[0] === 254 && bytes[1] === 255))
@@ -1380,8 +1381,8 @@ export async function importPairs(
       throw new Error('不同目录出现同名测试点：' + id);
     problem.testCases.push({
       id,
-      input: decodeText(await readFile(group.input)).text,
-      expectedOutput: decodeText(await readFile(group.answers[0])).text,
+      input: decodeText(await readEditableFile(group.input)).text,
+      expectedOutput: decodeText(await readEditableFile(group.answers[0])).text,
     });
   }
   if (!problem.testCases.length) throw new Error('未找到完整测试点');

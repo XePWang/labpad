@@ -1,3 +1,4 @@
+import { cleanupAll, cleanupText, addCleanupNotes } from './cleanup';
 import { snapshotEntries } from './workspace-files';
 import type { WorkspaceSnapshot } from '../shared/workspace';
 import { usedLanguages, standaloneSource, type CompilerContext } from './build/plan';
@@ -198,6 +199,7 @@ export class Compiler {
     const cleanup = () =>
       rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     let release: (() => Promise<void>) | undefined;
+    let prepared: Prepared | undefined, failure: Error | undefined;
     try {
       if (config.mode === 'builtin' || config.kind === 'zig') {
         release = await this.cache.acquire(signal);
@@ -253,7 +255,7 @@ export class Compiler {
           throw new Error('编译器没有生成可执行文件，请检查编译参数');
         }
       }
-      return {
+      prepared = {
         compilation,
         executable,
         directory,
@@ -266,11 +268,22 @@ export class Compiler {
             }
           : {}),
       };
+      return prepared;
     } catch (error) {
-      await cleanup();
-      throw error;
+      failure = error instanceof Error ? error : new Error(String(error));
+      throw failure;
     } finally {
-      await release?.();
+      const warnings = await cleanupAll([
+        ...(!prepared ? [{ label: '临时编译目录', run: cleanup }] : []),
+        {
+          label: '编译缓存租约',
+          run: async () => {
+            await release?.();
+          },
+        },
+      ]);
+      if (failure) addCleanupNotes(failure, warnings);
+      else if (prepared) prepared.compilation.stderr += cleanupText(warnings);
     }
   }
   async dispose() {

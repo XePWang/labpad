@@ -1,3 +1,4 @@
+import { cleanupAll, cleanupText, addCleanupNotes } from '../cleanup';
 import { prepareBuildDirectory } from '../artifacts';
 import { draftPlan, buildOptionsSignature, standaloneSource } from './plan';
 import {
@@ -117,6 +118,7 @@ export async function buildWorkspace(
   await mkdir(path.dirname(initialExecutable), { recursive: true });
   let executable = initialExecutable;
   let release: (() => Promise<void>) | undefined;
+  let prepared: Prepared | undefined, failure: Error | undefined;
   try {
     release = await compiler.cache.acquire(signal);
     await compiler.cache.trim();
@@ -318,7 +320,7 @@ export async function buildWorkspace(
       await rm(output, { force: true });
       for (const name of symbols) await rm(path.join(buildRoot, name), { force: true });
     }
-    return {
+    prepared = {
       directory,
       executable: location ? output : executable,
       compilation,
@@ -329,11 +331,22 @@ export async function buildWorkspace(
       runDirectory: location?.cwd,
       cleanup,
     };
-  } catch (e) {
-    await cleanup();
-    throw e;
+    return prepared;
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
+    throw failure;
   } finally {
-    await release?.();
+    const warnings = await cleanupAll([
+      ...(!prepared ? [{ label: '临时编译目录', run: cleanup }] : []),
+      {
+        label: '编译缓存租约',
+        run: async () => {
+          await release?.();
+        },
+      },
+    ]);
+    if (failure) addCleanupNotes(failure, warnings);
+    else if (prepared) prepared.compilation.stderr += cleanupText(warnings);
   }
 }
 export async function copyResources(
@@ -357,6 +370,7 @@ export async function copyResources(
 
 export async function clearWorkspaceCache(compiler: Compiler, labId: string) {
   const release = await compiler.cache.acquire();
+  let failure: Error | undefined;
   try {
     const root = path.join(compiler.cache.directory, 'projects');
     for (const entry of await readdir(root, { withFileTypes: true }).catch((e: any) => {
@@ -370,7 +384,12 @@ export async function clearWorkspaceCache(compiler: Compiler, labId: string) {
         .catch(() => undefined);
       if (owner?.labId === labId) await rm(dir, { recursive: true, force: true });
     }
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
+    throw failure;
   } finally {
-    await release();
+    const warnings = await cleanupAll([{ label: '编译缓存租约', run: release }]);
+    if (failure) addCleanupNotes(failure, warnings);
+    else if (warnings.length) throw Error(cleanupText(warnings).trim());
   }
 }
