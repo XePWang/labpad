@@ -40,7 +40,7 @@ export class NativeDebugger extends EventEmitter {
   private log = '';
   private disposing = false;
   private disposal?: Promise<void>;
-  constructor() {
+  constructor(private readonly terminate: (pid: number) => Promise<void> = killTree) {
     super();
     this.finished = new Promise((resolve) => (this.finish = resolve));
   }
@@ -256,17 +256,15 @@ export class NativeDebugger extends EventEmitter {
       start,
       count: 100,
     });
-    return (result.variables ?? [])
-      .slice(0, 100)
-      .map((v: any) => ({
-        name: v.name,
-        value: v.value,
-        type: v.type,
-        variablesReference: v.variablesReference,
-        namedVariables: v.namedVariables,
-        indexedVariables: v.indexedVariables,
-        evaluateName: v.evaluateName,
-      }));
+    return (result.variables ?? []).slice(0, 100).map((v: any) => ({
+      name: v.name,
+      value: v.value,
+      type: v.type,
+      variablesReference: v.variablesReference,
+      namedVariables: v.namedVariables,
+      indexedVariables: v.indexedVariables,
+      evaluateName: v.evaluateName,
+    }));
   }
   async evaluate(expression: string): Promise<DebugVariable> {
     if (this.state.status !== 'paused') throw Error('The program is not paused.');
@@ -344,6 +342,13 @@ export class NativeDebugger extends EventEmitter {
       throw error;
     }
   }
+  stopFailed(error: unknown) {
+    this.update({
+      status: 'stop-failed',
+      message:
+        'Unable to stop the debugger: ' + (error instanceof Error ? error.message : String(error)),
+    });
+  }
   async stop() {
     if (this.connection && !this.done)
       try {
@@ -353,30 +358,56 @@ export class NativeDebugger extends EventEmitter {
           2500,
         );
       } catch {}
-    this.end('ended', 'Debugging stopped.');
     await this.dispose();
   }
   async dispose() {
     if (this.disposal) return this.disposal;
-    this.disposing = true;
-    this.disposal = (async () => {
+    const task = (async () => {
+      this.disposing = true;
       this.connection?.close();
       this.connection = undefined;
       const child = this.child;
-      this.child = undefined;
-      if (child?.pid) {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill();
-          await Promise.race([
-            new Promise<void>((r) => child.once('exit', () => r())),
-            new Promise<void>((r) => setTimeout(r, 500)),
-          ]);
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        let resolveExit!: () => void;
+        const exited = new Promise<void>((resolve) => (resolveExit = resolve));
+        const onExit = () => resolveExit();
+        child.once('exit', onExit);
+        try {
+          await this.terminate(child.pid);
+          if (child.exitCode === null && child.signalCode === null) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                exited,
+                new Promise<never>((_, reject) => {
+                  timer = setTimeout(
+                    () => reject(Error('Debugger process has not exited; retry stopping.')),
+                    2500,
+                  );
+                }),
+              ]);
+            } finally {
+              if (timer) clearTimeout(timer);
+            }
+          }
+        } finally {
+          child.removeListener('exit', onExit);
         }
-        await killTree(child.pid).catch(() => {});
       }
+      this.child = undefined;
+      if (this.done && this.state.status === 'stop-failed')
+        this.update({ status: 'ended', frames: [], scopes: [], variables: [] });
       this.end('ended');
       this.removeAllListeners();
     })();
-    return this.disposal;
+    this.disposal = task;
+    try {
+      await task;
+    } catch (error) {
+      this.disposal = undefined;
+      this.disposing = false;
+      this.stopFailed(error);
+      throw error;
+    }
   }
 }

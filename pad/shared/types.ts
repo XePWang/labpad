@@ -166,7 +166,7 @@ export interface Bootstrap extends SettingsResult {
   };
 }
 export interface DebugState {
-  status: 'compiling' | 'running' | 'exited' | 'stopped' | 'error';
+  status: 'compiling' | 'running' | 'exited' | 'stopped' | 'error' | 'stop-failed';
   message?: string;
 }
 export type PathKind = 'directory' | 'executable';

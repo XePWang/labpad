@@ -264,7 +264,7 @@ const nativeStarting = ref(false),
   watches = ref<string[]>([]),
   sessionSources = ref<Record<string, string>>({});
 const nativeActive = computed(() =>
-  ['starting', 'running', 'paused'].includes(nativeState.value.status),
+  ['starting', 'running', 'paused', 'stop-failed'].includes(nativeState.value.status),
 );
 const nativeChanged = computed(
   () =>
@@ -1817,6 +1817,14 @@ function resized(axis: keyof LayoutConfig, event: SplitpanesResizedPayload) {
     });
 }
 function handleDebugState(s: DebugState) {
+  if (s.status === 'stop-failed') {
+    busy.value = 'debug';
+    debugRunning.value = true;
+    phase.value = '停止失败，请重试';
+    error.value = s.message ?? '程序尚未退出，请重试停止。';
+    return;
+  }
+
   if (nativeActive.value || nativeStarting.value) {
     debugRunning.value = s.status === 'running';
     if (s.message) terminal.value?.write('\r\n[' + s.message + ']\r\n');
@@ -2034,15 +2042,17 @@ onMounted(async () => {
     api.onNativeState((state) => {
       nativeState.value = state;
       phase.value =
-        state.status === 'paused'
-          ? '调试已暂停'
-          : state.status === 'running'
-            ? '调试运行中'
-            : state.status === 'error'
-              ? '调试错误'
-              : state.status === 'ended'
-                ? '调试结束'
-                : '正在启动调试…';
+        state.status === 'stop-failed'
+          ? '停止失败，请重试'
+          : state.status === 'paused'
+            ? '调试已暂停'
+            : state.status === 'running'
+              ? '调试运行中'
+              : state.status === 'error'
+                ? '调试错误'
+                : state.status === 'ended'
+                  ? '调试结束'
+                  : '正在启动调试…';
     }),
     api.onNativeDiagnostic((data) => {
       logs.value += data;

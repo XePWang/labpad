@@ -263,3 +263,96 @@ test('terminal prompt follows shared topic cwd, directory changes and late comma
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+test('native debugger releases task ownership after temporary cleanup fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-cleanup-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: any[]) => {
+        const options = args.at(-1);
+        const label = options.buttons.includes('保存并编译')
+          ? '保存并编译'
+          : options.buttons.includes('继续调试')
+            ? '继续调试'
+            : '不保存';
+        return { response: Math.max(0, options.buttons.indexOf(label)), checkboxChecked: false };
+      };
+    });
+    await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      if (navigator.platform.includes('Linux'))
+        state.config.compiler = {
+          ...state.config.compiler,
+          mode: 'custom',
+          kind: 'gcc',
+          cPath: '/usr/bin/gcc',
+          cppPath: '/usr/bin/g++',
+        };
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('CleanupFixture', 'project');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await page
+      .locator('.cm-content')
+      .fill('int main(void){\n int value=1;\n value++;\n return value-2;\n}\n');
+    await page.locator('.source-debug-gutter .cm-gutterElement').nth(3).click();
+    await page.getByRole('tab', { name: '调试', exact: true }).click();
+    await page.getByRole('button', { name: '开始调试', exact: true }).click();
+    await expect(page.locator('.phase')).toHaveText('调试已暂停', { timeout: 60000 });
+    await app.evaluate(() => {
+      const fs = process.getBuiltinModule('node:fs/promises') as any;
+      (globalThis as any).__cleanupOriginal = fs.rm;
+      (globalThis as any).__cleanupFailures = 0;
+      fs.rm = async (...args: any[]) => {
+        if (
+          !(globalThis as any).__cleanupFailures &&
+          String(args[0]).includes('labpad-runtime-') &&
+          /[\/]project-[^\/]+$/.test(String(args[0]))
+        ) {
+          (globalThis as any).__cleanupFailures++;
+          throw Error('Injected temporary cleanup failure');
+        }
+        return (globalThis as any).__cleanupOriginal(...args);
+      };
+    });
+    await page.getByRole('button', { name: '停止调试', exact: true }).click();
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
+    expect(await app.evaluate(() => (globalThis as any).__cleanupFailures)).toBe(1);
+    await app.evaluate(() => {
+      (process.getBuiltinModule('node:fs/promises') as any).rm = (
+        globalThis as any
+      ).__cleanupOriginal;
+    });
+    await page.evaluate(() => window.labpad.nativeStop());
+    const compilation = await page.evaluate(async () =>
+      window.labpad.compile((await window.labpad.bootstrap()).draft),
+    );
+    expect(compilation.status).toBe('success');
+    await page.getByRole('button', { name: '开始调试', exact: true }).click();
+    await expect(page.locator('.phase')).toHaveText('调试已暂停', { timeout: 60000 });
+    await page.getByRole('button', { name: '停止调试', exact: true }).click();
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
+  } finally {
+    await app
+      .evaluate(() => {
+        if ((globalThis as any).__cleanupOriginal)
+          (process.getBuiltinModule('node:fs/promises') as any).rm = (
+            globalThis as any
+          ).__cleanupOriginal;
+      })
+      .catch(() => {});
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

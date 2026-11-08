@@ -1,3 +1,4 @@
+import { managePty } from '../core/pty-session';
 import { remapPath, replacedPath } from '../shared/file-changes';
 import { isCodeFile, isHeaderFile, isSourceFile, sourceExtensions } from '../shared/file-language';
 import { directorySnapshot, hasUnsavedSnapshotFiles } from '../core/workspace-files';
@@ -173,6 +174,8 @@ let win: BrowserWindow,
   config: Config,
   currentDocument: Draft | undefined,
   documentDirty = false;
+let activeStop: (() => Promise<void>) | undefined;
+let nativeCleanup: (() => Promise<void>) | undefined;
 let controller: AbortController | undefined,
   active: Promise<unknown> | undefined,
   terminal: IPty | undefined;
@@ -190,9 +193,16 @@ function requireIdle() {
 }
 async function stop() {
   controller?.abort();
-  if (nativeSession && nativeActive()) await nativeSession.stop();
+  if (nativeCleanup) {
+    await nativeSession?.stop();
+    await nativeCleanup?.();
+  } else {
+    await activeStop?.();
+    if (nativeSession && nativeActive()) await nativeSession.stop();
+  }
   await active;
 }
+
 async function stopWarmup() {
   clearTimeout(warmTimer);
   warmController?.abort();
@@ -596,154 +606,80 @@ async function confirmUnsaved() {
 async function startDebug(value: Draft) {
   requireIdle();
   const context = await programContext(value);
-  if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
-  const d = context.draft,
-    program = compiledProgram.require(context.key),
-    settings = { ...structuredClone(config), compiler: context.options },
+  if (!context.saved) throw Error('请先保存参与编译的文件，再编译。');
+  const program = compiledProgram.require(context.key),
+    settings = structuredClone(config),
     abort = new AbortController();
   controller = abort;
-
-  let outcome: DebugState | undefined;
   const task = (async () => {
-    let prepared = program,
-      runDirectory: string | undefined,
-      shutdown: Promise<void> | undefined;
+    let directory: string | undefined, io: Awaited<ReturnType<typeof terminalProcess>> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const kill = () => {
+      void io
+        ?.stop()
+        .catch((error) => debugState({ status: 'stop-failed', message: String(error) }));
+    };
     try {
-      runDirectory = await mkdtemp(path.join(prepared.directory, 'debug-'));
-      await copyResources(prepared.resources, runDirectory, prepared.binaryResources);
-      if (prepared.compilation.status === 'cancelled') {
-        outcome = { status: 'stopped' };
-        return;
-      }
-      if (prepared.compilation.status === 'CE') {
-        outcome = { status: 'error', message: '编译失败，请查看“输出”页' };
-        return;
-      }
-      if (abort.signal.aborted) {
-        outcome = { status: 'stopped' };
-        return;
-      }
-      const env = await compiler.environment(settings.compiler);
-      await new Promise<void>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout> | undefined,
-          pending = '',
-          scheduled: ReturnType<typeof setTimeout> | undefined,
-          unacked = 0,
-          paused = false;
-        const session = ++debugSession;
-        const flush = () => {
-          if (pending) {
-            send('debug:data', { session, data: pending });
-            pending = '';
-          }
-          scheduled = undefined;
-        };
-        try {
-          const child = pty.spawn(
-            process.platform === 'win32' ? compiler.paths.processHost! : '/bin/sh',
-            process.platform === 'win32'
-              ? ['--terminal-no-echo', prepared!.executable]
-              : ['-c', 'stty -echo || exit 125; exec "$1"', 'labpad-debug', prepared!.executable],
-            {
-              name: 'xterm-256color',
-              cols: 100,
-              rows: 18,
-              cwd: runDirectory!,
-              env: Object.fromEntries(
-                Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined),
-              ),
-            },
-          );
-          terminal = child;
-          const kill = () => {
-            if (shutdown) return;
-            if (process.platform === 'win32')
-              shutdown = new Promise<void>((done) => {
-                execFile(
-                  'taskkill.exe',
-                  ['/PID', String(child.pid), '/T', '/F'],
-                  { windowsHide: true },
-                  () => {
-                    if (terminal === child)
-                      try {
-                        child.kill();
-                      } catch {}
-                    done();
-                  },
-                );
-              });
-            else
-              try {
-                child.kill();
-              } catch {}
-          };
-          abort.signal.addEventListener('abort', kill, { once: true });
-          acknowledge = (id, size) => {
-            if (id !== session) return;
-            unacked = Math.max(0, unacked - size);
-            if (paused && unacked < 65536) {
-              paused = false;
-              child.resume();
-            }
-          };
-          const dataListener = child.onData((data) => {
-            pending += data;
-            unacked += data.length;
-            if (unacked > 262144 && !paused) {
-              paused = true;
-              child.pause();
-            }
-            if (!scheduled) scheduled = setTimeout(flush, 16);
-          });
-          const exitListener = child.onExit((exit) => {
-            if (timer) clearTimeout(timer);
-            if (scheduled) clearTimeout(scheduled);
-            flush();
-            abort.signal.removeEventListener('abort', kill);
-            dataListener.dispose();
-            exitListener.dispose();
-            terminal = undefined;
-            acknowledge = undefined;
-            outcome = {
-              status: abort.signal.aborted ? 'stopped' : 'exited',
-              message: abort.signal.aborted ? '程序已停止' : '退出码 ' + exit.exitCode,
-            };
-            resolve();
-          });
-          if (settings.debugTimeLimitMs)
-            timer = setTimeout(() => abort.abort(), settings.debugTimeLimitMs);
-          debugState({ status: 'running' });
-          if (abort.signal.aborted) kill();
-        } catch (e) {
-          reject(e);
-        }
-      });
-    } catch (e) {
-      outcome = {
+      directory = await mkdtemp(path.join(program.directory, 'debug-'));
+      await copyResources(program.resources, directory, program.binaryResources);
+      abort.signal.throwIfAborted();
+      io = await terminalProcess(
+        [program.executable],
+        directory,
+        await compiler.environment(context.options),
+        undefined,
+        false,
+        false,
+      );
+      activeStop = io.stop;
+      abort.signal.addEventListener('abort', kill, { once: true });
+      if (settings.debugTimeLimitMs)
+        timer = setTimeout(() => abort.abort(), settings.debugTimeLimitMs);
+      if (abort.signal.aborted) kill();
+      const result = await io.finished;
+      return {
+        status: abort.signal.aborted ? 'stopped' : 'exited',
+        message: abort.signal.aborted ? '程序已停止' : '退出码 ' + result.exitCode,
+      } as DebugState;
+    } catch (error) {
+      return {
         status: abort.signal.aborted ? 'stopped' : 'error',
-        message: abort.signal.aborted ? undefined : e instanceof Error ? e.message : String(e),
-      };
+        message: abort.signal.aborted ? '程序已停止' : String(error),
+      } as DebugState;
     } finally {
-      await shutdown;
-      try {
-        if (runDirectory) await rm(runDirectory, { recursive: true, force: true });
-      } catch (e) {
-        outcome = {
-          status: 'error',
-          message: '清理运行文件失败：' + (e instanceof Error ? e.message : String(e)),
-        };
-      }
+      if (timer) clearTimeout(timer);
+      abort.signal.removeEventListener('abort', kill);
+      if (activeStop === io?.stop) activeStop = undefined;
+      if (directory)
+        try {
+          await rm(directory, { recursive: true, force: true });
+        } catch (error) {
+          send(
+            'native:diagnostic',
+            'Temporary run files could not be removed: ' + String(error) + '\n',
+          );
+        }
     }
   })();
   active = task;
-  void task.finally(() => {
-    if (active === task) {
-      active = undefined;
-      controller = undefined;
-      if (outcome) debugState(outcome);
-    }
-  });
+  void task.then(
+    (outcome) => {
+      if (active === task) {
+        active = undefined;
+        controller = undefined;
+        debugState(outcome);
+      }
+    },
+    (error) => {
+      if (active === task) {
+        active = undefined;
+        controller = undefined;
+      }
+      debugState({ status: 'error', message: String(error) });
+    },
+  );
 }
+
 let nativeSession: NativeDebugger | undefined,
   nativePrepared: Prepared | undefined,
   nativeLab = '',
@@ -804,20 +740,10 @@ async function terminalProcess(
   env: NodeJS.ProcessEnv,
   onExit?: () => void,
   reportExit = true,
+  publishExit = true,
 ) {
   if (terminal) throw Error('终端中已有程序正在运行。');
   const session = ++debugSession;
-  let pending = '',
-    scheduled: ReturnType<typeof setTimeout> | undefined,
-    unacked = 0,
-    paused = false;
-  const flush = () => {
-    if (pending) {
-      send('debug:data', { session, data: pending });
-      pending = '';
-    }
-    scheduled = undefined;
-  };
   const executable = process.platform === 'win32' ? compiler.paths.processHost! : '/bin/sh';
   const command =
     process.platform === 'win32'
@@ -829,68 +755,42 @@ async function terminalProcess(
     rows: 18,
     cwd,
     env: Object.fromEntries(
-      Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined),
+      Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
     ),
   });
   terminal = child;
-  acknowledge = (id, size) => {
-    if (id !== session) return;
-    unacked = Math.max(0, unacked - size);
-    if (paused && unacked < 65536) {
-      paused = false;
-      child.resume();
-    }
-  };
-  const data = child.onData((value) => {
-    pending += value;
-    unacked += value.length;
-    if (unacked > 262144 && !paused) {
-      paused = true;
-      child.pause();
-    }
-    if (!scheduled) scheduled = setTimeout(flush, 16);
-  });
-  const finished = new Promise<void>((resolve) => {
-    const exit = child.onExit((result) => {
-      if (scheduled) clearTimeout(scheduled);
-      flush();
-      data.dispose();
-      exit.dispose();
-      if (terminal === child) {
-        terminal = undefined;
-        acknowledge = undefined;
+  const processSession = managePty(child, {
+    data: (data) => send('debug:data', { session, data }),
+    terminate: async () => {
+      try {
+        await killTree(child.pid);
+      } finally {
+        try {
+          child.kill();
+        } catch {}
       }
+    },
+  });
+  acknowledge = (id, size) => {
+    if (id === session) processSession.acknowledge(size);
+  };
+  const finished = processSession.finished.then((result) => {
+    if (terminal === child) {
+      terminal = undefined;
+      acknowledge = undefined;
+    }
+    if (publishExit)
       debugState({
         status: 'exited',
         ...(reportExit ? { message: '退出码 ' + result.exitCode } : {}),
       });
-      onExit?.();
-      resolve();
-    });
+    onExit?.();
+    return result;
   });
   debugState({ status: 'running' });
-  return {
-    pid: child.pid,
-    finished,
-    stop: async () => {
-      if (terminal !== child) return;
-      if (process.platform === 'win32')
-        await new Promise<void>((done) =>
-          execFile(
-            'taskkill.exe',
-            ['/PID', String(child.pid), '/T', '/F'],
-            { windowsHide: true },
-            () => done(),
-          ),
-        );
-      else await killTree(child.pid).catch(() => {});
-      try {
-        child.kill();
-      } catch {}
-      await finished;
-    },
-  };
+  return { pid: child.pid, finished, stop: processSession.stop };
 }
+
 async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
   requireIdle();
   await stopWarmup();
@@ -918,6 +818,7 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
     let prepared: Prepared | undefined,
       session: NativeDebugger | undefined,
       io: Awaited<ReturnType<typeof terminalProcess>> | undefined;
+    let handedOff = false;
     try {
       prepared = await compileDraft(compiler, context.draft, context.options, abort.signal);
       judgeEvent({ type: 'compilation', compilation: prepared.compilation });
@@ -937,22 +838,59 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
       const root = storage.workspace.root(nativeLab),
         env = await compiler.environment(context.options);
       const stopSession = () => {
-        void session!.stop();
+        void session!.stop().catch((error) => send('native:diagnostic', String(error) + '\n'));
       };
       abort.signal.addEventListener('abort', stopSession, { once: true });
-      const finish = session.finished.finally(async () => {
-        abort.signal.removeEventListener('abort', stopSession);
-        await io?.stop();
-        await session?.dispose();
-        await prepared?.cleanup();
-        nativePrepared = undefined;
-        if (active === finish) {
-          active = undefined;
-          controller = undefined;
+      let settled = false,
+        cleaning: Promise<void> | undefined;
+      let complete!: () => void;
+      const finish = new Promise<void>((resolve) => (complete = resolve));
+      const cleanup = async () => {
+        if (settled) return;
+        if (cleaning) return cleaning;
+        const task = (async () => {
+          try {
+            await io?.stop();
+            await session?.dispose();
+          } catch (error) {
+            session?.stopFailed(error);
+            send('native:state', nativeView());
+            throw error;
+          }
+          try {
+            await prepared?.cleanup();
+          } catch (error) {
+            send(
+              'native:diagnostic',
+              'Temporary debug files could not be removed: ' + String(error) + '\n',
+            );
+          } finally {
+            settled = true;
+            abort.signal.removeEventListener('abort', stopSession);
+            nativePrepared = undefined;
+            if (nativeCleanup === cleanup) nativeCleanup = undefined;
+            if (active === finish) {
+              active = undefined;
+              controller = undefined;
+            }
+            debugState({ status: 'exited' });
+            send('native:state', nativeView());
+            complete();
+          }
+        })();
+        cleaning = task;
+        try {
+          await task;
+        } finally {
+          if (cleaning === task) cleaning = undefined;
         }
-        send('native:state', nativeView());
-      });
+      };
+      handedOff = true;
+      nativeCleanup = cleanup;
       active = finish;
+      void session.finished.then(() =>
+        cleanup().catch((error) => send('native:diagnostic', String(error) + '\n')),
+      );
       await session.start({
         adapter: path.join(
           debuggerRoot,
@@ -985,9 +923,24 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
       });
       return { started: true, compilation: prepared.compilation, sources: nativeSnapshot };
     } catch (error) {
-      if (session) await session.stop();
-      else await prepared?.cleanup();
+      if (session) {
+        try {
+          await session.stop();
+          await nativeCleanup?.();
+        } catch (cleanup) {
+          send('native:diagnostic', String(cleanup) + '\n');
+        }
+      }
       throw error;
+    } finally {
+      if (!handedOff && prepared) {
+        try {
+          await prepared.cleanup();
+        } catch (cleanup) {
+          send('native:diagnostic', String(cleanup) + '\n');
+        }
+        if (nativePrepared === prepared) nativePrepared = undefined;
+      }
     }
   })();
   active = task;
@@ -1102,11 +1055,15 @@ async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: stri
       await compiler.environment(options),
     ),
     kill = () => {
-      void io.stop();
+      void io
+        .stop()
+        .catch((error) => debugState({ status: 'stop-failed', message: String(error) }));
     };
+  activeStop = io.stop;
   abort.signal.addEventListener('abort', kill, { once: true });
   const task = io.finished.finally(() => {
     abort.signal.removeEventListener('abort', kill);
+    if (activeStop === io.stop) activeStop = undefined;
     if (active === task) {
       active = undefined;
       controller = undefined;
