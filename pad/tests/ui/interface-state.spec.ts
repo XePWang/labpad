@@ -113,10 +113,12 @@ test('sidebars preserve state and focus, share motion settings and use the same 
       throw e;
     }
     for (const theme of ['dark', 'light']) {
-      // Exercise the semantic palette independently of any platform accent.
-      await page
-        .locator('.app-shell')
-        .evaluate((el, value) => el.setAttribute('data-theme', value), theme);
+      await page.locator('.settings-button').click();
+      await page.getByRole('combobox', { name: '主题', exact: true }).selectOption(theme);
+      await page.getByRole('button', { name: '保存设置', exact: true }).click();
+      await expect(page.locator('.settings-dialog')).toHaveCount(0);
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-theme', theme);
+      await expect(run).toBeEnabled();
       await page.mouse.move(0, 0);
       await expect
         .poll(async () => {

@@ -766,7 +766,7 @@ defineExpose({
 .tree-heading {
   display: flex;
   align-items: center;
-  height: 36px;
+  height: var(--pane-header-height);
   gap: 1px;
   padding: 0 5px 0 9px;
   font-size: 12px;

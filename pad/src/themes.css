@@ -1,6 +1,7 @@
 :is(
   .app-shell,
   .tab-context,
+  .action-menu,
   .problem-options,
   .result-help-content,
   .export-dialog
@@ -26,6 +27,7 @@
 :is(
   .app-shell,
   .tab-context,
+  .action-menu,
   .problem-options,
   .result-help-content,
   .export-dialog
@@ -329,7 +331,7 @@
 }
 .work-layout.splitpanes {
   flex: 1;
-  min-height: 0;
+  min-height: calc(var(--pane-header-height) * 2 + 100px);
 }
 .workspace.splitpanes {
   display: flex;
@@ -366,7 +368,13 @@
 }
 .work-layout .splitpanes__pane {
   min-height: 0;
-  min-width: 0;
+  min-width: var(--pane-min-width, 0px);
+}
+.work-layout > .splitpanes__pane:first-child {
+  min-height: calc(var(--pane-header-height) + 58px);
+}
+.work-layout > .splitpanes__pane:last-child {
+  min-height: calc(var(--pane-header-height) + 32px);
 }
 .statusbar {
   height: 29px;
@@ -442,13 +450,7 @@ body {
   overflow: clip;
 }
 .app-shell {
-  overflow: clip;
-}
-
-@media (max-height: 400px) {
-  .app-shell {
-    overflow-y: auto;
-  }
+  overflow: clip auto;
 }
 
 .editor-pane,
@@ -462,23 +464,6 @@ body {
   text-overflow: ellipsis;
 }
 @container (max-width:380px) {
-  .pane-heading {
-    height: auto;
-    min-height: 43px;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px 10px;
-  }
-  .pane-heading > div:first-child {
-    flex-basis: 100%;
-  }
-  .pane-heading .editor-actions {
-    margin-left: auto;
-  }
-  .pane-heading .small-actions {
-    flex-wrap: wrap;
-    gap: 2px;
-  }
   .io-pair {
     grid-template-columns: 1fr;
   }
@@ -561,16 +546,6 @@ body {
   flex-direction: row;
   align-items: center;
   gap: 8px;
-}
-.cases-pane > .pane-heading {
-  height: auto;
-  min-height: 48px;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding-block: 8px;
-}
-.cases-pane > .pane-heading > .small-actions {
-  flex-wrap: wrap;
 }
 .case-heading button {
   font-size: 11px;

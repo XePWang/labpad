@@ -523,12 +523,89 @@ const summaryAllPassed = computed(
     passed.value > 0 &&
     passed.value === draft.value?.problem.testCases.length,
 );
-function toggleAllTests(event: Event) {
+function toggleAllTests() {
   summaryMode.value = 'selected';
   selectedCases.value =
     selectedCases.value.length === draft.value!.problem.testCases.length
       ? []
       : draft.value!.problem.testCases.map((t) => t.id);
+}
+
+const rightHeader = ref<HTMLElement>();
+const rightHeaderWidth = ref(0);
+const fullHeader = computed(() => rightHeaderWidth.value >= 560);
+const showTestSummary = computed(() => rightHeaderWidth.value >= 360);
+const showRightTabs = computed(() => rightHeaderWidth.value >= 190);
+const showBothRightTabs = computed(() => rightHeaderWidth.value >= 250);
+watch(
+  rightHeader,
+  (element, _previous, onCleanup) => {
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const focused =
+        document.activeElement instanceof HTMLElement && element.contains(document.activeElement)
+          ? document.activeElement
+          : undefined;
+      rightHeaderWidth.value = entry.contentRect.width;
+      if (focused)
+        nextTick(() => {
+          if (focused.isConnected && !focused.getClientRects().length)
+            element.querySelector<HTMLButtonElement>('.action-menu-trigger')?.focus();
+        });
+    });
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: 'post' },
+);
+const testHeaderItems = computed(() => [
+  ...(!showBothRightTabs.value && workspaceMode.value
+    ? [{ label: '切换到调试', value: 'tab' }]
+    : []),
+  ...(!showTestSummary.value
+    ? [
+        {
+          label: testSummary.value,
+          value: 'all',
+          disabled: !!busy.value,
+          checked:
+            selectedCases.value.length === draft.value?.problem.testCases.length &&
+            selectedCases.value.length > 0
+              ? true
+              : selectedCases.value.length
+                ? ('indeterminate' as const)
+                : false,
+        },
+      ]
+    : []),
+  { label: '定位未通过', value: 'locate', disabled: !failedIds.value.length },
+  {
+    label: '重测未通过',
+    value: 'failed',
+    disabled: blocked.value || !compiledReady.value || !failedIds.value.length,
+  },
+  ...(!fullHeader.value
+    ? [
+        { label: '题目文件', value: 'rule', separator: true, disabled: blocked.value },
+        { label: '重新加载', value: 'reload', disabled: blocked.value },
+        { label: '新增测试点', value: 'add', disabled: blocked.value },
+      ]
+    : []),
+]);
+const debugHeaderItems = computed(() => [
+  ...(!showBothRightTabs.value ? [{ label: '切换到测试点', value: 'tab' }] : []),
+  ...(!fullHeader.value
+    ? [{ label: '构建设置…', value: 'build', disabled: blocked.value || nativeActive.value }]
+    : []),
+]);
+async function testHeaderAction(value: string) {
+  if (value === 'tab') rightTab.value = 'debug';
+  else if (value === 'all') toggleAllTests();
+  else if (value === 'locate') locateFailed();
+  else if (value === 'failed') await run(failedIds.value);
+  else if (value === 'rule') await api.showProblemFile(snapshot());
+  else if (value === 'reload') await fileAction(reload);
+  else if (value === 'add') addCase();
 }
 
 const clipboardFiles = ref<{ lab: string; paths: string[]; absolute: string[]; cut: boolean }>();
@@ -2536,7 +2613,8 @@ async function foldRight(collapsed: boolean) {
     <header class="brandbar">
       <div class="brand">
         <span class="brand-mark">L<span>↗</span></span
-        ><strong>LabPad</strong><span class="dev-tag">DEV</span>
+        ><strong>LabPad</strong
+        ><span class="dev-tag">{{ version.includes('-rc.') ? 'RC' : 'DEV' }}</span>
       </div>
       <span class="version">v{{ version || '0.1.0-dev.9' }}</span>
     </header>
@@ -2635,6 +2713,7 @@ async function foldRight(collapsed: boolean) {
         </div>
         <div class="toolbar-actions">
           <ActionMenu
+            :theme="config.theme"
             v-if="!workspaceMode"
             label="新建源码"
             @close-auto-focus="keepTreeEditFocus"
@@ -2649,6 +2728,7 @@ async function foldRight(collapsed: boolean) {
               )
             "
           /><ActionMenu
+            :theme="config.theme"
             label="导入"
             :items="[
               { label: '导入源码', value: 'source' },
@@ -2658,6 +2738,7 @@ async function foldRight(collapsed: boolean) {
             :disabled="blocked"
             @select="action(() => chooseImport($event))"
           /><ActionMenu
+            :theme="config.theme"
             label="保存"
             :items="[
               { label: '保存当前', value: 'current' },
@@ -2666,6 +2747,7 @@ async function foldRight(collapsed: boolean) {
             :disabled="fileBusy || (!tabs.length && !rulesDirty)"
             @select="action(() => chooseSave($event))"
           /><ActionMenu
+            :theme="config.theme"
             label="导出"
             :items="[
               { label: '导出源码', value: 'source' },
@@ -2780,6 +2862,7 @@ async function foldRight(collapsed: boolean) {
                       <p>新建一份源码，或导入已有文件，继续编写。</p>
                       <div class="empty-editor-actions">
                         <ActionMenu
+                          :theme="config.theme"
                           label="新建源码"
                           @close-auto-focus="keepTreeEditFocus"
                           :items="[
@@ -2827,7 +2910,7 @@ async function foldRight(collapsed: boolean) {
                 :size="rightCollapsed ? 0 : 100 - config.layout.editorPercent"
                 :min-size="rightCollapsed ? 0 : 20"
                 :max-size="rightCollapsed ? 0 : 80"
-                ><div class="pane-heading cases-heading">
+                ><div ref="rightHeader" class="pane-heading cases-heading">
                   <button
                     class="icon-action right-collapse"
                     title="收起右区"
@@ -2836,8 +2919,9 @@ async function foldRight(collapsed: boolean) {
                   >
                     <ActionIcon name="chevronRight" />
                   </button>
-                  <div class="right-tabs" role="tablist" aria-label="右区">
+                  <div v-show="showRightTabs" class="right-tabs" role="tablist" aria-label="右区">
                     <button
+                      v-show="showBothRightTabs || rightTab === 'tests'"
                       role="tab"
                       :aria-selected="rightTab === 'tests'"
                       :class="{ active: rightTab === 'tests' }"
@@ -2846,6 +2930,7 @@ async function foldRight(collapsed: boolean) {
                       测试点</button
                     ><button
                       v-if="workspaceMode"
+                      v-show="showBothRightTabs || rightTab === 'debug'"
                       role="tab"
                       :aria-selected="rightTab === 'debug'"
                       :class="{ active: rightTab === 'debug' }"
@@ -2856,6 +2941,7 @@ async function foldRight(collapsed: boolean) {
                   </div>
                   <template v-if="rightTab === 'tests'"
                     ><button
+                      v-show="showTestSummary"
                       class="test-summary"
                       :class="{ 'all-passed': summaryAllPassed }"
                       role="checkbox"
@@ -2893,7 +2979,9 @@ async function foldRight(collapsed: boolean) {
                       <ActionIcon name="play" />
                     </button>
                     <div class="small-actions case-header-actions">
-                      <ResultHelp :theme="config.theme" /><span class="case-extra-actions"
+                      <ResultHelp :theme="config.theme" /><span
+                        v-show="fullHeader"
+                        class="case-extra-actions"
                         ><button
                           :disabled="blocked"
                           title="比较规则与时限保存在此 JSON 中"
@@ -2904,27 +2992,11 @@ async function foldRight(collapsed: boolean) {
                           重新加载</button
                         ><button :disabled="blocked" @click="addCase">＋ 新增</button></span
                       ><ActionMenu
+                        :theme="config.theme"
                         label="更多"
-                        :disabled="blocked"
-                        :items="[
-                          { label: '定位未通过', value: 'locate' },
-                          { label: '重测未通过', value: 'failed' },
-                          { label: '题目文件', value: 'rule', separator: true },
-                          { label: '重新加载', value: 'reload' },
-                          { label: '新增测试点', value: 'add' },
-                        ]"
-                        @select="
-                          (value) =>
-                            action(async () => {
-                              if (value === 'locate') locateFailed();
-                              else if (value === 'failed') {
-                                if (failedIds.length) await run(failedIds);
-                                else notice = '没有需要重测的失败测试点。';
-                              } else if (value === 'rule') await api.showProblemFile(snapshot());
-                              else if (value === 'reload') await fileAction(reload);
-                              else addCase();
-                            })
-                        "
+                        :compact="!fullHeader"
+                        :items="testHeaderItems"
+                        @select="(value) => action(() => testHeaderAction(value))"
                       /></div></template
                   ><template v-else
                     ><div class="debug-header-actions">
@@ -2937,13 +3009,27 @@ async function foldRight(collapsed: boolean) {
                       >
                         <ActionIcon name="play" /></button
                       ><button
+                        v-show="fullHeader"
                         :disabled="blocked || nativeActive"
                         @click="action(openBuildSettings)"
                       >
                         构建设置…
                       </button>
-                    </div></template
-                  >
+                      <ActionMenu
+                        :theme="config.theme"
+                        v-if="debugHeaderItems.length"
+                        label="更多调试操作"
+                        :compact="!fullHeader"
+                        :items="debugHeaderItems"
+                        @select="
+                          (value) =>
+                            action(async () => {
+                              if (value === 'tab') rightTab = 'tests';
+                              else await openBuildSettings();
+                            })
+                        "
+                      /></div
+                  ></template>
                 </div>
                 <NativeDebugPanel
                   :key="fileScope"
@@ -3592,14 +3678,21 @@ async function foldRight(collapsed: boolean) {
   color: var(--muted);
   opacity: 0.45;
 }
+.cases-pane:not(.is-folded) {
+  --pane-min-width: 144px;
+}
 .cases-heading {
+  --pane-header-padding: 6px;
   gap: 4px;
   flex: none;
-  padding: 7px 6px;
-  min-height: 41px;
+  height: var(--pane-header-height);
+  min-height: var(--pane-header-height);
+  overflow: hidden;
+  flex-wrap: nowrap;
   box-sizing: border-box;
 }
 .right-tabs {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -3657,6 +3750,7 @@ async function foldRight(collapsed: boolean) {
   line-height: 9px;
 }
 .case-header-actions {
+  flex: none;
   margin-left: auto;
   gap: 4px;
 }
@@ -3667,6 +3761,8 @@ async function foldRight(collapsed: boolean) {
 .case-header-actions > .action-menu-trigger {
   font-size: 10px;
   min-width: 0;
+}
+.case-header-actions > .action-menu-trigger:not(.is-compact) {
   padding: 3px 6px;
 }
 .right-rail {
@@ -3708,20 +3804,12 @@ async function foldRight(collapsed: boolean) {
   flex-direction: column;
   overflow: hidden;
 }
-@container (max-width:650px) {
-  .case-extra-actions {
-    display: none;
-  }
-}
 @container (min-width:651px) {
   .case-header-actions > .action-menu-trigger {
     padding: 2px 5px;
   }
 }
 @container (max-width:350px) {
-  .cases-heading {
-    flex-wrap: wrap;
-  }
   .case-header-actions {
     margin-left: 0;
   }
@@ -3748,6 +3836,8 @@ async function foldRight(collapsed: boolean) {
   color: var(--success);
 }
 .debug-header-actions {
+  flex: none;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;

@@ -1,4 +1,5 @@
 :root {
+  --pane-header-height: 40px;
   font-family: Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   color: #dce5f2;
   background: #0c111b;
@@ -291,12 +292,12 @@ p {
   background: #101722;
 }
 .pane-heading {
-  height: 43px;
+  height: var(--pane-header-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 var(--pane-header-padding, 16px);
   border-bottom: 1px solid #263347;
   background: #141e2d;
   font-size: 12px;
@@ -528,7 +529,9 @@ p {
   overflow: hidden;
 }
 .bottom-heading {
-  height: 38px;
+  height: var(--pane-header-height);
+  overflow-x: auto;
+  scrollbar-width: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -538,6 +541,7 @@ p {
   flex-shrink: 0;
 }
 .bottom-tabs {
+  flex-shrink: 0;
   display: flex;
   gap: 9px;
   height: 100%;
@@ -786,7 +790,7 @@ footer {
     grid-template-columns: 1fr 1fr;
   }
   .pane-heading {
-    padding: 0 10px;
+    padding: 0 var(--pane-header-padding, 10px);
   }
   .small-actions {
     gap: 2px;

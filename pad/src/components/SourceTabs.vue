@@ -155,7 +155,8 @@ const items = [
   display: flex;
   align-items: stretch;
   flex-shrink: 0;
-  min-height: 36px;
+  height: var(--pane-header-height);
+  min-height: var(--pane-header-height);
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
@@ -192,9 +193,8 @@ const items = [
   display: flex;
   flex-shrink: 0;
   overflow-x: auto;
-  min-height: 36px;
+  min-height: 0;
   max-width: 100%;
-  border-bottom: 1px solid var(--line, #333);
   background: var(--panel, #252526);
   scrollbar-width: thin;
 }
@@ -262,9 +262,6 @@ const items = [
   height: 1px;
   background: #7775;
   margin: 5px;
-}
-.editor-heading {
-  height: 34px;
 }
 .editor-empty {
   display: flex;
