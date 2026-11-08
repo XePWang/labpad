@@ -1732,6 +1732,9 @@ async function run(ids?: string[]) {
   try {
     const result = await api.judge(snapshot(), chosen);
     if (!ownsExecution(id)) return;
+    const coverage = await api.checkState(snapshot());
+    if (!ownsExecution(id)) return;
+    problemStates.value[draft.value!.problem.problemId] = coverage.state;
     if (result.status === 'error') {
       error.value = result.error || '评测任务失败';
       endExecution(id, 'task-failed');
@@ -1764,6 +1767,8 @@ async function run(ids?: string[]) {
     if (id === executionEpoch) {
       runningCases.value = [];
       finished.value = true;
+      if (problemStates.value[draft.value!.problem.problemId] === '运行中')
+        delete problemStates.value[draft.value!.problem.problemId];
       queueChecks();
     }
   }

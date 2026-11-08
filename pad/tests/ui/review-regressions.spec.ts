@@ -79,6 +79,17 @@ test('explicit target compiles B after activation persistence fails and an auxil
     await run.click();
     await expect(page.locator('.verdict.ac')).toHaveCount(1);
     await expect(page.locator('.actual-output')).toHaveText('B\n');
+    const exports = await page.evaluate(async () => {
+      const active = (await window.labpad.bootstrap()).draft;
+      const source = await window.labpad.exportPreview('source', [active]);
+      const versions = (await window.labpad.openDocuments('TargetFixture', 'one', 'c')).map(
+        (d) => ({ ...d, target: active.target }),
+      );
+      const project = await window.labpad.exportPreview('project', versions);
+      return { source: source.files[0].source, warnings: project.warnings };
+    });
+    expect(exports.source).toContain('puts("B")');
+    expect(exports.warnings.some((w) => w.startsWith('尚未全部通过'))).toBe(true);
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
     await app.close().catch(() => {});

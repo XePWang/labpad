@@ -43,6 +43,8 @@ test('sidebars preserve state and focus, share motion settings and use the same 
         paths: ['nested/helper.h'],
         content: 'int helper;',
       });
+      await window.labpad.createLab('InterfaceB', 'project');
+      await window.labpad.loadDraft('InterfaceA', '', 'c');
     });
     await page.reload();
     await page.locator('.toolbar').waitFor();
@@ -155,6 +157,18 @@ test('sidebars preserve state and focus, share motion settings and use the same 
       })
       .toBe(true);
     await page.screenshot({ path: path.resolve('../.work/dev9-repair/interface-state.png') });
+    await page.getByRole('combobox', { name: '实验项目', exact: true }).click();
+    await page.getByRole('option', { name: /^InterfaceB/ }).click();
+    await expect(page.locator('.test-summary')).not.toHaveClass(/all-passed/);
+    await expect(page.locator('.verdict.ac')).toHaveCount(0);
+    const main = page.locator('.source-tab').filter({ hasText: 'main.c' });
+    await main.click();
+    await page.locator('.cm-content').fill('int main(void){return 7;}');
+    const pending = await page.evaluate(async () =>
+      window.labpad.terminalCommand((await window.labpad.bootstrap()).draft, 'lpmake b'),
+    );
+    expect(pending.needsSave).toBe(true);
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
     await app.close().catch(() => {});

@@ -311,6 +311,24 @@ async function buildInput(value: Draft) {
   }
   return d;
 }
+// Enumerated versions own their identity; they must not inherit the editor's locked target.
+async function buildDocumentInput(value: Draft) {
+  if (
+    !value.auxiliary &&
+    value.documentId &&
+    !(await storage.workspace.isProject(value.problem.labId))
+  )
+    value = {
+      ...value,
+      target: {
+        mode: 'problem-set',
+        labId: value.problem.labId,
+        problemId: value.problem.problemId,
+        documentId: value.documentId,
+      },
+    };
+  return buildInput(value);
+}
 async function savedBuildInput(value: Draft) {
   await saves;
   const d = await targetInput(value);
@@ -373,11 +391,23 @@ async function workspaceBootstrap() {
   }
   if (currentDocument?.file && currentDocument.problem.labId === lab) {
     const current = currentDocument;
-    const fresh = await storage.workspace.open(lab, current.file!);
-    draft = { ...fresh, source: current.source, problem: current.problem, target: current.target };
-    const index = documents.findIndex((d) => d.file === current.file);
-    if (index >= 0) documents[index] = draft;
-    else documents.push(draft);
+    try {
+      const fresh = await storage.workspace.open(lab, current.file!);
+      draft = {
+        ...fresh,
+        source: current.source,
+        problem: current.problem,
+        target: current.target,
+      };
+      const index = documents.findIndex((d) => d.file === current.file);
+      if (index >= 0) documents[index] = draft;
+      else documents.push(draft);
+    } catch (error) {
+      // A committed deletion can precede the renderer's next state notification.
+      // Fall back to the surviving stored document, never revive the deleted buffer.
+      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      documentDirty = false;
+    }
   } else documentDirty = false;
   currentDocument = draft;
   return {
@@ -587,7 +617,7 @@ function submissionServices() {
   const options = structuredClone(config.compiler);
   return {
     resolve: async (value: Draft) => {
-      const draft = await buildInput(value),
+      const draft = await buildDocumentInput(value),
         effective = await draftOptions(draft);
       return { draft, compiler: effective, identity: await inputIdentity(draft, effective) };
     },
@@ -1508,6 +1538,7 @@ async function initialize() {
         warnings: preview.warnings,
       };
     }
+    const source = kind === 'source' ? await targetInput(drafts[0]) : drafts[0];
     return kind === 'project'
       ? prepareProject(
           storage,
@@ -1519,8 +1550,8 @@ async function initialize() {
         )
       : prepareSource(
           storage,
-          drafts[0],
-          { ...structuredClone(config), compiler: await draftOptions(drafts[0]) },
+          source,
+          { ...structuredClone(config), compiler: await draftOptions(source) },
           submissionServices(),
         );
   });
@@ -2260,7 +2291,7 @@ async function initialize() {
       shell = await shellFor(draft);
     await shell.context();
     if (
-      /^[Ll][Pp][Mm][Aa][Kk][Ee]s+(?:b|build|r|run)s*$/.test(text) &&
+      /^[Ll][Pp][Mm][Aa][Kk][Ee]\s+(?:b|build|r|run)\s*$/.test(text) &&
       (await exists(await shell.files.resolve('LPMake.txt', true, shell.cwd))) &&
       !(await programContext(draft)).saved
     )
