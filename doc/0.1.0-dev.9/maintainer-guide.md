@@ -266,3 +266,23 @@ src/editor/symbols.ts 从明确的声明节点提取名称，当前文件消费 
 左右折叠保留组件实例，隐藏区域设 inert；动画共用时长、缓动和减少动画设置。主操作使用 action-bg/action-hover，焦点、选中和 AC 保留各自语义色。编辑器状态键包含工作区 scope，避免不同实验的同名文件共享撤销记录。
 
 可重复故障回归见 tests/ui/review-regressions.spec.ts、tests/ui/interface-state.spec.ts 及对应核心测试。平台、执行次数和结果以 verification.md 为准。
+
+## 13. 规则保存与异步响应
+
+普通文档保存只写该文档，规则通过 Storage.saveProblem 单独写入。当前题目 JSON 使用 saveRuleFile 校验结构和 labId/problemId；无题号的共享草稿按当前选择归一化后比较规则基线，再保留用户文本写入；SaveResult.problem 将已保存规则同步到面板。面板和 JSON 同时未保存时拒绝覆盖，两个草稿保留。规则面板保存时刷新干净的 JSON 标签；退出根据 WorkspaceEdits 保存实际修改及规则基线。
+
+切换标签与修改内容分开处理。查看辅助标签保留当前源码目标、编译就绪和评测结果；切换源码目标重新查询对应状态，实际内容变化才进入 changed 状态。保存引起的格式化若改变源码，仍重新核对编译状态。
+
+WorkspaceStore.list 直接使用 FileService.list，统一初始化和刷新时的保留目录排除。保留路径的写入校验继续有效；文件区默认隐藏 .git。构建快照仍按自身规则排除已识别产物，文件区继续显示普通 build 目录。
+
+CLI 历史恢复直接使用 directorySnapshot，同时校验 files 和 binaryFiles；删除文本专用目录包装。完整版本保留稳定 ordinal，二进制资源参与原有哈希及完整版本择优。
+
+终端补全请求记录 generation、scope、cwd、输入修订和请求序号。键盘编辑、光标移动、粘贴、提交和取消都会使旧输入请求失效；主进程核对请求目录，渲染进程在成功及失败回调写入前复核上下文。
+
+NativeDebugger 的 inspectionId 由会话身份和 inspection 计数组成。暂停、继续和换帧使旧检查失效；堆栈、变量、监视在等待后再次核对；当前暂停位置加载作用域失败仍显示诊断，旧帧的失败不会覆盖新状态。变量视图及递归展开保留各自请求轮次，旧成功、错误和 finally 均不更新新视图；卸载时一并失效。
+
+readFileLimited 先用已打开文件的 stat 拒绝超限文件，再分块读取，在原上限加一个哨兵字节处停止；文件增长也不绕过上限。finally 关闭句柄，终端 cat 保持每文件 1 MB 的原有约束。主操作色定义在 themes.css 的公共主题根，ExportDialog 的 Portal 与主界面共用按钮状态规则。
+
+参考实现：[VS Code 目录排除](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/files/browser/files.contribution.ts)、[补全会话取消](https://github.com/microsoft/vscode/blob/main/src/vs/editor/contrib/suggest/browser/suggestModel.ts)、[异步树输入失效](https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/ui/tree/asyncDataTree.ts)、[有界读取与关闭](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/common/io.ts)、[文本内容与保存版本](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/textfile/common/textFileEditorModel.ts)。采用其处理边界，接入 LabPad 已有的保存队列、FileService、目录快照、DAP 会话及主题。
+
+对应回归：tests/review-persistence.test.ts、tests/rule-save.test.ts、tests/debug-inspection.test.ts、tests/read-file.test.ts，以及 tests/ui/review-persistence.spec.ts、tests/ui/async-context.spec.ts、tests/ui/action-theme.spec.ts。测试中的延迟响应由故障注入触发；真实断点调试另外使用随包调试器执行。
