@@ -3,3 +3,5 @@ export function withFixtures(
 ): typeof import('playwright')._electron;
 
 export function closeApplication(app: import('playwright').ElectronApplication): Promise<void>;
+
+export function compileAndRun(page: import("@playwright/test").Page, key?: string): Promise<void>;
