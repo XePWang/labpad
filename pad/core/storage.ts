@@ -1,3 +1,4 @@
+import {defaultTypography} from '../shared/typography';
 import {directorySnapshot,managedBuild} from './workspace-files';
 import {FileService,under,type FileRequest,type FileChange} from './files';
 import {workspacePath} from '../shared/workspace';
@@ -50,7 +51,7 @@ export class Storage{
   const file=path.join(this.root,'config.json');
   if(await exists(file)){
    const value=await readJSON(file) as Config;
-   return validateConfig({...value,saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,completionEnabled:value.completionEnabled??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:migrateShortcuts(value.shortcuts)});
+   return validateConfig({...value,typography:value.typography??defaultTypography(),saveMode:value.saveMode??'manual',sourceFile:value.sourceFile??null,indentSize:value.indentSize??4,theme:value.theme??'dark',formatOnSave:value.formatOnSave??true,completionEnabled:value.completionEnabled??true,layout:value.layout??{editorPercent:53,outputPercent:28},zoomFactor:value.zoomFactor??1,shortcuts:migrateShortcuts(value.shortcuts)});
   }
   const config=defaultConfig();await this.saveConfig(config);return config;
  }

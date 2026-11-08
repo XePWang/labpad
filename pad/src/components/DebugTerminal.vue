@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import {fallbackTextStyle,type TextStyle} from '../typography';
 import {onMounted,onBeforeUnmount,ref,watch,nextTick} from 'vue';
 import {Terminal} from '@xterm/xterm';import {FitAddon} from '@xterm/addon-fit';import {Unicode11Addon} from '@xterm/addon-unicode11';
 import {terminalCommand} from '../../shared/terminal-keymap';
 import {Readline} from '../../vendor/xterm-readline/src/readline';
 import '@xterm/xterm/css/xterm.css';
-const props=defineProps<{running:boolean;epoch:number;historyBytes:number;scrollback:number;theme:'light'|'dark';context?:string;execute?:(text:string)=>Promise<{cwd:string;output:string;clear?:boolean}>;interrupt?:()=>Promise<unknown>}>();
+const props=defineProps<{running:boolean;textStyle?:TextStyle;epoch:number;historyBytes:number;scrollback:number;theme:'light'|'dark';context?:string;execute?:(text:string)=>Promise<{cwd:string;output:string;clear?:boolean}>;interrupt?:()=>Promise<unknown>}>();
 const host=ref<HTMLDivElement>();let terminal:Terminal|undefined,readline:Readline|undefined,fit:FitAddon,observer:ResizeObserver,generation=0,executing=false,outputTail=Promise.resolve();
 const cwd=ref('');const interactive=()=>props.running||!!props.execute;
 const win=/^win/i.test(navigator.platform);
@@ -32,7 +33,7 @@ function key(event:KeyboardEvent){
  if(command==='eof'&&props.running)eof();return false;
 }
 onMounted(()=>{
- terminal=new Terminal({allowProposedApi:true,screenReaderMode:false,cursorBlink:false,disableStdin:true,cursorInactiveStyle:'none',scrollback:props.scrollback,fontSize:13,fontFamily:'"Cascadia Code",Consolas,"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",monospace',theme:colors()});
+ terminal=new Terminal({allowProposedApi:true,screenReaderMode:false,cursorBlink:false,disableStdin:true,cursorInactiveStyle:'none',scrollback:props.scrollback,fontSize:(props.textStyle??fallbackTextStyle).fontSize,lineHeight:(props.textStyle??fallbackTextStyle).lineHeight,letterSpacing:(props.textStyle??fallbackTextStyle).letterSpacing,fontFamily:(props.textStyle??fallbackTextStyle).family,theme:colors()});
  fit=new FitAddon();terminal.loadAddon(fit);terminal.loadAddon(new Unicode11Addon());terminal.unicode.activeVersion='11';readline=new Readline();terminal.loadAddon(readline);terminal.attachCustomKeyEventHandler(key);terminal.open(host.value!);terminal.textarea?.setAttribute('aria-label','终端输入');
  observer=new ResizeObserver(()=>{if(host.value?.offsetWidth){fit.fit();window.labpad.debugResize(terminal!.cols,terminal!.rows);}});observer.observe(host.value!);if(interactive())void begin();
 });
@@ -40,6 +41,7 @@ watch(()=>[props.running,props.context],()=>{if(props.context!==lastContext){cwd
 let lastContext=props.context;
 watch(()=>props.epoch,()=>readline?.resetHistory(props.historyBytes));
 watch(()=>props.historyBytes,value=>readline?.setHistoryLimit(value));
+watch(()=>props.textStyle,value=>{if(!terminal)return;const s=value??fallbackTextStyle;terminal.options.fontFamily=s.family;terminal.options.fontSize=s.fontSize;terminal.options.lineHeight=s.lineHeight;terminal.options.letterSpacing=s.letterSpacing;fit?.fit();window.labpad.debugResize(terminal.cols,terminal.rows);});
 watch(()=>props.theme,()=>{if(terminal)terminal.options.theme=colors();});
 watch(()=>props.scrollback,value=>{if(terminal)terminal.options.scrollback=value;});
 onBeforeUnmount(()=>{generation++;observer?.disconnect();readline?.abortRead();terminal?.dispose();});

@@ -4,7 +4,7 @@
 
 撰写日期：2026-11-01
 
-更新日期：2026-11-05
+更新日期：2026-11-08
 
 ## 1. 模块与项目模型
 桌面采用 Electron、Vue 3、TypeScript、CodeMirror 6。CLI 与桌面共用 core/compiler、core/build、core/judge 和 Checker。
@@ -227,3 +227,13 @@ beforePack 准备裁剪副本和离线调试器，再由原有签名流程处理
 解压测试分别记录归档大小、解包字节、文件数、普通机器数据及受限进程数据。受限档只改变专用解压进程的 CPU 亲和性和配额；I/O 延迟档记录实际延迟。它们是可重复的低性能模拟，不能标为真实低端笔记本实测。各次采用相同容器、辅助程序与限制比较；原生 Windows 资源管理器解压另行记录。
 
 Windows 项目链接生成的 PDB 与程序一并保留，运行副本保持目标文件名；重新构建先移除旧符号，清理按产物归属执行。调试结束的界面状态在 PTY、适配器与运行目录清理后发布；终端命令等待收尾完成，启动包装进程的退出码不作为被调试程序的退出码。
+
+## 字体资源与设置
+
+`shared/typography.ts` 定义中英文字体与字号、默认值及校验。`config.json` 的 `typography` 保存四项设置，旧配置由 Storage 补入默认值。字体设置不参与构建参数和评测指纹。
+
+`src/typography.ts` 使用浏览器 FontFace、unicode-range 与 size-adjust 管理字体。英文默认读取随包 WOFF2，自定义字体使用本地字体源；中文范围单独缩放。CodeMirror 用 Compartment 更新编辑器和补全字体，保留撤销历史；终端使用同一字体源并调整等宽网格、行高和 FitAddon 尺寸。预览关闭及配置替换时释放旧 FontFace。
+
+JetBrains Mono 固定为 2.304，原字体保存在 `assets/fonts/`，OFL-1.1 原文和下载哈希保存在 `vendor/jetbrains-mono/`。许可证合入发布包 `licenses/THIRD_PARTY_LICENSES.txt`；字体随 Vite 静态资源放入 ASAR。
+
+对应检查为 `tests/typography.test.ts` 和 `tests/ui/typography.spec.ts`，覆盖旧配置、无网络字体加载、独立字号、无效字体、终端中英混合行编辑、撤销历史、重启恢复和字体对象释放。

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import {fallbackTextStyle,type TextStyle} from '../typography';
+import {Prec} from '@codemirror/state';
 import {onMounted,onBeforeUnmount,ref,watch} from 'vue';
 import {basicSetup} from 'codemirror';
 import {EditorView,highlightWhitespace,keymap,gutter,GutterMarker,Decoration} from '@codemirror/view';
@@ -15,11 +17,11 @@ import {Compartment,EditorState,Transaction,countColumn,RangeSet,ChangeSet} from
 import {completionExtension,sourceCompletions,type CompletionFiles} from '../editor/completion';
 import type {SourceBreakpoint} from '../../shared/debug';
 import type {EditorCursor} from '../../shared/types';
-const props=defineProps<{modelValue:string;disabled?:boolean;documentId:string;openIds:string[];indentSize:1|2|4;theme:'light'|'dark';file?:string;language?:'c'|'cpp';completionEnabled?:boolean;completionFiles?:CompletionFiles;debugEnabled?:boolean;breakpoints?:SourceBreakpoint[];executionLine?:number}>();
+const props=defineProps<{modelValue:string;textStyle?:TextStyle;disabled?:boolean;documentId:string;openIds:string[];indentSize:1|2|4;theme:'light'|'dark';file?:string;language?:'c'|'cpp';completionEnabled?:boolean;completionFiles?:CompletionFiles;debugEnabled?:boolean;breakpoints?:SourceBreakpoint[];executionLine?:number}>();
 const emit=defineEmits<{(e:'update:modelValue',value:string):void;(e:'format'):void;(e:'cursor',value:EditorCursor):void;(e:'breakpoint',line:number,condition:boolean):void;(e:'breakpoints',values:SourceBreakpoint[]):void}>();
 const host=ref<HTMLDivElement>();let view:EditorView|undefined;
 const states=new Map<string,{state:EditorState;top:number;left:number}>();
-const readOnly=new Compartment(),indentation=new Compartment(),colorTheme=new Compartment(),syntax=new Compartment(),completion=new Compartment(),debugView=new Compartment();
+const readOnly=new Compartment(),indentation=new Compartment(),colorTheme=new Compartment(),syntax=new Compartment(),completion=new Compartment(),debugView=new Compartment(),typography=new Compartment();
 const lpLanguage=LRLanguage.define({parser:parser.configure({props:[styleTags({Name:tags.function(tags.variableName),String:tags.string,Comment:tags.lineComment,BlockComment:tags.blockComment}),indentNodeProp.add({Call:delimitedIndent({closing:')',align:false})}),foldNodeProp.add({Call:foldInside})]}),languageData:{commentTokens:{line:'#',block:{open:'--[[',close:']]'}}}});
 function language(){return props.file?.split('/').pop()==='LPMake.txt'?new LanguageSupport(lpLanguage,[lpLanguage.data.of({autocomplete:(context:any)=>{const word=context.matchBefore(/[a-z_]+/);if(!word&&!context.explicit)return null;return {from:word?.from??context.pos,options:commands.map(label=>({label,type:'function',apply:label+'(\"\")'}))};}})]):cpp();}
 class BreakMarker extends GutterMarker{
@@ -42,6 +44,18 @@ function colors(){
   '.cm-highlightTab':{opacity:'0.35'}
  })];
 }
+function textAppearance(){
+ const s=props.textStyle??fallbackTextStyle;
+ return Prec.highest(EditorView.theme({
+  '&.cm-editor .cm-scroller':{fontFamily:s.family,fontSize:s.fontSize+'px',lineHeight:String(s.lineHeight)},
+  '&.cm-editor .cm-tooltip':{fontFamily:s.family,fontSize:s.fontSize+'px',lineHeight:String(s.lineHeight)},
+  '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete':{backgroundColor:'var(--panel)',color:'var(--text)',border:'1px solid var(--border)'},
+  '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul':{fontFamily:'inherit',fontSize:'inherit',lineHeight:'inherit'},
+  '&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li':{fontFamily:'inherit',fontSize:'inherit',lineHeight:'inherit'},
+  '&.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected]':{backgroundColor:'var(--accent)',color:'#fff'},
+  '&.cm-editor .cm-completionDetail':{fontFamily:'inherit',fontSize:'inherit'}
+ }));
+}
 function reportCursor(state:EditorState){
  const head=state.selection.main.head,line=state.doc.lineAt(head),ranges=state.selection.ranges.filter(r=>!r.empty);
  let selectionLines=0,lastLine=0;
@@ -52,10 +66,10 @@ function reportCursor(state:EditorState){
  emit('cursor',{line:line.number,column:countColumn(line.text.slice(0,head-line.from),state.tabSize)+1,selectionChars:ranges.reduce((n,r)=>n+r.to-r.from,0),selectionLines,lines:state.doc.lines,focused:!!view?.hasFocus});
 }
 function extensions(id=props.documentId){
- return [basicSetup,completion.of(completions()),debugView.of(debugExtensions()),syntax.of(language()),highlightWhitespace(),keymap.of([indentWithTab,{key:'Mod-Shift-z',run:redo,preventDefault:true},{key:navigator.platform.toLowerCase().includes('mac')?'Mod-Alt-f':'Mod-h',run:openSearchPanel,scope:'editor search-panel'}]),
+ return [basicSetup,typography.of(textAppearance()),completion.of(completions()),debugView.of(debugExtensions()),syntax.of(language()),highlightWhitespace(),keymap.of([indentWithTab,{key:'Mod-Shift-z',run:redo,preventDefault:true},{key:navigator.platform.toLowerCase().includes('mac')?'Mod-Alt-f':'Mod-h',run:openSearchPanel,scope:'editor search-panel'}]),
   indentation.of(indentConfig()),colorTheme.of(colors()),readOnly.of([EditorState.readOnly.of(!!props.disabled),EditorView.editable.of(!props.disabled)]),
   EditorView.contentAttributes.of({'aria-label':'源码编辑器'}),
-  EditorView.theme({'&':{height:'100%'},'.cm-scroller':{overflow:'auto',fontFamily:'"Cascadia Code","JetBrains Mono",Consolas,monospace',fontSize:'14px',lineHeight:'1.7'},
+  EditorView.theme({'&':{height:'100%'},'.cm-scroller':{overflow:'auto'},
    '.cm-gutters':{border:'none'},'.cm-content':{padding:'16px 0'}}),
   EditorView.updateListener.of(update=>{if(id!==props.documentId)return;if(update.docChanged){const values=(props.breakpoints??[]).filter(b=>b.path===props.file);if(values.length){let mapping=update.changes;let replacedAll=false;update.changes.iterChangedRanges((a,b)=>{if(a===0&&b===update.startState.doc.length)replacedAll=true;});if(replacedAll){const before=update.startState.doc.toString(),after=update.state.doc.toString();mapping=ChangeSet.of(diff(before,after,{scanLimit:1000,timeout:50}).map(c=>({from:c.fromA,to:c.toA,insert:after.slice(c.fromB,c.toB)})),before.length);}const mapped=values.map(b=>({...b,line:update.state.doc.lineAt(mapping.mapPos(update.startState.doc.line(Math.min(b.line,update.startState.doc.lines)).from)).number}));if(mapped.some((b,i)=>b.line!==values[i].line))emit('breakpoints',[...(props.breakpoints??[]).filter(b=>b.path!==props.file),...mapped]);}emit('update:modelValue',update.state.doc.toString());}if(update.docChanged||update.selectionSet||update.focusChanged)reportCursor(update.state);})];
 }
@@ -71,12 +85,13 @@ watch(()=>[props.documentId,props.modelValue] as const,([id,text],[previousId])=
  if(id!==previousId){
   if(props.openIds.includes(previousId))states.set(previousId,{state:view.state,top:view.scrollDOM.scrollTop,left:view.scrollDOM.scrollLeft});
   const saved=states.get(id);view.setState(saved?.state??EditorState.create({doc:text,extensions:extensions(id)}));
-  view.dispatch({effects:[syntax.reconfigure(language()),completion.reconfigure(completions()),debugView.reconfigure(debugExtensions()),indentation.reconfigure(indentConfig()),colorTheme.reconfigure(colors()),readOnly.reconfigure([EditorState.readOnly.of(!!props.disabled),EditorView.editable.of(!props.disabled)])]});
+  view.dispatch({effects:[typography.reconfigure(textAppearance()),syntax.reconfigure(language()),completion.reconfigure(completions()),debugView.reconfigure(debugExtensions()),indentation.reconfigure(indentConfig()),colorTheme.reconfigure(colors()),readOnly.reconfigure([EditorState.readOnly.of(!!props.disabled),EditorView.editable.of(!props.disabled)])]});
   if(view.state.doc.toString()!==text)applyText(text);
   if(saved)view.requestMeasure({read:()=>saved,write:s=>{if(view){view.scrollDOM.scrollTop=s.top;view.scrollDOM.scrollLeft=s.left;}}});reportCursor(view.state);
  }
  else if(view.state.doc.toString()!==text)applyText(text);
 });
+watch(()=>props.textStyle,()=>{view?.dispatch({effects:typography.reconfigure(textAppearance())});view?.requestMeasure();});
 watch(()=>[props.indentSize,props.theme],()=>view?.dispatch({effects:[indentation.reconfigure(indentConfig()),colorTheme.reconfigure(colors())]}));
 watch(()=>props.disabled,value=>view?.dispatch({effects:readOnly.reconfigure([EditorState.readOnly.of(!!value),EditorView.editable.of(!value)])}));
 watch(()=>props.openIds,ids=>{for(const id of states.keys())if(!ids.includes(id))states.delete(id);});

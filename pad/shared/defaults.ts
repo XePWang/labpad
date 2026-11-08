@@ -1,3 +1,4 @@
+import {defaultTypography} from './typography';
 import {defaultShortcuts} from './shortcuts';
 import type {Config,Problem,Language,CompilerConfig} from './types';
 export const defaultWarnings=['-Wall','-Wextra','-Wshadow','-Wconversion','-Wundef','-Wformat=2'];
@@ -9,7 +10,7 @@ export function defaultCompilerConfig(kind:CompilerConfig['kind'],msvc=false):Co
  return {mode:'builtin',kind,cPath:'',cppPath:'',cArgs:['-std='+defaultStandards.c,'-O2',...defaultWarnings],cppArgs:['-std='+defaultStandards.cpp,'-O2',...defaultWarnings],linkArgs:msvc?[]:['-lm']};
 }
 export function defaultConfig():Config{
- return {schemaVersion:1,classId:'',name:'',studentId:'',currentLab:'',currentProblem:'',language:'c',
+ return {typography:defaultTypography(),schemaVersion:1,classId:'',name:'',studentId:'',currentLab:'',currentProblem:'',language:'c',
  compiler:defaultCompilerConfig('zig'),
  debugTimeLimitMs:null,terminalBufferLines:3000,terminalHistoryBytes:65536,saveMode:'manual',sourceFile:null,indentSize:4,theme:'dark',formatOnSave:true,completionEnabled:true,layout:{editorPercent:53,outputPercent:28},zoomFactor:1,shortcuts:defaultShortcuts()};
 }

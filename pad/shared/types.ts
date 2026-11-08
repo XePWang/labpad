@@ -1,3 +1,4 @@
+import type {Typography} from './typography';
 import type {WorkspaceSnapshot,WorkspaceFile,ProjectBuildOptions} from './workspace';
 export type Language='c'|'cpp';
 export type Verdict='AC'|'WA'|'CE'|'RE'|'TLE'|'OLE';
@@ -8,7 +9,7 @@ export interface CompilerConfig{mode:'builtin'|'custom';kind:'zig'|'gcc'|'clang'
 export interface DetectedCompiler{id:string;name:string;version:string;target:string;compiler:CompilerConfig}
 export interface LayoutConfig{editorPercent:number;outputPercent:number}
 export interface EditorCursor{line:number;column:number;selectionChars:number;selectionLines:number;lines:number;focused:boolean}
-export interface Config{schemaVersion:1;classId:string;name:string;studentId:string;currentLab:string;currentProblem:string;language:Language;compiler:CompilerConfig;debugTimeLimitMs:number|null;terminalBufferLines:number;terminalHistoryBytes:number;saveMode:'manual'|'auto';sourceFile:string|null;indentSize:1|2|4;theme:'light'|'dark';formatOnSave:boolean;completionEnabled?:boolean;layout:LayoutConfig;zoomFactor:number;shortcuts:Record<string,string[]>}
+export interface Config{typography?:Typography;schemaVersion:1;classId:string;name:string;studentId:string;currentLab:string;currentProblem:string;language:Language;compiler:CompilerConfig;debugTimeLimitMs:number|null;terminalBufferLines:number;terminalHistoryBytes:number;saveMode:'manual'|'auto';sourceFile:string|null;indentSize:1|2|4;theme:'light'|'dark';formatOnSave:boolean;completionEnabled?:boolean;layout:LayoutConfig;zoomFactor:number;shortcuts:Record<string,string[]>}
 export interface Draft{sourceFiles?:WorkspaceSnapshot;auxiliary?:boolean;file?:string;workspace?:WorkspaceSnapshot;documentId?:string;source:string;language:Language;problem:Problem}
 export interface LoadedDraft extends Draft{sourceFile?:string;sourceEncoding?:string;warning?:string;name?:string}
 export interface Project{labId:string;problems:string[];mode?:'problem-set'|'project'}

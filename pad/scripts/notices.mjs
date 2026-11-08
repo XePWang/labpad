@@ -25,6 +25,7 @@ while(queue.length){
  }
  sections.push('=== '+name+' '+data.version+' ('+JSON.stringify(data.license)+') ===\n'+texts.join('\n'));
 }
+sections.push('=== JetBrains Mono 2.304 (OFL-1.1) ===\n'+await readFile('vendor/jetbrains-mono/OFL.txt','utf8'));
 sections.push('=== xterm-readline 1.3.1 (MIT; adapted for LabPad) ===\n'+await readFile('vendor/xterm-readline/LICENSE-MIT','utf8'));
 sections.push('=== LLVM clang-format (Apache-2.0 WITH LLVM-exception) ===\n'+await readFile('vendor/llvm/LICENSE.TXT','utf8'));
 for(const [name,file]of [['CodeLLDB 1.12.3 (MIT)','vendor/codelldb/LICENSE'],['Python 3.12.7 (PSF)','vendor/python/LICENSE']])sections.push('=== '+name+' ===\n'+await readFile(file,'utf8'));

@@ -1,3 +1,4 @@
+import {validateTypography} from './typography';
 import {assertParameters} from './parameters';
 import {validateComparison} from './comparison';
 import {validateShortcuts} from './shortcuts';
@@ -50,6 +51,7 @@ export function validateConfig(value:unknown):Config {
  if(![1,2,4].includes(c.indentSize)||!['light','dark'].includes(c.theme)||typeof c.formatOnSave!=='boolean'||c.completionEnabled!==undefined&&typeof c.completionEnabled!=='boolean')throw new Error('编辑器设置无效');
  validateLayout(c.layout);validateShortcuts(c.shortcuts);
  if(!Number.isFinite(c.zoomFactor)||c.zoomFactor<0.25||c.zoomFactor>4)throw new Error('界面缩放应为 25% 至 400%');
+ if(c.typography!==undefined)validateTypography(c.typography);
  const b=c.compiler;
  if(!b||!['builtin','custom'].includes(b.mode)||!['zig','gcc','clang'].includes(b.kind)||
  typeof b.cPath!=='string'||typeof b.cppPath!=='string'||

@@ -40,3 +40,7 @@ The terminal line editor adapts xterm-readline 1.3.1 (MIT), revision 0870644ef26
 - Bundled Python 3.12.7: Python Software Foundation License and included third-party notices.
 
 The pinned downloads are in debuggers.json; license texts are in vendor/codelldb, vendor/llvm and vendor/python, and resources/debugger/licenses.
+
+## Editor font
+
+JetBrains Mono 2.304 (OFL-1.1), https://github.com/JetBrains/JetBrainsMono/tree/v2.304. The unmodified WOFF2 font is bundled for offline use. Its license and download hashes are retained in vendor/jetbrains-mono and the packaged THIRD_PARTY_LICENSES.txt.
