@@ -1,5 +1,5 @@
 import { test, expect, _electron } from '@playwright/test';
-import { withFixtures } from './legacy-flow.cjs';
+import { withFixtures, closeApplication } from './legacy-flow.cjs';
 import { project } from './selectors.cjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,8 +18,7 @@ async function fixture() {
     app,
     page,
     close: async () => {
-      await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
-      await app.close().catch(() => {});
+      await closeApplication(app);
       await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
@@ -39,7 +38,12 @@ test('terminal completions cannot cross projects, prompt sessions, or same-text 
     await page.reload();
     await page.locator('.toolbar').waitFor();
     await project(page).selectOption('ScopeA');
+    await expect.poll(() => project(page).inputValue()).toBe('ScopeA');
+    const scopeA = await page.evaluate(
+      async () => (await window.labpad.bootstrap()).workspace!.scope,
+    );
     await page.getByRole('button', { name: '终端', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     await expect.poll(() => terminalText(page)).toContain('>');
     await app.evaluate(({ ipcMain }) => {
       (globalThis as any).__completions = [];
@@ -64,6 +68,10 @@ test('terminal completions cannot cross projects, prompt sessions, or same-text 
     await request(0);
     await project(page).selectOption('ScopeB');
     await expect.poll(() => project(page).inputValue()).toBe('ScopeB');
+    const scopeB = await page.evaluate(
+      async () => (await window.labpad.bootstrap()).workspace!.scope,
+    );
+    await expect(page.getByRole('combobox', { name: '实验项目', exact: true })).toBeEnabled();
     await input.focus();
     await page.keyboard.insertText('cat al');
     await app.evaluate(() =>
@@ -105,7 +113,9 @@ test('terminal completions cannot cross projects, prompt sessions, or same-text 
     const contexts = await app.evaluate(() =>
       (globalThis as any).__completions.map((r: any) => r.context),
     );
-    expect(contexts[0].scope).not.toBe(contexts[1].scope);
+    expect(contexts[0].scope).toBe(scopeA);
+    expect(contexts[1].scope).toBe(scopeB);
+    expect(scopeA).not.toBe(scopeB);
     expect(contexts[1].cwd).toBe('');
   } finally {
     await close();

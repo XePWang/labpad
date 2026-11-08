@@ -1,5 +1,5 @@
 import { test, expect, _electron } from '@playwright/test';
-import { withFixtures } from './legacy-flow.cjs';
+import { withFixtures, closeApplication } from './legacy-flow.cjs';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -12,8 +12,7 @@ async function launch(root: string) {
   });
 }
 async function stop(app: Awaited<ReturnType<typeof launch>>) {
-  await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
-  await app.close().catch(() => {});
+  await closeApplication(app);
 }
 async function fixture(app: Awaited<ReturnType<typeof launch>>) {
   const page = await app.firstWindow();

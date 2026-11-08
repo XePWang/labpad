@@ -1,6 +1,6 @@
 import { test, expect, _electron } from '@playwright/test';
 import type { Locator } from '@playwright/test';
-import { withFixtures } from './legacy-flow.cjs';
+import { withFixtures, closeApplication } from './legacy-flow.cjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -90,8 +90,7 @@ test('portaled export actions share normal, hover, focus and disabled styles in 
       await page.getByRole('button', { name: '取消导出', exact: true }).click();
     }
   } finally {
-    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
-    await app.close().catch(() => {});
+    await closeApplication(app);
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
