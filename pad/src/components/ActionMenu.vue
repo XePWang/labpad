@@ -23,6 +23,7 @@ defineProps<{
   theme?: string;
   compact?: boolean;
   triggerClass?: string;
+  owner?: string;
 }>();
 const emit = defineEmits<{ select: [value: string]; closeAutoFocus: [event: Event] }>();
 function closeMenu(event: Event) {
@@ -65,6 +66,7 @@ function closeMenu(event: Event) {
         @open-auto-focus="rememberMenuFocus"
         @close-auto-focus="closeMenu"
         class="action-menu"
+        :data-owner="owner"
         :data-theme="theme"
         align="end"
         :side-offset="6"

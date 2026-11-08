@@ -157,18 +157,22 @@ p {
     monospace;
 }
 .toolbar {
-  padding: 14px 20px;
+  height: var(--pane-header-height);
+  min-height: var(--pane-header-height);
+  padding: 0 12px;
+  align-items: center;
   display: flex;
   justify-content: space-between;
   gap: 15px;
   border-bottom: 1px solid #223046;
   flex-shrink: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .project-select {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 8px;
+  min-width: 0;
 }
 .project-select label {
   flex-direction: row;
@@ -187,7 +191,8 @@ p {
 }
 .toolbar-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   min-width: 0;
   max-width: 100%;
   gap: 7px;
@@ -786,9 +791,6 @@ footer {
   .brand-subtitle {
     display: none;
   }
-  .toolbar {
-    padding: 10px 14px;
-  }
   .workspace {
     grid-template-columns: 1fr 1fr;
   }
@@ -932,4 +934,57 @@ footer {
     64px,
     calc(var(--code-font-size, 14px) * var(--code-line-height, 1.7) * 2 + 16px)
   );
+}
+
+.toolbar-secondary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.toolbar .run-actions,
+.toolbar .project-select {
+  flex-wrap: nowrap;
+}
+.toolbar button {
+  height: 30px;
+  padding: 4px 10px;
+}
+.toolbar .run-actions .icon-action,
+.toolbar .toolbar-more-trigger {
+  width: 30px;
+  padding: 4px;
+}
+.toolbar .visually-hidden-phase {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.toolbar.hide-select-labels .select-label,
+.toolbar.hide-select-labels .path-divider {
+  display: none;
+}
+.toolbar.is-compact .stop-label {
+  display: none;
+}
+.toolbar.is-compact .stop {
+  width: 30px;
+  padding: 4px;
+}
+.toolbar.is-compact .toolbar-actions {
+  gap: 6px;
+}
+.toolbar .problem-trigger {
+  width: 150px;
+  min-width: 0;
+  height: 30px;
+  max-width: 150px;
+}
+@media (max-width: 800px), (max-height: 600px) {
+  .brandbar {
+    display: none;
+  }
 }

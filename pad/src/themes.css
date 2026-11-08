@@ -312,7 +312,7 @@
 }
 
 .project-select {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .run-actions {
   display: flex;
@@ -447,9 +447,6 @@
   }
   .brandbar {
     height: 52px;
-  }
-  .toolbar {
-    padding: 10px 15px;
   }
   .project-select {
     gap: 9px;

@@ -536,6 +536,65 @@ function toggleAllTests() {
       : draft.value!.problem.testCases.map((t) => t.id);
 }
 
+const mainToolbar = ref<HTMLElement>();
+const toolbarWidth = ref(0);
+const compactToolbar = computed(() => toolbarWidth.value < 1150);
+const toolbarItems = computed(() => [
+  ...(!workspaceMode.value
+    ? [
+        { label: 'C 源码（.c）', value: 'new:c', disabled: blocked.value },
+        { label: 'C++ 源码（.cpp）', value: 'new:cpp', disabled: blocked.value },
+      ]
+    : []),
+  {
+    label: '导入源码',
+    value: 'import:source',
+    separator: !workspaceMode.value,
+    disabled: blocked.value,
+  },
+  { label: '导入测试点', value: 'import:io', disabled: blocked.value },
+  { label: '导入实验项目', value: 'import:project', disabled: blocked.value },
+  { label: '导出源码', value: 'export:source', separator: true, disabled: blocked.value },
+  { label: '导出实验项目', value: 'export:project', disabled: blocked.value },
+  { label: '导出当前测试点', value: 'export:currentTests', disabled: blocked.value },
+  { label: '导出项目测试点', value: 'export:projectTests', disabled: blocked.value },
+  { label: '设置', value: 'settings', separator: true, disabled: fileBusy.value },
+]);
+async function chooseToolbarAction(value: string) {
+  if (value === 'settings') return openSettings();
+  const [kind, id] = value.split(':');
+  if (kind === 'new') return fileAction(() => newSource(id));
+  if (kind === 'import') return chooseImport(id);
+  if (kind === 'export') return chooseExport(id);
+}
+watch(
+  mainToolbar,
+  (element, _previous, onCleanup) => {
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const focused =
+        document.activeElement instanceof HTMLElement &&
+        (element.contains(document.activeElement) ||
+          document.activeElement.closest('[data-owner="toolbar"]'))
+          ? document.activeElement
+          : undefined;
+      toolbarWidth.value = entry.contentRect.width;
+      if (focused)
+        nextTick(() => {
+          if (!focused.isConnected || !focused.getClientRects().length)
+            element
+              .querySelector<HTMLButtonElement>(
+                compactToolbar.value ? '.toolbar-more-trigger' : '.settings-button',
+              )
+              ?.focus();
+        });
+    });
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: 'post' },
+);
+
 const rightHeader = ref<HTMLElement>();
 const rightHeaderWidth = ref(0);
 const fullHeader = computed(() => rightHeaderWidth.value >= 560);
@@ -2646,10 +2705,15 @@ async function foldRight(collapsed: boolean) {
       <p>加载配置、源码与本地编译器。</p>
     </div>
     <template v-if="ready && draft && config">
-      <section class="toolbar">
+      <section
+        ref="mainToolbar"
+        class="toolbar"
+        :class="{ 'is-compact': compactToolbar, 'hide-select-labels': toolbarWidth < 800 }"
+      >
         <div class="project-select">
           <label
-            >实验项目<ProjectSelect
+            ><span class="select-label">实验项目</span
+            ><ProjectSelect
               ref="projectMenu"
               :suspended="!!buildSettings || settingsOpen || !!newKind"
               :value="draft.problem.labId"
@@ -2662,7 +2726,8 @@ async function foldRight(collapsed: boolean) {
           ><template v-if="!workspaceMode"
             ><span class="path-divider">/</span
             ><label
-              >题号<ProblemSelect
+              ><span class="select-label">题号</span
+              ><ProblemSelect
                 :value="draft.problem.problemId"
                 :problems="problems"
                 :states="problemStates"
@@ -2722,41 +2787,69 @@ async function foldRight(collapsed: boolean) {
                 @click="action(compile)"
               >
                 <ActionIcon name="build" />编译</button
-              ><button class="stop" :disabled="!busy" @click="action(stop)">
-                <ActionIcon name="stop" />停止
+              ><button
+                class="stop"
+                title="停止"
+                aria-label="停止"
+                :disabled="!busy"
+                @click="action(stop)"
+              >
+                <ActionIcon name="stop" /><span class="stop-label">停止</span>
               </button></template
-            ><span class="phase"
+            ><span
+              class="phase"
+              :class="{ 'visually-hidden-phase': toolbarWidth < 1320 }"
+              aria-live="polite"
               ><i :class="{ pulse: !!busy || nativeActive }"></i>{{ phase }}</span
             >
           </div>
         </div>
         <div class="toolbar-actions">
+          <div v-if="!compactToolbar" class="toolbar-secondary">
+            <ActionMenu
+              owner="toolbar"
+              v-if="!workspaceMode"
+              :theme="config.theme"
+              label="新建源码"
+              @close-auto-focus="keepTreeEditFocus"
+              :items="[
+                { label: 'C 源码（.c）', value: 'c' },
+                { label: 'C++ 源码（.cpp）', value: 'cpp' },
+              ]"
+              :disabled="blocked"
+              @select="action(() => fileAction(() => newSource($event)))"
+            />
+            <ActionMenu
+              owner="toolbar"
+              :theme="config.theme"
+              label="导入"
+              :items="[
+                { label: '导入源码', value: 'source' },
+                { label: '导入测试点', value: 'io' },
+                { label: '导入实验项目', value: 'project' },
+              ]"
+              :disabled="blocked"
+              @select="action(() => chooseImport($event))"
+            />
+            <ActionMenu
+              owner="toolbar"
+              :theme="config.theme"
+              label="导出"
+              :items="[
+                { label: '导出源码', value: 'source' },
+                { label: '导出实验项目', value: 'project' },
+                { label: '导出当前测试点', value: 'currentTests', separator: true },
+                { label: '导出项目测试点', value: 'projectTests' },
+              ]"
+              :disabled="blocked"
+              @select="action(() => chooseExport($event))"
+            />
+            <button class="settings-button" :disabled="fileBusy" @click="openSettings">
+              ⚙ 设置
+            </button>
+          </div>
           <ActionMenu
-            :theme="config.theme"
-            v-if="!workspaceMode"
-            label="新建源码"
-            @close-auto-focus="keepTreeEditFocus"
-            :items="[
-              { label: 'C 源码（.c）', value: 'c' },
-              { label: 'C++ 源码（.cpp）', value: 'cpp' },
-            ]"
-            :disabled="blocked"
-            @select="
-              action(() =>
-                workspaceMode ? newSource($event) : fileAction(() => newSource($event)),
-              )
-            "
-          /><ActionMenu
-            :theme="config.theme"
-            label="导入"
-            :items="[
-              { label: '导入源码', value: 'source' },
-              { label: '导入测试点', value: 'io' },
-              { label: '导入实验项目', value: 'project' },
-            ]"
-            :disabled="blocked"
-            @select="action(() => chooseImport($event))"
-          /><ActionMenu
+            owner="toolbar"
             :theme="config.theme"
             label="保存"
             :items="[
@@ -2765,21 +2858,18 @@ async function foldRight(collapsed: boolean) {
             ]"
             :disabled="fileBusy || (!tabs.length && !rulesDirty)"
             @select="action(() => chooseSave($event))"
-          /><ActionMenu
+          />
+          <ActionMenu
+            owner="toolbar"
+            v-if="compactToolbar"
             :theme="config.theme"
-            label="导出"
-            :items="[
-              { label: '导出源码', value: 'source' },
-              { label: '导出实验项目', value: 'project' },
-              { label: '导出当前测试点', value: 'currentTests', separator: true },
-              { label: '导出项目测试点', value: 'projectTests' },
-            ]"
-            :disabled="blocked"
-            @select="action(() => chooseExport($event))"
-          /><span class="toolbar-separator"></span
-          ><button class="settings-button" :disabled="fileBusy" @click="openSettings">
-            ⚙ 设置
-          </button>
+            label="更多"
+            compact
+            trigger-class="toolbar-more-trigger"
+            :items="toolbarItems"
+            :disabled="fileBusy"
+            @select="action(() => chooseToolbarAction($event))"
+          />
         </div>
       </section>
       <Splitpanes
