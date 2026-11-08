@@ -70,6 +70,7 @@ export class FileService {
     return (
       name
         .split('/')
+        .map(key)
         .some(
           (p) =>
             p === '.labpad' ||

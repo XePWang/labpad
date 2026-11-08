@@ -1,5 +1,6 @@
 import { isSourceFile, isCodeFile, editorLanguage } from '../shared/file-language';
 import { directorySnapshot } from './workspace-files';
+import { FileService } from './files';
 import { independentMake } from './build/plan';
 import { ConfigError, parse } from '../shared/lpmake';
 import { mkdir, readFile, readdir, lstat, rename, rm, writeFile, mkdtemp } from 'node:fs/promises';
@@ -134,22 +135,9 @@ export class WorkspaceStore {
   }
   async list(lab: string): Promise<WorkspaceFile[]> {
     await this.tail;
-    const root = this.root(lab),
-      result: WorkspaceFile[] = [];
-    async function walk(dir: string, prefix = '') {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (!prefix && entry.name === '.labpad-project.json') continue;
-        const file = prefix + entry.name;
-        workspacePath(file);
-        if (entry.isSymbolicLink()) throw new Error('项目文件不支持符号链接：' + file);
-        result.push({ path: file, directory: entry.isDirectory() });
-        if (entry.isDirectory()) await walk(path.join(dir, entry.name), file + '/');
-      }
-    }
-    await walk(root);
-    uniquePaths(result.filter((e) => !e.directory).map((e) => e.path));
-    return result.sort((a, b) => (a.path.normalize('NFC') < b.path.normalize('NFC') ? -1 : 1));
+    return new FileService(this.root(lab)).list();
   }
+
   async create(lab: string, language: Language = 'c', value?: unknown) {
     const pkg = value ? parseWorkspacePackage(value) : undefined,
       root = this.root(lab);

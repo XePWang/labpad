@@ -18,9 +18,6 @@ export function snapshotHash(
     .update(JSON.stringify([sorted(files), sorted(binaryFiles)]))
     .digest('hex');
 }
-export async function directoryFiles(root: string): Promise<Record<string, string>> {
-  return (await directorySnapshot(root)).files;
-}
 export async function collectProjects(
   submit: string,
   src: string,

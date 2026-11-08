@@ -1,4 +1,5 @@
-import { directoryFiles, snapshotHash } from './projects';
+import { snapshotHash } from './projects';
+import { directorySnapshot } from '../core/workspace-files';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -54,13 +55,10 @@ export async function retainVersions(
       throw Error('源码索引路径超出 src：' + saved.file);
     try {
       if (saved.mode === 'project') {
-        const files = await directoryFiles(file);
-        if (snapshotHash(files) !== saved.hash) throw new Error('项目快照与记录不一致');
-        active.set(saved.key, {
-          ...saved,
-          source: '',
-          workspace: { files, inheritDefaults: true },
-        });
+        const snapshot = await directorySnapshot(file);
+        if (snapshotHash(snapshot.files, snapshot.binaryFiles) !== saved.hash)
+          throw new Error('项目快照与记录不一致');
+        active.set(saved.key, { ...saved, source: '', workspace: snapshot });
         continue;
       }
       const source = decodeText(await readFile(file)).text,
