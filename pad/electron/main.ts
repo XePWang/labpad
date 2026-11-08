@@ -191,6 +191,23 @@ const debugState = (state: DebugState) => send('debug:state', state),
 function requireIdle() {
   if (active) throw new Error('请先停止正在运行的任务');
 }
+async function reserveExecution<T>(run: (abort: AbortController) => Promise<T>): Promise<T> {
+  requireIdle();
+  const abort = new AbortController();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => (release = resolve));
+  active = barrier;
+  controller = abort;
+  try {
+    return await run(abort);
+  } finally {
+    if (active === barrier) {
+      active = undefined;
+      controller = undefined;
+    }
+    release();
+  }
+}
 async function stop() {
   controller?.abort();
   if (nativeCleanup) {
@@ -603,14 +620,11 @@ async function confirmUnsaved() {
   });
   return (['save', 'discard', 'cancel'] as const)[result.response];
 }
-async function startDebug(value: Draft) {
-  requireIdle();
+async function startDebug(value: Draft, abort: AbortController) {
   const context = await programContext(value);
   if (!context.saved) throw Error('请先保存参与编译的文件，再编译。');
   const program = compiledProgram.require(context.key),
-    settings = structuredClone(config),
-    abort = new AbortController();
-  controller = abort;
+    settings = structuredClone(config);
   const task = (async () => {
     let directory: string | undefined, io: Awaited<ReturnType<typeof terminalProcess>> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -683,6 +697,7 @@ async function startDebug(value: Draft) {
 let nativeSession: NativeDebugger | undefined,
   nativePrepared: Prepared | undefined,
   nativeLab = '',
+  nativeScope = '',
   nativeSnapshot: Record<string, string> = {};
 let terminalShell: CommandTerminal | undefined,
   terminalShellKey = '',
@@ -701,7 +716,7 @@ function nativeView() {
     breakpoints: [],
     conditionalBreakpoints: true,
   };
-  const base = storage.workspace.root(nativeLab || config.currentLab);
+  const base = nativeScope || storage.workspace.root(nativeLab || config.currentLab);
   const relative = (file: string | undefined) => {
     if (!file) return file;
     for (const root of [base, nativePrepared?.snapshotRoot])
@@ -714,6 +729,7 @@ function nativeView() {
   };
   return {
     ...state,
+    scope: base,
     frames: state.frames.map((f) => ({ ...f, path: relative(f.path) })),
     breakpoints: state.breakpoints.map((b) => ({ ...b, path: relative(b.path)! })),
   };
@@ -791,8 +807,7 @@ async function terminalProcess(
   return { pid: child.pid, finished, stop: processSession.stop };
 }
 
-async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
-  requireIdle();
+async function beginNative(value: Draft, breakpoints: SourceBreakpoint[], abort: AbortController) {
   await stopWarmup();
   const context = await programContext(value);
   if (!context.draft.workspace) throw Error('断点调试仅用于项目。');
@@ -812,8 +827,6 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
     });
     if (answer.response !== 0) return { needsBuild: answer.response === 1, started: false };
   }
-  const abort = new AbortController();
-  controller = abort;
   const task = (async () => {
     let prepared: Prepared | undefined,
       session: NativeDebugger | undefined,
@@ -826,6 +839,7 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
         return { started: false, compilation: prepared.compilation };
       nativePrepared = prepared;
       nativeLab = context.draft.problem.labId;
+      nativeScope = storage.workspace.root(nativeLab);
       nativeSnapshot = { ...context.draft.workspace!.files };
       const runDirectory = await mkdtemp(path.join(prepared.directory, 'native-'));
       await copyResources(prepared.resources, runDirectory, prepared.binaryResources);
@@ -837,6 +851,7 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[]) {
       session.on('diagnostic', (data) => send('native:diagnostic', data));
       const root = storage.workspace.root(nativeLab),
         env = await compiler.environment(context.options);
+      abort.signal.throwIfAborted();
       const stopSession = () => {
         void session!.stop().catch((error) => send('native:diagnostic', String(error) + '\n'));
       };
@@ -980,7 +995,13 @@ async function shellFor(value: Draft) {
 }
 async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: string) {
   if (action === 'help') return 'lpmake build / run / clean（b / r / c）';
-  requireIdle();
+  return reserveExecution((abort) => runMakeCommand(action, cwd, abort));
+}
+async function runMakeCommand(
+  action: 'build' | 'run' | 'clean',
+  cwd: string,
+  abort: AbortController,
+) {
   await stopWarmup();
   const shell = terminalShell!,
     directory = await shell.files.resolve(cwd),
@@ -1009,8 +1030,6 @@ async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: stri
   if (action === 'build') {
     terminalTargets.delete(directory);
     await previous?.program.cleanup();
-    const abort = new AbortController();
-    controller = abort;
     const task = compileDraft(compiler, draft, options, abort.signal, {
       directory: target,
       owner,
@@ -1047,8 +1066,7 @@ async function makeCommand(action: 'help' | 'build' | 'run' | 'clean', cwd: stri
       .digest('hex') !== previous.checksum
   )
     throw Error('当前配置尚未构建，或文件已变化。请先执行 lpmake build。');
-  const abort = new AbortController();
-  controller = abort;
+  abort.signal.throwIfAborted();
   const io = await terminalProcess(
       [previous.program.executable],
       directory,
@@ -2177,55 +2195,57 @@ async function initialize() {
     });
     return result.response === 0;
   });
-  handle('compile', async (value: Draft) => {
-    requireIdle();
-    await stopWarmup();
-    requireIdle();
-    await compiledProgram.clear();
-    const context = await programContext(value);
-    if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
-    const abort = new AbortController();
-    controller = abort;
-    const task = compiledProgram.compile(context.key, context.draft, context.options, abort.signal);
-    active = task;
-    try {
-      const result = await task;
-      judgeEvent({ type: 'compilation', compilation: result });
-      return result;
-    } finally {
-      if (active === task) {
-        active = undefined;
-        controller = undefined;
+  handle('compile', async (value: Draft) =>
+    reserveExecution(async (abort) => {
+      await stopWarmup();
+      await compiledProgram.clear();
+      const context = await programContext(value);
+      if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
+      const task = compiledProgram.compile(
+        context.key,
+        context.draft,
+        context.options,
+        abort.signal,
+      );
+      active = task;
+      try {
+        const result = await task;
+        judgeEvent({ type: 'compilation', compilation: result });
+        return result;
+      } finally {
+        if (active === task) {
+          active = undefined;
+          controller = undefined;
+        }
       }
-    }
-  });
-  handle('judge', async (value: Draft, ids?: string[]) => {
-    requireIdle();
-    const context = await programContext(value);
-    if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
-    const d = context.draft,
-      options = context.options,
-      program = compiledProgram.require(context.key),
-      abort = new AbortController();
-    controller = abort;
-    const task = (async () => {
-      const hash = fingerprint(d, options, await inputIdentity(d, options));
-      const previous = await storedCheck(storage, d);
-      await storage.recordCheck(d, checkRecord(d, hash, undefined, previous));
-      const result = await judge(compiler, d, options, abort.signal, judgeEvent, ids, program);
-      await storage.recordCheck(d, checkRecord(d, hash, result, previous));
-      return result;
-    })();
-    active = task;
-    try {
-      return await task;
-    } finally {
-      if (active === task) {
-        active = undefined;
-        controller = undefined;
+    }),
+  );
+  handle('judge', async (value: Draft, ids?: string[]) =>
+    reserveExecution(async (abort) => {
+      const context = await programContext(value);
+      if (!context.saved) throw new Error('请先保存参与编译的文件，再编译。');
+      const d = context.draft,
+        options = context.options,
+        program = compiledProgram.require(context.key);
+      const task = (async () => {
+        const hash = fingerprint(d, options, await inputIdentity(d, options));
+        const previous = await storedCheck(storage, d);
+        await storage.recordCheck(d, checkRecord(d, hash, undefined, previous));
+        const result = await judge(compiler, d, options, abort.signal, judgeEvent, ids, program);
+        await storage.recordCheck(d, checkRecord(d, hash, result, previous));
+        return result;
+      })();
+      active = task;
+      try {
+        return await task;
+      } finally {
+        if (active === task) {
+          active = undefined;
+          controller = undefined;
+        }
       }
-    }
-  });
+    }),
+  );
   handle('terminal:context', async (value: Draft) => (await shellFor(value)).context());
   handle('terminal:command', async (value: Draft, text: string) => {
     if (active && nativeSession && !nativeActive()) await active;
@@ -2280,7 +2300,9 @@ async function initialize() {
         })
       ).response === 0,
   );
-  handle('native:start', beginNative);
+  handle('native:start', (value: Draft, points: SourceBreakpoint[]) =>
+    reserveExecution((abort) => beginNative(value, points, abort)),
+  );
   handle('native:control', async (action: string) => {
     if (!nativeSession || !['continue', 'pause', 'next', 'stepIn', 'stepOut'].includes(action))
       throw Error('没有可操作的调试会话。');
@@ -2354,7 +2376,7 @@ async function initialize() {
   );
   handle('cancel', stop);
   handle('debug:stop', stop);
-  handle('debug:start', startDebug);
+  handle('debug:start', (value: Draft) => reserveExecution((abort) => startDebug(value, abort)));
   ipcMain.on('debug:ack', (event, id: number, size: number) => {
     if (
       event.sender === win.webContents &&

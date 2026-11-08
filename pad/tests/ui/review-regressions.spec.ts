@@ -356,3 +356,247 @@ test('native debugger releases task ownership after temporary cleanup fails', as
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+test('failed save retries through compile; concurrent requests and judge errors release consistent task state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-task-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ dialog }) => {
+      (globalThis as any).__compileConfirmations = 0;
+      dialog.showMessageBox = async (...args: any[]) => {
+        const options = args.at(-1);
+        if (options.title === '保存后编译') (globalThis as any).__compileConfirmations++;
+        return {
+          response: Math.max(0, options.buttons.indexOf('保存并编译')),
+          checkboxChecked: false,
+        };
+      };
+    });
+    await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      if (navigator.platform.includes('Linux'))
+        state.config.compiler = {
+          ...state.config.compiler,
+          mode: 'custom',
+          kind: 'gcc',
+          cPath: '/usr/bin/gcc',
+          cppPath: '/usr/bin/g++',
+        };
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('TaskFixture', 'problem-set');
+      const draft = await window.labpad.createProblem('TaskFixture', 'one', 'c');
+      draft.source = '#include <stdio.h>\nint main(void){puts("OK");return 0;}\n';
+      draft.problem.testCases = [{ id: 'one', input: '', expectedOutput: 'OK\n' }];
+      await window.labpad.saveDraft(draft);
+      await window.labpad.loadDraft('TaskFixture', 'one', 'c');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('draft:save');
+      handlers.set('draft:save', () => {
+        handlers.set('draft:save', original);
+        throw Error('Injected save failure');
+      });
+    });
+    await page
+      .locator('.cm-content')
+      .fill('#include <stdio.h>\nint main(void){puts("OK");return 0;} // changed\n');
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await page.getByRole('menuitem', { name: '保存当前', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Injected save failure');
+    const compile = page.getByRole('button', { name: '编译', exact: true }),
+      run = page.locator('.cases-heading .run-test-icon');
+    await compile.click();
+    await expect(run).toBeEnabled({ timeout: 60000 });
+    expect(await app.evaluate(() => (globalThis as any).__compileConfirmations)).toBe(1);
+    await expect(page.locator('.tab-dirty')).toHaveCount(0);
+    const simultaneous = await page.evaluate(async () => {
+      const draft = (await window.labpad.bootstrap()).draft;
+      return (
+        await Promise.allSettled([window.labpad.compile(draft), window.labpad.compile(draft)])
+      ).map((result) => result.status);
+    });
+    expect(simultaneous.sort()).toEqual(['fulfilled', 'rejected']);
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('judge');
+      handlers.set('judge', () => {
+        handlers.set('judge', original);
+        throw Error('Injected judge failure');
+      });
+    });
+    await run.click();
+    await expect(page.getByRole('alert')).toContainText('Injected judge failure');
+    await expect(page.locator('.phase')).toHaveText('任务错误');
+    await expect(compile).toBeEnabled();
+    await expect(run).toBeEnabled();
+    await run.click();
+    await expect(page.locator('.verdict.ac')).toHaveCount(1);
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+test('native and terminal launch errors restore controls and preserve successful compilation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-launch-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: any[]) => {
+        const options = args.at(-1);
+        return {
+          response: Math.max(0, options.buttons.indexOf('保存并编译')),
+          checkboxChecked: false,
+        };
+      };
+    });
+    await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      if (navigator.platform.includes('Linux'))
+        state.config.compiler = {
+          ...state.config.compiler,
+          mode: 'custom',
+          kind: 'gcc',
+          cPath: '/usr/bin/gcc',
+          cppPath: '/usr/bin/g++',
+        };
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('LaunchFixture', 'project');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await page
+      .locator('.cm-content')
+      .fill('int main(void){\n int value=1;\n value++;\n return value-2;\n}\n');
+    await page.locator('.source-debug-gutter .cm-gutterElement').nth(3).click();
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('native:start');
+      handlers.set('native:start', () => {
+        handlers.set('native:start', original);
+        throw Error('Injected native launch failure');
+      });
+    });
+    await page.getByRole('tab', { name: '调试', exact: true }).click();
+    const start = page.getByRole('button', { name: '开始调试', exact: true });
+    await start.click();
+    await expect(page.getByRole('alert')).toContainText('Injected native launch failure');
+    await expect(page.locator('.phase')).toHaveText('调试错误');
+    await expect(start).toBeEnabled();
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
+    await start.click();
+    await expect(page.locator('.phase')).toHaveText('调试已暂停', { timeout: 60000 });
+    await page.getByRole('button', { name: '停止调试', exact: true }).click();
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
+    await page.evaluate(async () => {
+      await window.labpad.createLab('TerminalLaunchFixture', 'problem-set');
+      const draft = await window.labpad.createProblem('TerminalLaunchFixture', 'one', 'c');
+      draft.source = '#include <stdio.h>\nint main(void){puts("terminal recovered");return 0;}\n';
+      await window.labpad.saveDraft(draft);
+      await window.labpad.loadDraft('TerminalLaunchFixture', 'one', 'c');
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        original = handlers.get('debug:start');
+      handlers.set('debug:start', () => {
+        handlers.set('debug:start', original);
+        throw Error('Injected terminal launch failure');
+      });
+    });
+    await page.getByRole('button', { name: '编译', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Injected terminal launch failure');
+    await expect(page.locator('.phase')).toHaveText('编译或调试失败');
+    expect(
+      (
+        await page.evaluate(async () =>
+          window.labpad.compileState((await window.labpad.bootstrap()).draft),
+        )
+      ).ready,
+    ).toBe(true);
+    const run = page.getByRole('button', { name: '运行程序', exact: true });
+    await expect(run).toBeEnabled();
+    await run.click();
+    await expect(page.locator('.xterm-rows')).toContainText('terminal recovered');
+    await expect(page.locator('.phase')).toHaveText('调试结束');
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test('stopping during compile preflight prevents a delayed response from launching a compiler', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-preflight-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers,
+        state = handlers.get('compile:state');
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      (globalThis as any).__preflightCalls = 0;
+      (globalThis as any).__unexpectedCompiles = 0;
+      (globalThis as any).__holdPreflight = true;
+      (globalThis as any).__releasePreflight = () => {
+        (globalThis as any).__holdPreflight = false;
+        release();
+      };
+      handlers.set('compile:state', async (...args: any[]) => {
+        (globalThis as any).__preflightCalls++;
+        const result = await state(...args);
+        if ((globalThis as any).__holdPreflight) await gate;
+        return result;
+      });
+      handlers.set('compile', () => {
+        (globalThis as any).__unexpectedCompiles++;
+        throw Error('Unexpected compile after stopping preflight');
+      });
+    });
+    await page.getByRole('button', { name: '编译', exact: true }).click();
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as any).__preflightCalls))
+      .toBeGreaterThan(0);
+    await page.getByRole('button', { name: '停止', exact: true }).click();
+    await expect(page.locator('.phase')).toHaveText('已停止');
+    const before = await app.evaluate(() => (globalThis as any).__preflightCalls);
+    await app.evaluate(() => (globalThis as any).__releasePreflight());
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as any).__preflightCalls))
+      .toBeGreaterThan(before);
+    expect(await app.evaluate(() => (globalThis as any).__unexpectedCompiles)).toBe(0);
+    await expect(page.getByRole('button', { name: '编译', exact: true })).toBeEnabled();
+    await expect(page.locator('.phase')).toHaveText('已停止');
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

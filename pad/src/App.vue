@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import {
+  idle,
+  finish,
+  taskBusy,
+  taskMessage,
+  nativeMessage,
+  type ExecutionState,
+  type TaskKind,
+  type Outcome,
+} from '../shared/execution';
 import { remapPath, replacedPath } from '../shared/file-changes';
 import {
   isSourceFile,
@@ -72,6 +82,27 @@ const settingsTypography = computed({
     if (settings.value) settings.value.typography = value;
   },
 });
+const execution = ref<ExecutionState>(idle());
+let executionEpoch = 0;
+function beginExecution(kind: TaskKind) {
+  if (execution.value.kind !== 'idle') throw Error('请先停止当前任务。');
+  const id = ++executionEpoch;
+  execution.value = {
+    kind,
+    id,
+    stage: kind === 'compile' || kind === 'native' || kind === 'terminal' ? 'preparing' : 'running',
+  };
+  return id;
+}
+function endExecution(id: number, outcome: Outcome) {
+  execution.value = finish(execution.value, id, outcome);
+}
+function ownsExecution(id: number) {
+  return execution.value.kind !== 'idle' && execution.value.id === id;
+}
+function setIdle(outcome: Outcome) {
+  if (execution.value.kind === 'idle') execution.value = idle(outcome);
+}
 const fileBusy = ref(false),
   blocked = computed(
     () =>
@@ -81,7 +112,7 @@ const fileBusy = ref(false),
       nativeActive.value ||
       nativeStarting.value,
   );
-const busy = ref<'compile' | 'judge' | 'debug' | null>(null),
+const busy = computed(() => taskBusy(execution.value)),
   debugRunning = ref(false),
   bottomTab = ref<'output' | 'debug'>('output');
 const compiledReady = ref(false),
@@ -110,8 +141,12 @@ const exportKind = ref<'source' | 'project' | null>(null),
 let checkTimer: ReturnType<typeof setTimeout> | undefined;
 const results = ref<Record<string, CaseResult>>({}),
   diffOpen = ref<Record<string, boolean>>({}),
-  finished = ref(false),
-  phase = ref('准备就绪');
+  finished = ref(false);
+const phase = computed(() =>
+  nativeActive.value && !nativeStarting.value
+    ? nativeMessage(nativeState.value.status)
+    : taskMessage(execution.value),
+);
 const terminal = ref<InstanceType<typeof DebugTerminal>>(),
   editor = ref<InstanceType<typeof CodeEditor>>();
 const cursor = ref<EditorCursor>({
@@ -259,7 +294,7 @@ const nativeState = ref<NativeDebugState>({
   breakpoints: [],
   conditionalBreakpoints: true,
 });
-const nativeStarting = ref(false),
+const nativeStarting = computed(() => execution.value.kind === 'native'),
   sourceBreakpoints = ref<SourceBreakpoint[]>([]),
   watches = ref<string[]>([]),
   sessionSources = ref<Record<string, string>>({});
@@ -378,37 +413,54 @@ async function selectFrame(id: number) {
 }
 async function startNative(restart = false) {
   if (nativeStarting.value || busy.value) return;
-  nativeStarting.value = true;
+  const id = beginExecution('native');
   try {
     clearTimeout(saveTimer);
     await saveTail;
+    if (!ownsExecution(id)) return;
     const state = await api.compileState(snapshot());
-    if (tabs.value.some((t) => t.dirty) || !state.saved) {
+    if (!ownsExecution(id)) return;
+    if (tabs.value.some((tab) => tab.dirty) || !state.saved) {
       if (!(await (restart ? api.confirmRestart() : api.confirmCompile()))) return;
       await saveAll();
+      if (!ownsExecution(id)) return;
     }
     if (restart) await api.nativeStop();
+    if (!ownsExecution(id)) return;
     rightTab.value = 'debug';
     rightCollapsed.value = false;
     bottomTab.value = 'debug';
-    phase.value = '正在启动调试…';
     debugEpoch.value++;
     const result = await api.nativeStart(snapshot(), clone(sourceBreakpoints.value));
+    if (!ownsExecution(id)) return;
     if (result.compilation) showCompilation(result.compilation);
     if (result.needsBuild) {
+      endExecution(id, 'ready');
       await openBuildSettings();
       return;
     }
     if (result.sources) sessionSources.value = result.sources;
     if (!result.started) {
       bottomTab.value = 'output';
-      phase.value = '调试未启动';
+      endExecution(id, 'native-not-started');
     }
+  } catch (error) {
+    if (!ownsExecution(id)) return;
+    endExecution(id, 'native-failed');
+    throw error;
   } finally {
-    nativeStarting.value = false;
+    endExecution(
+      id,
+      nativeState.value.status === 'ended'
+        ? 'native-ended'
+        : nativeState.value.status === 'error'
+          ? 'native-failed'
+          : 'ready',
+    );
     queueChecks();
   }
 }
+
 async function nativeControl(action: 'continue' | 'pause' | 'next' | 'stepIn' | 'stepOut') {
   nativeState.value = await api.nativeControl(action);
 }
@@ -958,7 +1010,7 @@ async function fileAction(fn: () => Promise<unknown>) {
   fileBusy.value = true;
   clearTimeout(saveTimer);
   try {
-    await saveTail.catch(() => {});
+    await saveTail;
     await fn();
   } finally {
     fileBusy.value = false;
@@ -981,7 +1033,7 @@ function invalidate() {
   diffOpen.value = {};
   finished.value = false;
   summaryMode.value = 'selected';
-  if (!nativeActive.value) phase.value = '内容已修改';
+  if (!nativeActive.value) setIdle('changed');
   queueChecks();
 }
 function queueChecks() {
@@ -997,14 +1049,21 @@ function queueChecks() {
 async function refreshChecks() {
   if (!draft.value || (!activeId.value && !workspaceMode.value) || busy.value) return;
   const d = snapshot(),
-    epoch = revision;
+    epoch = revision,
+    taskEpoch = executionEpoch;
   const compiled = await api.compileState(d),
     state = await api.checkState(d),
     states = await api.problemStates(
       d,
       tabs.value.map((t) => ({ ...clone(t.document), problem: clone(d.problem) })),
     );
-  if (revision !== epoch || draft.value.documentId !== d.documentId) return;
+  if (
+    revision !== epoch ||
+    draft.value.documentId !== d.documentId ||
+    taskEpoch !== executionEpoch ||
+    execution.value.kind !== 'idle'
+  )
+    return;
   compiledReady.value = compiled.ready && !compileDirty.value;
   results.value = Object.fromEntries(state.cases.map((c) => [c.id, c]));
   finished.value = state.cases.length > 0;
@@ -1044,7 +1103,6 @@ function enqueueSave(input: Draft, id: number) {
   tab.status = '保存中…';
   if (tab.id === activeId.value) saveStatus.value = tab.status;
   const task = saveTail
-    .catch(() => {})
     .then(() => api.saveDraft(value))
     .then(async (result) => {
       const current = tabs.value.find((t) => t.id === value.documentId);
@@ -1091,8 +1149,10 @@ function enqueueSave(input: Draft, id: number) {
       recordState();
       throw e;
     });
-  saveTail = task;
-  void task.catch(() => {});
+  saveTail = task.then(
+    () => undefined,
+    () => undefined,
+  );
   return task;
 }
 watch(
@@ -1167,7 +1227,7 @@ function replaceDraft(
   diffOpen.value = {};
   finished.value = false;
   saveStatus.value = '已保存';
-  phase.value = '准备就绪';
+  setIdle('ready');
   pauseSave = false;
   recordState();
   queueChecks();
@@ -1200,7 +1260,7 @@ function activateTab(id: string, focus = true) {
 }
 async function saveNow() {
   clearTimeout(saveTimer);
-  await saveTail.catch(() => {});
+  await saveTail;
   if (activeTab.value) await enqueueSave(snapshot(), activeTab.value.revision);
   else if (rulesDirty.value) {
     await api.saveProblem(clone(draft.value!.problem));
@@ -1212,7 +1272,7 @@ async function saveNow() {
 }
 async function saveAll() {
   clearTimeout(saveTimer);
-  await saveTail.catch(() => {});
+  await saveTail;
   if (!tabs.value.length) {
     await saveNow();
     return;
@@ -1235,7 +1295,7 @@ async function saveAll() {
 }
 async function beforeChange() {
   clearTimeout(saveTimer);
-  await saveTail.catch(() => {});
+  await saveTail;
   if (!rulesDirty.value && !tabs.value.some((t) => t.dirty)) return true;
   if (config.value!.saveMode === 'auto') {
     await saveAll();
@@ -1435,7 +1495,7 @@ async function newSource(value: string) {
     true,
   );
   addDocument(created);
-  phase.value = '准备就绪';
+  setIdle('ready');
   flashFooter('已新建 · ' + created.sourceFile);
 }
 async function importSourceFile() {
@@ -1545,7 +1605,7 @@ async function chooseExport(value: string) {
   }
   if (value === 'source' && !activeTab.value) throw new Error('请先新建或导入源码');
   if (value === 'project' && !draft.value!.problem.labId) throw new Error('请先选择实验项目');
-  await saveTail.catch(() => {});
+  await saveTail;
   exportCurrent.value = snapshot();
   exportBuffers.value = tabs.value.map((t) => ({
     ...clone(t.document),
@@ -1581,61 +1641,68 @@ const compileDirty = computed(() =>
     : tabs.value.some((t) => t.dirty && (t.document.auxiliary || t.id === targetSourceId.value)),
 );
 async function compile() {
-  clearTimeout(saveTimer);
-  await saveTail;
-  const state = await api.compileState(snapshot());
-  if (compileDirty.value || !state.saved) {
-    if (!(await api.confirmCompile())) return;
-    await saveAll();
-  }
-  busy.value = 'compile';
-  compiledReady.value = false;
-  compilationFailed.value = false;
-  bottomTab.value = 'output';
-  phase.value = '编译中…';
-  logs.value = '';
-  diagnostics.value = { warnings: 0, errors: 0 };
-  debugEpoch.value++;
+  if (busy.value || nativeStarting.value || nativeActive.value) return;
+  const id = beginExecution('compile');
+  let started = false,
+    runAfter = false;
   try {
+    clearTimeout(saveTimer);
+    await saveTail;
+    if (!ownsExecution(id)) return;
+    const state = await api.compileState(snapshot());
+    if (!ownsExecution(id)) return;
+    if (compileDirty.value || !state.saved) {
+      if (!(await api.confirmCompile()) || !ownsExecution(id)) return;
+      await saveAll();
+      if (!ownsExecution(id)) return;
+    }
+    if (execution.value.kind !== 'idle' && execution.value.id === id)
+      execution.value = { ...execution.value, stage: 'running' };
+    compiledReady.value = false;
+    compilationFailed.value = false;
+    bottomTab.value = 'output';
+    logs.value = '';
+    diagnostics.value = { warnings: 0, errors: 0 };
+    debugEpoch.value++;
+    started = true;
     const result = await api.compile(snapshot());
+    if (!ownsExecution(id)) return;
     showCompilation(result);
     compiledReady.value = result.status === 'success' && (await api.compileState(snapshot())).ready;
-    phase.value =
-      result.status === 'success'
-        ? '编译成功'
-        : result.status === 'cancelled'
-          ? '已停止'
-          : '编译失败 · CE';
-    busy.value = null;
-    if (compiledReady.value && !draft.value!.problem.testCases.length) await debug();
-  } catch (e) {
+    endExecution(
+      id,
+      result.status === 'success' ? 'compiled' : result.status === 'cancelled' ? 'stopped' : 'ce',
+    );
+    runAfter = compiledReady.value && !draft.value!.problem.testCases.length;
+  } catch (error) {
+    if (!ownsExecution(id)) return;
     compiledReady.value = false;
-    compilationFailed.value = true;
-    phase.value = '编译失败';
-    logs.value = message(e);
+    compilationFailed.value = started;
+    endExecution(id, started ? 'compile-failed' : 'compile-not-started');
+    logs.value = message(error);
     diagnostics.value = diagnosticCounts(logs.value);
     if (!diagnostics.value.errors) diagnostics.value.errors = 1;
     diagnosticRevision.value++;
-    throw e;
+    throw error;
   } finally {
-    if (busy.value === 'compile') busy.value = null;
+    endExecution(id, 'ready');
     queueChecks();
   }
+  if (runAfter) await debug();
 }
 async function debug() {
   if (!compiledReady.value) {
     notice.value = '请先保存并编译。';
     return;
   }
-  busy.value = 'debug';
+  const id = beginExecution('terminal');
   debugRunning.value = false;
-  phase.value = '正在启动调试…';
   bottomTab.value = 'debug';
   try {
     await api.debugStart(snapshot());
-  } catch (e) {
-    busy.value = null;
-    throw e;
+  } catch (error) {
+    endExecution(id, 'terminal-failed');
+    throw error;
   }
 }
 async function run(ids?: string[]) {
@@ -1645,26 +1712,27 @@ async function run(ids?: string[]) {
   }
   const chosen =
     ids ??
-    selectedCases.value.filter((id) => draft.value!.problem.testCases.some((t) => t.id === id));
+    selectedCases.value.filter((id) =>
+      draft.value!.problem.testCases.some((test) => test.id === id),
+    );
   if (!chosen.length) {
     notice.value = '请至少选择一个测试点';
     return;
   }
+  const id = beginExecution('judge');
   summaryMode.value = 'result';
   runningCases.value = chosen;
-  busy.value = 'judge';
   problemStates.value[draft.value!.problem.problemId] = '运行中';
-  for (const id of chosen) delete results.value[id];
+  for (const selected of chosen) delete results.value[selected];
   finished.value = false;
-  phase.value = '运行测试点…';
   bottomTab.value = 'output';
   try {
     const result = await api.judge(snapshot(), chosen);
+    if (!ownsExecution(id)) return;
     if (result.status === 'error') {
       error.value = result.error || '评测任务失败';
-      phase.value = '任务错误';
-    } else if (result.status === 'cancelled') phase.value = '已停止';
-    else phase.value = '测试完成';
+      endExecution(id, 'task-failed');
+    } else endExecution(id, result.status === 'cancelled' ? 'stopped' : 'tested');
     for (const c of result.cases) results.value[c.id] = c;
     logs.value +=
       '\n' +
@@ -1684,17 +1752,32 @@ async function run(ids?: string[]) {
             (c.stderr ? '\nstderr\n' + c.stderr : ''),
         )
         .join('\n\n');
+  } catch (error) {
+    if (!ownsExecution(id)) return;
+    endExecution(id, 'task-failed');
+    throw error;
   } finally {
-    busy.value = null;
-    runningCases.value = [];
-    finished.value = true;
-    await refreshChecks();
+    endExecution(id, 'task-failed');
+    if (id === executionEpoch) {
+      runningCases.value = [];
+      finished.value = true;
+      queueChecks();
+    }
   }
 }
 async function stop() {
-  phase.value = '正在停止…';
-  await api.cancel();
+  const state = execution.value;
+  if (state.kind !== 'idle') execution.value = { ...state, stage: 'stopping' };
+  try {
+    await api.cancel();
+    if (state.kind !== 'idle') endExecution(state.id, 'stopped');
+  } catch (error) {
+    if (state.kind !== 'idle' && execution.value.kind !== 'idle' && execution.value.id === state.id)
+      execution.value = { ...execution.value, stage: 'stop-failed' };
+    throw error;
+  }
 }
+
 function addCase() {
   const tests = draft.value!.problem.testCases;
   let id = 1;
@@ -1731,7 +1814,7 @@ async function saveSettings() {
       oldRoot = dataRoot.value,
       oldCompiler = compilerLabel.value;
     const languageChanged =
-      !workspaceMode.value && settings.value!.language !== editorLanguage.value;
+      !workspaceMode.value && settings.value!.language !== draft.value!.language;
     const reloadNeeded = settingsRoot.value !== dataRoot.value || languageChanged;
     if (reloadNeeded && !(await beforeChange())) return;
     const result = await api.saveConfig(
@@ -1816,43 +1899,47 @@ function resized(axis: keyof LayoutConfig, event: SplitpanesResizedPayload) {
       error.value = '布局未保存：' + message(e);
     });
 }
-function handleDebugState(s: DebugState) {
-  if (s.status === 'stop-failed') {
-    busy.value = 'debug';
-    debugRunning.value = true;
-    phase.value = '停止失败，请重试';
-    error.value = s.message ?? '程序尚未退出，请重试停止。';
-    return;
-  }
-
+function handleDebugState(state: DebugState) {
   if (nativeActive.value || nativeStarting.value) {
-    debugRunning.value = s.status === 'running';
-    if (s.message) terminal.value?.write('\r\n[' + s.message + ']\r\n');
+    debugRunning.value = state.status === 'running' || state.status === 'stop-failed';
+    if (state.message) terminal.value?.write('\r\n[' + state.message + ']\r\n');
     return;
   }
-  if (s.status === 'compiling') {
-    busy.value = 'debug';
-    phase.value = '正在启动调试…';
-  }
-  if (s.status === 'running') {
-    busy.value = 'debug';
-    debugRunning.value = true;
-    phase.value = '调试运行中';
+  if (['compiling', 'running', 'stop-failed'].includes(state.status)) {
+    if (execution.value.kind === 'idle') beginExecution('terminal');
+    if (execution.value.kind !== 'terminal') return;
+    execution.value = {
+      ...execution.value,
+      stage:
+        state.status === 'stop-failed'
+          ? 'stop-failed'
+          : state.status === 'compiling'
+            ? 'preparing'
+            : 'running',
+    };
+    debugRunning.value = state.status !== 'compiling';
     bottomTab.value = 'debug';
+    if (state.status === 'stop-failed') error.value = state.message ?? '程序尚未退出，请重试停止。';
+    return;
   }
-  if (['exited', 'stopped', 'error'].includes(s.status)) {
-    busy.value = null;
-    debugRunning.value = false;
-    phase.value =
-      s.status === 'stopped' ? '已停止' : s.status === 'error' ? '编译或调试失败' : '调试结束';
-    queueChecks();
-    if (s.message) terminal.value?.write('\r\n[' + s.message + ']\r\n');
-    if (s.status === 'error') {
-      error.value = s.message || '调试启动失败';
-      bottomTab.value = 'output';
-    }
+  if (execution.value.kind !== 'terminal') return;
+  endExecution(
+    execution.value.id,
+    state.status === 'stopped'
+      ? 'stopped'
+      : state.status === 'error'
+        ? 'terminal-failed'
+        : 'terminal-ended',
+  );
+  debugRunning.value = false;
+  queueChecks();
+  if (state.message) terminal.value?.write('\r\n[' + state.message + ']\r\n');
+  if (state.status === 'error') {
+    error.value = state.message || '调试启动失败';
+    bottomTab.value = 'output';
   }
 }
+
 let keyHandler: (event: KeyboardEvent) => void = () => {};
 let prefixes: ReturnType<typeof parseKeybinding>[number][] = [];
 function installShortcuts() {
@@ -2035,24 +2122,13 @@ onMounted(async () => {
     api.onJudge((event) => {
       if (event.type === 'compilation') {
         if (busy.value !== 'compile') showCompilation(event.compilation);
-        if (busy.value === 'judge' && event.compilation.status === 'success')
-          phase.value = '运行测试点…';
       } else results.value[event.result.id] = event.result;
     }),
     api.onNativeState((state) => {
+      if (state.scope && state.scope !== fileScope.value) return;
       nativeState.value = state;
-      phase.value =
-        state.status === 'stop-failed'
-          ? '停止失败，请重试'
-          : state.status === 'paused'
-            ? '调试已暂停'
-            : state.status === 'running'
-              ? '调试运行中'
-              : state.status === 'error'
-                ? '调试错误'
-                : state.status === 'ended'
-                  ? '调试结束'
-                  : '正在启动调试…';
+      if (state.status === 'ended' || state.status === 'error')
+        setIdle(state.status === 'ended' ? 'native-ended' : 'native-failed');
     }),
     api.onNativeDiagnostic((data) => {
       logs.value += data;
