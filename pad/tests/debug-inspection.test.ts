@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { NativeDebugger } from '../core/debug/session';
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 test('variables and watch replies are bound to a unique session and selected-frame inspection', async () => {
   const session = new NativeDebugger();
@@ -82,4 +84,28 @@ test('a delayed stack trace from an earlier pause cannot replace the latest fram
   await first;
   assert.equal(session.state.selectedFrameId, 2);
   assert.equal(session.state.frames[0].name, 'CURRENT');
+});
+
+test('the current pause reports scope-loading failures while stale frame failures are ignored', async () => {
+  const session = new NativeDebugger();
+  let fail = true;
+  const old = deferred<any>();
+  (session as any).connection = {
+    request: async (name: string, args: any) => {
+      if (name === 'stackTrace')
+        return { stackFrames: [{ id: 1, name: 'main', line: 1, column: 1 }] };
+      if (name === 'scopes' && fail) throw Error('CURRENT_SCOPE_FAILURE');
+      if (name === 'scopes' && args.frameId === 2) return old.promise;
+      return { scopes: [] };
+    },
+  };
+  await (session as any).event({ event: 'stopped', body: { threadId: 1 } });
+  assert.equal(session.state.message, 'CURRENT_SCOPE_FAILURE');
+  fail = false;
+  const previous = session.selectFrame(2);
+  await session.selectFrame(3);
+  old.reject(Error('STALE_SCOPE_FAILURE'));
+  await previous;
+  assert.equal(session.state.selectedFrameId, 3);
+  assert.notEqual(session.state.message, 'STALE_SCOPE_FAILURE');
 });

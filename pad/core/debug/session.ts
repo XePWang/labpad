@@ -239,7 +239,16 @@ export class NativeDebugger extends EventEmitter {
           column: f.column,
         }));
         this.update({ frames });
-        if (frames[0]) await this.selectFrame(frames[0].id);
+        if (frames[0]) {
+          const selected = this.selectFrame(frames[0].id);
+          const inspection = this.inspection;
+          try {
+            await selected;
+          } catch (error) {
+            if (inspection === this.inspection && this.state.status === 'paused')
+              this.update({ message: error instanceof Error ? error.message : String(error) });
+          }
+        }
       } catch (error) {
         if (this.state.status === 'paused' && epoch === this.inspection)
           this.update({ message: error instanceof Error ? error.message : String(error) });
