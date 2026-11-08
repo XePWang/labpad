@@ -1,5 +1,6 @@
-import { readEditableFile } from './read-file';
-import { readFile, readdir, lstat } from 'node:fs/promises';
+import { readEditableFile, readFileLimited } from './read-file';
+import { EDITOR_FILE_BYTES } from '../shared/resource-limits';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { decodeText } from './storage';
 import { workspacePath, uniquePaths, type WorkspaceSnapshot } from '../shared/workspace';
@@ -91,14 +92,14 @@ export async function directorySnapshot(root: string): Promise<WorkspaceSnapshot
           await walk(path.join(dir, e.name), name + '/');
       } else if (e.isFile()) {
         if (name !== 'labpad.project.json') workspacePath(name);
-        const st = await lstat(path.join(dir, e.name));
-        if (
-          st.size > 8 * 1024 ** 2 ||
-          (bytes += st.size) > 64 * 1024 ** 2 ||
-          Object.keys(entries).length >= 4096
-        )
-          throw Error('项目超过4096项 / 64MB限制');
-        entries[name] = await readFile(path.join(dir, e.name));
+        if (Object.keys(entries).length >= 4096) throw Error('项目超过4096项 / 64MB限制');
+        const content = await readFileLimited(
+          path.join(dir, e.name),
+          Math.min(EDITOR_FILE_BYTES, 64 * 1024 ** 2 - bytes),
+          '项目文件超过 8 MB 或项目内容超过 64 MB，无法读取。',
+        );
+        bytes += content.length;
+        entries[name] = content;
       }
     }
   }

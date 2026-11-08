@@ -1,6 +1,6 @@
 import { snapshotHash } from './projects';
 import { directorySnapshot } from '../core/workspace-files';
-import { readFile } from 'node:fs/promises';
+import { readFileLimited } from '../core/read-file';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { decodeText, exists, readJSON } from '../core/storage';
@@ -61,7 +61,7 @@ export async function retainVersions(
         active.set(saved.key, { ...saved, source: '', workspace: snapshot });
         continue;
       }
-      const source = decodeText(await readFile(file)).text,
+      const source = decodeText(await readFileLimited(file, 2 * 1024 ** 2, '源码超过 2 MB')).text,
         hash = createHash('sha256').update(source, 'utf8').digest('hex');
       if (hash !== saved.hash) throw Error('内容与记录不一致');
       active.set(saved.key, { ...saved, source });

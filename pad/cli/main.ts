@@ -1,25 +1,39 @@
-import {version} from '../package.json';
-import {effectiveCompiler,defaultLpmake,type ProjectBuildOptions} from '../shared/workspace';
-import {directorySnapshot} from '../core/workspace-files';
-import {archiveSnapshot} from '../core/project-archive';
-import {testPatch} from '../shared/test-import';
-import {validateProblem} from '../shared/validate';
-import type {Draft} from '../shared/types';
+import { version } from '../package.json';
+import { effectiveCompiler, defaultLpmake, type ProjectBuildOptions } from '../shared/workspace';
+import { directorySnapshot } from '../core/workspace-files';
+import { archiveSnapshot } from '../core/project-archive';
+import { testPatch } from '../shared/test-import';
+import { validateProblem } from '../shared/validate';
+import type { Draft } from '../shared/types';
 import path from 'node:path';
-import {existsSync} from 'node:fs';
-import {parseArgs} from 'node:util';
-import {readFile} from 'node:fs/promises';
-import {defaultProblem} from '../shared/defaults';
-import {parseTestCases,parseLabPackage,labDraft} from '../shared/project-format';
-import {readJSON,decodeText} from '../core/storage';
-import {Compiler} from '../core/compiler';
-import {judge} from '../core/judge';
-import {runGrade,compilerConfig} from './grade';
-const platform=process.platform==='win32'?'win':process.platform==='darwin'?'mac':'linux';
-const resources=process.env.LABPAD_RESOURCES??(existsSync(path.join(__dirname,'resources'))?path.join(__dirname,'resources'):path.resolve(__dirname,'../../../.work'));
-const checks=existsSync(path.join(resources,'checkers','wcmp'+(process.platform==='win32'?'.exe':'')))?path.join(resources,'checkers'):path.join(resources,'checkers',platform+'-'+process.arch);
-const paths={toolchain:path.join(resources,'toolchain'),checkers:checks,processHost:process.platform==='win32'?path.join(checks,'process-host.exe'):undefined};
-const help=`LabPad 命令行 · ${version}
+import { existsSync } from 'node:fs';
+import { parseArgs } from 'node:util';
+import { readArchiveFile, readEditableFile } from '../core/read-file';
+import { cleanupAll, cleanupText } from '../core/cleanup';
+import { defaultProblem } from '../shared/defaults';
+import { parseTestCases, parseLabPackage, labDraft } from '../shared/project-format';
+import { readJSON, decodeText } from '../core/storage';
+import { Compiler } from '../core/compiler';
+import { judge } from '../core/judge';
+import { runGrade, compilerConfig } from './grade';
+const platform =
+  process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
+const resources =
+  process.env.LABPAD_RESOURCES ??
+  (existsSync(path.join(__dirname, 'resources'))
+    ? path.join(__dirname, 'resources')
+    : path.resolve(__dirname, '../../../.work'));
+const checks = existsSync(
+  path.join(resources, 'checkers', 'wcmp' + (process.platform === 'win32' ? '.exe' : '')),
+)
+  ? path.join(resources, 'checkers')
+  : path.join(resources, 'checkers', platform + '-' + process.arch);
+const paths = {
+  toolchain: path.join(resources, 'toolchain'),
+  checkers: checks,
+  processHost: process.platform === 'win32' ? path.join(checks, 'process-host.exe') : undefined,
+};
+const help = `LabPad 命令行 · ${version}
 用法：
   labpad judge --source solution.c --tests problem.io.json --compiler gcc
   labpad judge --source solution.c --tests project.json --problem "Lab 2-1"
@@ -32,39 +46,127 @@ const help=`LabPad 命令行 · ${version}
   --student 学号           仅重测此学生，保留其他行与评语
 项目批测读取目录中的 grade.json；部署与 CSV 字段见助教指南。
 `;
-async function main(){
- const {values,positionals}=parseArgs({allowPositionals:true,options:{project:{type:'string'},source:{type:'string'},tests:{type:'string'},compiler:{type:'string'},cc:{type:'string'},cxx:{type:'string'},student:{type:'string'},problem:{type:'string'},json:{type:'boolean'},help:{type:'boolean',short:'h'}}});
- if(values.help||!positionals.length){console.log(help);return;}
- const abort=new AbortController();process.once('SIGINT',()=>abort.abort());
- if(positionals[0]==='grade'){
-  if(positionals.length!==2)throw Error('请指定实验目录，例如：labpad grade lab2');
-  await runGrade(positionals[1],paths,{studentId:values.student,signal:abort.signal,progress:message=>console.log(message)});return;
- }
- if(positionals[0]!=='judge'||(!values.source&&!values.project)||!values.tests)throw Error('请指定 --source 或 --project，并指定 --tests。');
- const raw=await readJSON(path.resolve(values.tests)) as Record<string,unknown>;
- let draft:Draft,buildOptions:ProjectBuildOptions|undefined;
- if(values.project){
-  const location=path.resolve(values.project),snapshot=location.toLowerCase().endsWith('.zip')?await archiveSnapshot(await readFile(location)):await directorySnapshot(location),files=snapshot.files;delete files['labpad.project.json'];
-  if(!files['LPMake.txt']){files['LPMake.txt']=defaultLpmake();console.error('原项目未提供 LPMake.txt，已填充默认模板');}
-  const labId=typeof raw.labId==='string'?raw.labId:'项目',rules=raw.mode==='project'?testPatch(raw.tests,labId,''):testPatch(raw,labId,'');
-  const problem=validateProblem({...defaultProblem(labId,''),...rules});draft={source:'',language:'c',problem,workspace:{...snapshot,files,...((raw.build as any)?.inheritDefaults===true?{inheritDefaults:true}:{})}};
- }else{
-  const file=path.resolve(values.source!),language=file.toLowerCase().endsWith('.cpp')?'cpp':'c';if(!/\.(c|cpp)$/i.test(file))throw Error('单文件仅支持 .c / .cpp');
-  const problem=raw.kind==='labpad.project'?(()=>{
-   const pkg=parseLabPackage(raw);buildOptions=pkg.buildOptions;const item=pkg.problems.find(p=>p.problemId===values.problem);if(!item)throw Error('请用 --problem 指定项目中的题号');return labDraft(pkg,item).problem;
-  })():parseTestCases(raw,defaultProblem(typeof raw.labId==='string'?raw.labId:'',typeof raw.problemId==='string'?raw.problemId:''));
-  draft={source:decodeText(await readFile(file)).text,language,problem};
- }
- const machine=await compilerConfig({kind:(values.compiler??'gcc') as 'gcc'|'clang'|'zig',...(values.cc?{cPath:values.cc}:{}),...(values.cxx?{cppPath:values.cxx}:{})}),config=effectiveCompiler(machine,buildOptions),compiler=new Compiler(paths);
- try{
-  const result=await judge(compiler,draft,config,abort.signal);
-  if(values.json)console.log(JSON.stringify(result,null,2));
-  else{
-   console.log('编译：'+(result.compilation?.status??'未完成'));if(result.compilation?.stderr)console.log(result.compilation.stderr);
-   for(const c of result.cases)console.log(c.id+' · '+(c.verdict??c.status)+' · '+c.elapsedMs+' ms'+(c.message?' · '+c.message.trim():''));
-   if(result.error)console.error(result.error);
+async function main() {
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: {
+      project: { type: 'string' },
+      source: { type: 'string' },
+      tests: { type: 'string' },
+      compiler: { type: 'string' },
+      cc: { type: 'string' },
+      cxx: { type: 'string' },
+      student: { type: 'string' },
+      problem: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+  });
+  if (values.help || !positionals.length) {
+    console.log(help);
+    return;
   }
-  process.exitCode=result.status==='completed'&&result.compilation?.status==='success'&&result.cases.length>0&&result.cases.every(c=>c.verdict==='AC')?0:result.status==='error'?2:1;
- }finally{await compiler.dispose();}
+  const abort = new AbortController();
+  process.once('SIGINT', () => abort.abort());
+  if (positionals[0] === 'grade') {
+    if (positionals.length !== 2) throw Error('请指定实验目录，例如：labpad grade lab2');
+    await runGrade(positionals[1], paths, {
+      studentId: values.student,
+      signal: abort.signal,
+      progress: (message) => console.log(message),
+    });
+    return;
+  }
+  if (positionals[0] !== 'judge' || (!values.source && !values.project) || !values.tests)
+    throw Error('请指定 --source 或 --project，并指定 --tests。');
+  const raw = (await readJSON(path.resolve(values.tests))) as Record<string, unknown>;
+  let draft: Draft, buildOptions: ProjectBuildOptions | undefined;
+  if (values.project) {
+    const location = path.resolve(values.project),
+      snapshot = location.toLowerCase().endsWith('.zip')
+        ? await archiveSnapshot(await readArchiveFile(location))
+        : await directorySnapshot(location),
+      files = snapshot.files;
+    delete files['labpad.project.json'];
+    if (!files['LPMake.txt']) {
+      files['LPMake.txt'] = defaultLpmake();
+      console.error('原项目未提供 LPMake.txt，已填充默认模板');
+    }
+    const labId = typeof raw.labId === 'string' ? raw.labId : '项目',
+      rules = raw.mode === 'project' ? testPatch(raw.tests, labId, '') : testPatch(raw, labId, '');
+    const problem = validateProblem({ ...defaultProblem(labId, ''), ...rules });
+    draft = {
+      source: '',
+      language: 'c',
+      problem,
+      workspace: {
+        ...snapshot,
+        files,
+        ...((raw.build as any)?.inheritDefaults === true ? { inheritDefaults: true } : {}),
+      },
+    };
+  } else {
+    const file = path.resolve(values.source!),
+      language = file.toLowerCase().endsWith('.cpp') ? 'cpp' : 'c';
+    if (!/\.(c|cpp)$/i.test(file)) throw Error('单文件仅支持 .c / .cpp');
+    const problem =
+      raw.kind === 'labpad.project'
+        ? (() => {
+            const pkg = parseLabPackage(raw);
+            buildOptions = pkg.buildOptions;
+            const item = pkg.problems.find((p) => p.problemId === values.problem);
+            if (!item) throw Error('请用 --problem 指定项目中的题号');
+            return labDraft(pkg, item).problem;
+          })()
+        : parseTestCases(
+            raw,
+            defaultProblem(
+              typeof raw.labId === 'string' ? raw.labId : '',
+              typeof raw.problemId === 'string' ? raw.problemId : '',
+            ),
+          );
+    draft = { source: decodeText(await readEditableFile(file)).text, language, problem };
+  }
+  const machine = await compilerConfig({
+      kind: (values.compiler ?? 'gcc') as 'gcc' | 'clang' | 'zig',
+      ...(values.cc ? { cPath: values.cc } : {}),
+      ...(values.cxx ? { cppPath: values.cxx } : {}),
+    }),
+    config = effectiveCompiler(machine, buildOptions),
+    compiler = new Compiler(paths);
+  try {
+    const result = await judge(compiler, draft, config, abort.signal);
+    if (values.json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log('编译：' + (result.compilation?.status ?? '未完成'));
+      if (result.compilation?.stderr) console.log(result.compilation.stderr);
+      for (const c of result.cases)
+        console.log(
+          c.id +
+            ' · ' +
+            (c.verdict ?? c.status) +
+            ' · ' +
+            c.elapsedMs +
+            ' ms' +
+            (c.message ? ' · ' + c.message.trim() : ''),
+        );
+      if (result.error) console.error(result.error);
+    }
+    process.exitCode =
+      result.status === 'completed' &&
+      result.compilation?.status === 'success' &&
+      result.cases.length > 0 &&
+      result.cases.every((c) => c.verdict === 'AC')
+        ? 0
+        : result.status === 'error'
+          ? 2
+          : 1;
+  } finally {
+    const warnings = await cleanupAll([{ label: '编译会话', run: () => compiler.dispose() }]);
+    if (warnings.length) console.error(cleanupText(warnings).trim());
+  }
 }
-void main().catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=2;});
+void main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 2;
+});

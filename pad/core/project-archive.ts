@@ -1,6 +1,5 @@
 import { readArchiveFile } from './read-file';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
-import { readFile } from 'node:fs/promises';
 import { workspacePath, uniquePaths, type WorkspaceSnapshot } from '../shared/workspace';
 import { snapshotBytes } from './workspace-files';
 async function readEntry(archive: ZipFile, entry: Entry, limit = 8 * 1024 ** 2): Promise<Buffer> {
