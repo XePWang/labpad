@@ -444,6 +444,13 @@ body {
 .app-shell {
   overflow: clip;
 }
+
+@media (max-height: 400px) {
+  .app-shell {
+    overflow-y: auto;
+  }
+}
+
 .editor-pane,
 .cases-pane {
   container-type: inline-size;

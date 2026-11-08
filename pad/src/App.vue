@@ -987,6 +987,7 @@ async function deleteLab(lab: string) {
 }
 const newKind = ref<'lab' | 'problem' | null>(null),
   newName = ref(''),
+  newNameInput = ref<HTMLInputElement>(),
   newMessage = ref(''),
   newSaving = ref(false);
 let pauseSave = true,
@@ -1673,18 +1674,22 @@ async function importIO() {
 async function formatCode() {
   if (formatting.value || blocked.value || !canFormat.value) return;
   formatting.value = true;
-  const id = revision,
+  const owner = viewToken(),
+    documentId = activeId.value,
+    id = revision,
     size = config.value!.indentSize,
     language = editorLanguage.value;
   try {
     const formatted = await api.formatCode(draft.value!.source, language, size);
     if (id !== revision || size !== config.value!.indentSize || language !== editorLanguage.value) {
+      if (ownsView(owner) && documentId === activeId.value)
+        notice.value = '代码或缩进设置已改变，请重新格式化';
       return;
     }
     editor.value?.applyText(formatted);
     editor.value?.focus();
   } catch (error) {
-    if (id === revision) throw error;
+    if (ownsView(owner) && documentId === activeId.value && id === revision) throw error;
   } finally {
     formatting.value = false;
   }
@@ -2309,6 +2314,10 @@ watch(
     selectedCases.value = selectedCases.value.filter((id) => ids.includes(id));
   },
 );
+function focusNewName(event: Event) {
+  event.preventDefault();
+  nextTick(() => newNameInput.value?.focus());
+}
 watch(newKind, (open, old) => {
   if (old && !open)
     nextTick(() => {
@@ -3449,7 +3458,7 @@ async function foldRight(collapsed: boolean) {
     >
     <DialogRoot :open="!!newKind" @update:open="!$event && !newSaving && (newKind = null)"
       ><div v-if="newKind" class="modal-backdrop">
-        <DialogContent as-child
+        <DialogContent as-child @open-auto-focus="focusNewName"
           ><section
             class="create-dialog"
             @keydown.esc.stop.prevent="!newSaving && (newKind = null)"
@@ -3469,6 +3478,7 @@ async function foldRight(collapsed: boolean) {
             ><label
               >{{ newKind === 'lab' ? '项目名称' : '题号'
               }}<input
+                ref="newNameInput"
                 v-model="newName"
                 :aria-label="newKind === 'lab' ? '项目名称' : '新题号'"
                 :placeholder="newKind === 'lab' ? '例如 实验2' : '例如 Lab 2-1'"

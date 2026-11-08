@@ -97,7 +97,8 @@ test('cleanup attempts every release even after synchronous and asynchronous fai
     },
     {
       label: 'c',
-      run: async () => {
+      run: async function () {
+        assert.equal(arguments.length,0);
         calls.push('c');
       },
     },
@@ -198,6 +199,54 @@ test('compiler launch failure retains ENOENT while reporting directory and lease
     (fs as any).rm = rm;
     syncBuiltinESMExports();
     await c.dispose();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('test-point transaction retains its write error if staging cleanup also fails', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'labpad-test-update-release-')),
+    rm = fs.rm;
+  const store = new Storage(root);
+  await store.init();
+  await store.importProject({
+    schemaVersion: 1,
+    kind: 'labpad.project',
+    labId: 'CleanupSet',
+    problems: [{ problemId: 'one' }],
+  });
+  const original = (store as any).atomic;
+  let attempts = 0;
+  try {
+    const draft = await store.load('CleanupSet', 'one', 'c', true);
+    draft.problem.timeLimitMs = 2468;
+    (store as any).atomic = async () => {
+      throw Object.assign(Error('test rules write failed'), { code: 'ENOSPC' });
+    };
+    (fs as any).rm = async (file: any, ...args: any[]) => {
+      if (path.basename(String(file)).startsWith('.tests-')) {
+        attempts++;
+        throw Error('test stage busy');
+      }
+      return (rm as any)(file, ...args);
+    };
+    syncBuiltinESMExports();
+    await assert.rejects(store.updateProjectTests('CleanupSet', [draft.problem]), (error: any) => {
+      assert.equal(error.code, 'ENOSPC');
+      assert.match(error.message, /test rules write failed/);
+      assert.match(error.message, /test stage busy/);
+      return true;
+    });
+    assert.equal(attempts, 1);
+    (store as any).atomic = original;
+    (fs as any).rm = rm;
+    syncBuiltinESMExports();
+    assert.equal((await store.load('CleanupSet', 'one', 'c', true)).problem.timeLimitMs, 1000);
+    await store.updateProjectTests('CleanupSet', [draft.problem]);
+    assert.equal((await store.load('CleanupSet', 'one', 'c', true)).problem.timeLimitMs, 2468);
+  } finally {
+    (store as any).atomic = original;
+    (fs as any).rm = rm;
+    syncBuiltinESMExports();
     await fs.rm(root, { recursive: true, force: true });
   }
 });

@@ -4,7 +4,9 @@ export interface CleanupStep {
 }
 /** Run every release independently, including when a callback throws synchronously. */
 export async function cleanupAll(steps: CleanupStep[]): Promise<string[]> {
-  const results = await Promise.allSettled(steps.map((step) => Promise.resolve().then(step.run)));
+  const results = await Promise.allSettled(
+    steps.map((step) => Promise.resolve().then(() => step.run())),
+  );
   return results.flatMap((result, i) =>
     result.status === 'rejected'
       ? [

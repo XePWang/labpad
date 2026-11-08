@@ -1,3 +1,4 @@
+import { cleanupAll, addCleanupNotes, cleanupText } from './cleanup';
 import { readEditableFile, readConfigFile } from './read-file';
 import { remapPath } from '../shared/file-changes';
 import { isSourceFile, sourceLanguage, editorLanguage } from '../shared/file-language';
@@ -85,7 +86,9 @@ export async function writeSource(file: string, source: string, encoding = 'UTF-
 }
 export async function readJSON(file: string): Promise<unknown> {
   return JSON.parse(
-    new TextDecoder('utf-8', { fatal: true }).decode(await readConfigFile(file)).replace(/^\uFEFF/, ''),
+    new TextDecoder('utf-8', { fatal: true })
+      .decode(await readConfigFile(file))
+      .replace(/^\uFEFF/, ''),
   );
 }
 export async function exists(file: string) {
@@ -496,7 +499,8 @@ export class Storage {
             file = await this.nextSourceFile(labId, problemId, lang, state.documents);
             await mkdir(p.dir, { recursive: true });
             await writeSource(path.join(p.dir, file), source);
-          } else if (await exists(p.source)) source = decodeText(await readEditableFile(p.source)).text;
+          } else if (await exists(p.source))
+            source = decodeText(await readEditableFile(p.source)).text;
           else {
             await mkdir(p.dir, { recursive: true });
             await writeSource(p.source, source);
@@ -776,7 +780,8 @@ export class Storage {
       const directory = path.join(this.root, 'projects', labId),
         stage = await mkdtemp(path.join(this.root, '.tests-')),
         backup = stage + '-old';
-      let moved = false;
+      let moved = false,
+        failure: Error | undefined;
       try {
         await cp(directory, stage, { recursive: true });
         for (const problem of snapshots) {
@@ -790,15 +795,29 @@ export class Storage {
         moved = true;
         try {
           await rename(stage, directory);
-        } catch (e) {
-          await rename(backup, directory);
-          moved = false;
-          throw e;
+        } catch (reason) {
+          const error = reason instanceof Error ? reason : new Error(String(reason));
+          try {
+            await rename(backup, directory);
+            moved = false;
+          } catch (rollback) {
+            addCleanupNotes(error, ['Project rollback: ' + String(rollback)]);
+          }
+          throw error;
         }
         moved = false;
         await rm(backup, { recursive: true, force: true });
+      } catch (reason) {
+        failure = reason instanceof Error ? reason : new Error(String(reason));
+        throw failure;
       } finally {
-        if (!moved) await rm(stage, { recursive: true, force: true });
+        if (!moved) {
+          const warnings = await cleanupAll([
+            { label: '测试点暂存目录', run: () => rm(stage, { recursive: true, force: true }) },
+          ]);
+          if (failure) addCleanupNotes(failure, warnings);
+          else if (warnings.length) throw Error(cleanupText(warnings).trim());
+        }
       }
     });
   }

@@ -183,6 +183,9 @@ p {
 }
 .toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: 7px;
   align-items: center;
 }
