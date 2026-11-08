@@ -3,8 +3,41 @@ import { qualityFixture } from './quality-fixture';
 import { open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { compileAndRun } from './legacy-flow.cjs';
+async function memorySamples(app: any) {
+  const read = () =>
+    app.evaluate(({ app }: any) =>
+      Object.fromEntries(
+        app
+          .getAppMetrics()
+          .filter((p: any) => ['Browser', 'Tab'].includes(p.type))
+          .map((p: any) => [p.type + '-' + p.pid, p.memory.workingSetSize]),
+      ),
+    );
+  const first = await read(),
+    peaks = { ...first };
+  let running: Promise<void> | undefined;
+  const sample = () => {
+    if (running) return;
+    running = read()
+      .then((value: any) => {
+        for (const [k, v] of Object.entries(value)) peaks[k] = Math.max(peaks[k] ?? 0, v as number);
+      })
+      .finally(() => (running = undefined));
+  };
+  const timer = setInterval(sample, 100);
+  return async () => {
+    clearInterval(timer);
+    await running;
+    const last = await read();
+    console.log(
+      'RESOURCE_MEMORY_KiB ' +
+        JSON.stringify({ first, sampledPeaks: peaks, last, intervalMs: 100 }),
+    );
+  };
+}
 test('native editor and project archive requests reject metadata oversize and keep the window usable', async () => {
   const { app, page, root, close } = await qualityFixture();
+  const finishMemory = await memorySamples(app);
   try {
     await page.evaluate(async () => {
       await window.labpad.createLab('资源边界', 'project');
@@ -46,11 +79,16 @@ test('native editor and project archive requests reject metadata oversize and ke
     await page.keyboard.press('Escape');
     await expect(page.locator('.settings-dialog')).toHaveCount(0);
   } finally {
-    await close();
+    try {
+      await finishMemory();
+    } finally {
+      await close();
+    }
   }
 });
 test('large token mismatch opens a budgeted Diff while preserving full judging output', async () => {
   const { app, page, root, close } = await qualityFixture();
+  const finishMemory = await memorySamples(app);
   try {
     const expected = Array.from({ length: 6000 }, (_, i) => 'a' + i).join(' '),
       file = path.join(root, 'diff.json');
@@ -79,12 +117,16 @@ test('large token mismatch opens a budgeted Diff while preserving full judging o
     await compileAndRun(page);
     await page.getByRole('button', { name: '查看 Diff', exact: true }).click();
     await expect(page.locator('.diff-note')).toBeVisible();
-    await page.getByRole('button', {name:'查看原文',exact:true}).click();
+    await page.getByRole('button', { name: '查看原文', exact: true }).click();
     await expect(page.locator('.actual-output')).toContainText('b5999');
     await page.locator('.toolbar button').filter({ hasText: '设置' }).click();
     await expect(page.locator('.settings-dialog')).toBeVisible();
     await page.keyboard.press('Escape');
   } finally {
-    await close();
+    try {
+      await finishMemory();
+    } finally {
+      await close();
+    }
   }
 });

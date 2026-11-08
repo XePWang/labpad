@@ -14,7 +14,7 @@
 
 探针、夹具和详细日志保存在远端 .work/quality-consolidation。8 MiB 与 100 MiB 取自既有项目文件及 CLI 收件约束；测试使用隔离数据和稀疏文件。
 
-已有终端补全和调试异步边界两项成品流程通过。本轮 UI 探针首轮的设置入口定位未包含按钮图标，已修正夹具后复测；不会把夹具错误列为产品缺陷。真实编辑器已记录 pri → printf/fprintf/sprintf，printf → printf/printfExtra/fprintf，return → return/return_value/_Noreturn，未证实固定 boost 压倒精确前缀。
+已有终端补全和调试异步边界两项成品流程通过。本轮 UI 探针首轮的设置入口定位未包含按钮图标，已修正夹具后复测。真实编辑器已记录 pri → printf/fprintf/sprintf，printf → printf/printfExtra/fprintf，return → return/return_value/_Noreturn，未证实固定 boost 压倒精确前缀。
 
 ## 处理原则
 
@@ -53,6 +53,49 @@ Windows 和 Linux 原生窗口各通过 7 项异步与补全流程。探针包�
 
 原生成品全流程出现原子重命名的 EPERM：一次发生于调试启动前的项目元数据写入，一次使源码保存保留未保存标记。现将所有 write-file-atomic 调用收进 core/atomic-file.ts，继续使用原库的同步、权限与原子替换机制；只对 Windows 的 rename + EPERM/EACCES/EBUSY 最多重试四次，等待合计 750 ms。整次保存含重试共用按文件队列，失败不会毒化下一次保存，也不删除或改权限来绕过失败。
 
-错误类别参考 [VS Code 文件系统实现](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/node/diskFileSystemProvider.ts)。没有认定某个安全软件为本机具体原因。三个核心故障用例验证顺序、持续失败、原字节、临时文件回收及后续重试；完整核心 178/178 通过。Windows 成品直接注入 fs.rename 错误，并与原失败场景一起通过四项回归。
+错误类别参考 [VS Code 文件系统实现](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/node/diskFileSystemProvider.ts)。本机具体占用进程未定位。三个核心故障用例验证顺序、持续失败、原字节、临时文件回收及后续重试；完整核心 178/178 通过。Windows 成品直接注入 fs.rename 错误，并与原失败场景一起通过四项回归。
 
 另一处 Windows 夹具在首次规则文件创建前就读取文件，已改为仅在 ENOENT 时继续等候；内容及原源码保持断言不变。
+
+## M4 最终验收
+
+核验日期：2026-11-09。产品源码：d25722d；本轮候选保持 0.1.0-dev.9。Git 推送与 Release 上传暂停。后续全量审查、主题和标题栏调整按 v1.0.0-rc.1 任务另行开展。
+
+| 检查 | 最终结果 |
+| --- | --- |
+| 构建与类型 | 通过 |
+| 完整核心 | 178/178，零跳过 |
+| Linux 成品 | 54/54 |
+| Windows 成品 | 52/52；另通过 4 项原生写入故障与原失败组合 |
+| CLI 实际归档 | C、C++ 单题及五项项目/批量验收通过；使用 Bubblewrap |
+| macOS arm64 | 29 个 Mach-O 代码页、4479 项封装资源、签名与 ARM64 入口核验通过；未实机运行 |
+| 待审归档 | 三平台桌面、Linux CLI、SHA256SUMS.txt 已生成；ZIP CRC、链接及权限核对通过 |
+
+Linux 完整轮另包含独立终端组件与 Linux 指南截图两项，Windows 使用其余全部成品流程。次数按最后完整轮记录，不累计重复执行。窗口覆盖两种主题、16 档缩放、1280×720 及中英文字号极值。
+
+CLI 的两份互补半通过版本只得 50 分；新完整版本得 100 分。覆盖原提交、移走目录和 ZIP 后，历史二进制资源仍可恢复，名单顺序、公开/隐藏点明细及完整版本择优保持正确。
+
+### 资源观察
+
+下表为 100 ms 采样并计入末次值后的观察最大值，单位 MiB；不是 OS 全周期峰值。
+
+| 场景 | 主进程 | 渲染进程 |
+| --- | ---: | ---: |
+| Linux · 超限拒绝 | 139.8 | 152.1 |
+| Linux · 复杂 Diff | 143.0 | 182.9 |
+| Windows · 超限拒绝 | 175.3 | 139.8 |
+| Windows · 复杂 Diff | 188.2 | 180.4 |
+
+八次编译、PTY、停止、关闭版本循环的渲染进程样本（在固定节点回收后取值）：Linux：[158396,152372,157516] KiB；Windows：[156344,159976,164188] KiB。最终保留一份编译程序，退出后移除运行目录；没有观察到逐轮增长。
+
+### 提交与证据
+
+- 6722841：M0 探针与基线。
+- 3e7475f、b62ebb2：先展开相关控制流。
+- f372dce：M1 读取、Diff 和清理。
+- 9658ec7：共享 UI 帮助函数声明。
+- e68bd65：M2 异步上下文。
+- f804732：M3 清理、焦点和缩放。
+- d25722d：Windows 原子保存。
+
+详细日志、失败探针及最终归档位于远端 .work/quality-consolidation，Windows 日志与程序哈希已归档到同一处。README、三份指南、LPMake 手册和五张实际截图同步更新。

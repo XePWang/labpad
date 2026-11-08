@@ -4,7 +4,7 @@
 
 撰写日期：2026-11-01
 
-更新日期：2026-11-08
+更新日期：2026-11-09
 
 ## 1. 模块与项目模型
 桌面采用 Electron、Vue 3、TypeScript、CodeMirror 6。CLI 与桌面共用 core/compiler、core/build、core/judge 和 Checker。
@@ -286,3 +286,19 @@ readFileLimited 先用已打开文件的 stat 拒绝超限文件，再分块读�
 参考实现：[VS Code 目录排除](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/files/browser/files.contribution.ts)、[补全会话取消](https://github.com/microsoft/vscode/blob/main/src/vs/editor/contrib/suggest/browser/suggestModel.ts)、[异步树输入失效](https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/ui/tree/asyncDataTree.ts)、[有界读取与关闭](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/common/io.ts)、[文本内容与保存版本](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/textfile/common/textFileEditorModel.ts)。采用其处理边界，接入 LabPad 已有的保存队列、FileService、目录快照、DAP 会话及主题。
 
 对应回归：tests/review-persistence.test.ts、tests/rule-save.test.ts、tests/debug-inspection.test.ts、tests/read-file.test.ts，以及 tests/ui/review-persistence.spec.ts、tests/ui/async-context.spec.ts、tests/ui/action-theme.spec.ts。测试中的延迟响应由故障注入触发；真实断点调试另外使用随包调试器执行。
+
+## 14. 读取、Diff 与异步边界
+
+shared/resource-limits.ts 集中定义编辑器 8 MiB、归档及配置入口 100 MiB 上限。core/read-file.ts 复用已打开句柄的 stat 和分块有界读取，文件增长也受限；源码、辅助文件、GUI ZIP 与 CLI 项目收件使用同一入口。目录快照按实际读取字节累计，终端 cat 继续采用原有 1 MiB 约束。
+
+src/editor/output-diff.ts 使用 diff 库的原生预算：词级最多 50 ms / 2048 编辑步，随后按行最多 25 ms / 1024 步；总输入超过 200000 个 UTF-16 代码单元时直接使用双侧预览，每侧最多 50000 个。原文和评测输入保持完整。
+
+core/cleanup.ts 独立执行各释放动作，并以零参数调用回调，避免 Promise.then 传入的值改变第三方回调签名。原始 Error 保留代码及堆栈，附加清理原因；JudgeResult.cleanupWarnings 单独记录评测清理警告。测试点更新失败保留写入错误及原规则，回滚失败保留暂存与备份供恢复。
+
+文件打开、文件区刷新、补全、构建成员预览及栈帧选择校验视图代次和请求序号；A→B→A 不是同一次视图。workspace:files/open 显式携带题号。断点与监视设置加载校验归属，写入捕获原项目和当时数据。设置扫描失效于设置关闭；参数预览在输入变化时立即失效，防抖仅推迟新计算。
+
+弹窗统一使用 DialogActions 和 nativeButtonOrder；新建名称通过 Reka 的 open-auto-focus 聚焦。工具栏动作组在窄窗口换行，极矮视口允许滚动。补全排序、长签名截断及接受行为继续使用 CodeMirror；UI 菜单保留界面字体。故障证据、原生窗口回归与平台范围见 [质量收敛记录](quality-audit.md) 和 [验证记录](verification.md)。
+
+### Windows 原子保存
+
+core/atomic-file.ts 统一承接 write-file-atomic。整次写入含重试按文件排队；仅 Windows 的 rename + EPERM/EACCES/EBUSY 额外重试四次，等待合计 750 ms。其他错误直接返回，持续失败保留原字节并允许后续保存。错误分类参考 [VS Code 文件系统实现](https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/node/diskFileSystemProvider.ts)；回归直接注入真实 fs.rename，而非只模拟 IPC 错误。
