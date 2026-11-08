@@ -203,7 +203,6 @@ async function requestFiles(request:FileRequest){
  const event=await api.fileOperation(draft.value!.problem.labId,draft.value!.problem.problemId,clone(request));await applyFileEvent(event);
 }
 async function treeAction(value:string,files:string[]){
- if(value==='build'){await openExperimentBuild();return;}
  if(value==='refresh'){await refreshFiles(true);return;}
  if(value==='open'){await openFiles(files);return;}
  if(value==='copy'||value==='cut'){

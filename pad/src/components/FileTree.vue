@@ -126,7 +126,6 @@ defineExpose({selectedFolder:()=>baseFolder(),newSource:(language:'c'|'cpp')=>be
    <ContextMenuItem class="tab-menu-item" @select="emit('expand',[])">折叠全部文件夹</ContextMenuItem>
    <ContextMenuItem class="tab-menu-item" @select="emit('action','reveal',[])">在文件管理器中显示</ContextMenuItem>
   </ContextMenuContent></ContextMenuPortal></ContextMenuRoot>
-  <button v-if="project" class="tree-build-settings" :disabled="saving" @click="emit('action','build',['LPMake.txt'])">项目构建设置…</button>
  </aside>
 </template>
 <style>
@@ -142,6 +141,5 @@ defineExpose({selectedFolder:()=>baseFolder(),newSource:(language:'c'|'cpp')=>be
 .tree-selection-box{position:absolute;pointer-events:none;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);z-index:2}
 .tree-inline-edit{padding:3px 8px 3px 10px;font-size:12px}.tree-edit-row{display:flex;align-items:center;gap:6px}.tree-edit-row input{min-width:0;width:100%;padding:3px 4px;font-size:12px;border:1px solid var(--accent);border-radius:0;outline:none;user-select:text}
 .tree-edit-row input[aria-invalid=true]{border-color:var(--failure,#f14c4c)}.tree-edit-error{margin:5px 0 0 22px;color:var(--failure,#f14c4c);font-size:11px;overflow-wrap:anywhere}.tree-edit-option{display:flex;align-items:center;gap:4px;font-size:10px;margin:5px 0 0 22px;color:var(--muted)}.tree-edit-option input{width:12px;height:12px;margin:0}
-.app-shell[data-theme] .tree-build-settings{font-size:11px;padding:8px;border:0;border-top:1px solid var(--border);background:transparent;color:var(--muted)}
 .editor-workspace{display:flex;flex:1;min-height:0;min-width:0;overflow:hidden}.editor-content{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}.editor-content>.code-editor{flex:1;min-height:0}
 </style>
