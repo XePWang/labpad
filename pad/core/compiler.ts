@@ -3,7 +3,7 @@ import { snapshotEntries } from './workspace-files';
 import type { WorkspaceSnapshot } from '../shared/workspace';
 import { usedLanguages, standaloneSource, type CompilerContext } from './build/plan';
 import { parse } from '../shared/lpmake';
-import { assertParameters } from '../shared/parameters';
+import { assertParameters, argumentTokens } from '../shared/parameters';
 import { withDefaultStandard } from '../shared/defaults';
 import { mkdtemp, mkdir, writeFile, readFile, access, rm, stat, realpath } from 'node:fs/promises';
 import { CompilerCache } from './cache';
@@ -225,8 +225,11 @@ export class Compiler {
         '-x',
         language === 'c' ? 'c' : 'c++',
         sourcePath,
-        '-x',
-        'none',
+        // Reset the forced source language only when another input follows.
+        // Clang warns if a reset trails the last source and only options remain.
+        ...(argumentTokens(config.linkArgs).some((token) => !token.key.startsWith('-'))
+          ? ['-x', 'none']
+          : []),
         ...config.linkArgs,
         '-o',
         executable,
