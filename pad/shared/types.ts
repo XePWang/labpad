@@ -191,7 +191,8 @@ export interface Coverage {
 export interface FileEvent {
   id: number;
   lab: string;
-  changes: import('../core/files').FileChange[];
+  changes: import('./file-changes').FileChange[];
+  warnings?: string[];
   files: WorkspaceFile[];
 }
 export interface Bridge {
@@ -263,13 +264,7 @@ export interface Bridge {
   workspaceSources(lab: string, lpmake: string): Promise<string[]>;
   workspaceFiles(lab: string): Promise<WorkspaceFile[]>;
   workspaceOpen(lab: string, file: string): Promise<LoadedDraft>;
-  workspaceFileAction(
-    lab: string,
-    action: 'newFile' | 'newFolder' | 'rename' | 'delete' | 'import' | 'reveal',
-    file: string,
-    target?: string,
-    content?: string,
-  ): Promise<WorkspaceFile[]>;
+
   workspaceView(
     lab: string,
     value: {

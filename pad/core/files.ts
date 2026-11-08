@@ -1,3 +1,4 @@
+import { under, type FileChange } from '../shared/file-changes';
 import {
   mkdir,
   readdir,
@@ -20,20 +21,14 @@ export interface FileRequest {
   content?: string;
   conflict?: 'replace' | 'keepBoth' | 'skip';
 }
-export interface FileChange {
-  from?: string;
-  to?: string;
-  copied?: boolean;
-  replaced?: boolean;
-}
+export type { FileChange } from '../shared/file-changes';
 export class FileConflict extends Error {
   constructor(readonly files: string[]) {
     super('目标已有同名文件：' + files.join('、'));
   }
 }
 const key = (s: string) => s.normalize('NFC').toLowerCase();
-export const under = (file: string, parent: string) =>
-  key(file) === key(parent) || key(file).startsWith(key(parent) + '/');
+export { under } from '../shared/file-changes';
 export function compactSelection(files: string[]) {
   return [...new Set(files)].filter((p) => !files.some((other) => other !== p && under(p, other)));
 }
@@ -124,11 +119,13 @@ export class FileService {
     uniquePaths(files.filter((f) => !f.directory).map((f) => f.path));
     return files.sort((a, b) => (a.path < b.path ? -1 : 1));
   }
-  async operate(request: FileRequest): Promise<{ changes: FileChange[]; files: WorkspaceFile[] }> {
+  async operate(
+    request: FileRequest,
+  ): Promise<{ changes: FileChange[]; files: WorkspaceFile[]; warnings: string[] }> {
     const task = this.tail.then(() => this.apply(request));
     this.tail = task.catch(() => {});
-    const changes = await task;
-    return { changes, files: await this.list() };
+    const result = await task;
+    return { ...result, files: await this.list() };
   }
   private async apply(request: FileRequest) {
     if (
@@ -289,8 +286,6 @@ export class FileService {
         }
       }
       await this.options.commit?.(changes);
-      await rm(transaction, { recursive: true, force: true });
-      return changes;
     } catch (error) {
       const failures = [];
       for (const restore of undo.reverse())
@@ -304,8 +299,29 @@ export class FileService {
           [error, ...failures],
           '文件操作失败，部分文件未能恢复；请保留编辑内容并检查实验目录。',
         );
-      await rm(transaction, { recursive: true, force: true });
+      try {
+        await rm(transaction, { recursive: true, force: true });
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          '文件操作失败；临时备份未能清理：' + transaction,
+        );
+      }
       throw error;
     }
+    // Metadata and files are committed. Cleanup cannot roll back only one side.
+    const warnings: string[] = [];
+    try {
+      await rm(transaction, { recursive: true, force: true });
+    } catch (error) {
+      warnings.push(
+        '文件已更新，但临时备份未能清理：' +
+          transaction +
+          '（' +
+          (error instanceof Error ? error.message : String(error)) +
+          '）',
+      );
+    }
+    return { changes, warnings };
   }
 }

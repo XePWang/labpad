@@ -1,3 +1,4 @@
+import { remapPath, replacedPath } from '../shared/file-changes';
 import { isCodeFile, isHeaderFile, isSourceFile, sourceExtensions } from '../shared/file-language';
 import { directorySnapshot, hasUnsavedSnapshotFiles } from '../core/workspace-files';
 import { createHash } from 'node:crypto';
@@ -788,8 +789,9 @@ function emitFileChanges(
   lab: string,
   changes: FileChange[],
   files: import('../shared/workspace').WorkspaceFile[],
+  warnings: string[] = [],
 ) {
-  const event = { id: ++fileSequence, lab, changes, files };
+  const event = { id: ++fileSequence, lab, changes, files, warnings };
   send('files:changed', event);
   return event;
 }
@@ -1142,15 +1144,8 @@ async function performFiles(lab: string, problem: string, request: FileRequest) 
   }
   const translate = (d: Draft) => {
     if (d.problem.labId !== lab || !d.file) return d;
-    let file = d.file;
-    for (const c of result.changes) {
-      if (c.from && !c.copied && under(file, c.from)) {
-        if (!c.to) return;
-        file = c.to + file.slice(c.from.length);
-        break;
-      }
-      if (c.replaced && c.to && under(file, c.to)) return;
-    }
+    const file = remapPath(d.file, result.changes);
+    if (!file || replacedPath(d.file, result.changes)) return;
     return { ...d, file };
   };
   openBuffers = openBuffers.flatMap((d) => {
@@ -1294,42 +1289,6 @@ async function initialize() {
       ).response === 0,
   );
   handle('files:operate', performFiles);
-  handle(
-    'workspace:file',
-    async (lab: string, action: string, file: string, target?: string, content?: string) => {
-      requireIdle();
-      await saves;
-      if (!(await storage.workspace.isProject(lab))) throw new Error('请选择多文件项目');
-      if (action === 'reveal') {
-        shell.showItemInFolder(await storage.workspace.path(lab, file));
-        return storage.workspace.list(lab);
-      }
-      if (!['newFile', 'newFolder', 'rename', 'delete'].includes(action))
-        throw new Error('文件操作无效');
-      if (action === 'delete') {
-        const entries = await storage.workspace.list(lab),
-          count = entries.filter((e) => e.path === file || e.path.startsWith(file + '/')).length;
-        const choice = await messageBox({
-          type: 'warning',
-          title: '删除项目文件',
-          message: '删除“' + file + '”？',
-          detail: '将删除 ' + count + ' 项及其中未保存的修改。此操作无法撤销。',
-          buttons: ['取消', '删除'],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-        if (choice.response !== 1) return entries;
-      }
-      return storage.workspace.mutate(
-        lab,
-        action as 'newFile' | 'newFolder' | 'rename' | 'delete',
-        file,
-        target,
-        content,
-      );
-    },
-  );
   handle(
     'build:preview',
     async (value: Draft, options?: ProjectBuildOptions, machine?: CompilerConfig) => {
@@ -1880,9 +1839,13 @@ async function initialize() {
           noLink: true,
         });
         if (choice.response !== 1) return null;
-        await writeSource(target, decoded.text);
-      } else
-        await storage.workspace.mutate(config.currentLab, 'newFile', name, undefined, decoded.text);
+      }
+      await performFiles(config.currentLab, '', {
+        action: 'newFile',
+        paths: [name],
+        content: decoded.text,
+        conflict: 'replace',
+      });
       const document = await storage.workspace.open(config.currentLab, name);
       currentDocument = document;
       openBuffers = openBuffers.filter((d) => d.file !== name);

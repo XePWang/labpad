@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { remapPath, replacedPath } from '../shared/file-changes';
 import {
   isSourceFile,
   isCodeFile,
@@ -537,33 +538,56 @@ function applyFileEvent(event: FileEvent): Promise<void> {
   return task;
 }
 async function applyFileChanges(event: FileEvent) {
-  fileEntries.value = event.files;
-  const remap = (file: string) => {
-    for (const c of event.changes)
-      if (c.from && !c.copied && (file === c.from || file.startsWith(c.from + '/')))
-        return c.to ? c.to + file.slice(c.from.length) : undefined;
-    return file;
-  };
-  expanded.value = expanded.value.map(remap).filter((p): p is string => p !== undefined);
+  const lab = draft.value!.problem.labId;
+  const remap = (file: string) => remapPath(file, event.changes);
+  const targetFile = tabs.value.find((tab) => tab.id === targetSourceId.value)?.document.file;
+  const targetRemoved =
+    !!targetFile && (remap(targetFile) === undefined || replacedPath(targetFile, event.changes));
   const moving = new Set(
     tabs.value
-      .filter((t) => t.document.file && remap(t.document.file) !== t.document.file)
-      .map((t) => t.id),
+      .filter((tab) => tab.document.file && remap(tab.document.file) !== tab.document.file)
+      .map((tab) => tab.id),
   );
+  const reload = new Map(
+    await Promise.all(
+      tabs.value.flatMap((tab) => {
+        const file = tab.document.file,
+          next = file && remap(file);
+        return file && next && (next !== file || replacedPath(file, event.changes))
+          ? [api.workspaceOpen(event.lab, next).then((loaded) => [tab.id, loaded] as const)]
+          : [];
+      }),
+    ),
+  );
+  const nextProjects = await api.projects();
+  const clip = clipboardFiles.value;
+  const clipPaths =
+    clip?.lab === event.lab
+      ? clip.paths.map(remap).filter((file): file is string => file !== undefined)
+      : undefined;
+  const absolute = clipPaths?.length
+    ? await api.fileContext(event.lab, draft.value!.problem.problemId, clipPaths, 'copy')
+    : [];
+  if (draft.value?.problem.labId !== lab) return;
+
+  // Read all committed metadata before publishing the new tree and editor state.
+  expanded.value = expanded.value.map(remap).filter((file): file is string => file !== undefined);
+  sourceBreakpoints.value = sourceBreakpoints.value.flatMap((point) => {
+    const next = remap(point.path);
+    return next ? [{ ...point, path: next, verified: false }] : [];
+  });
   for (const tab of [...tabs.value]) {
     const file = tab.document.file;
     if (!file) continue;
     const next = remap(file),
       moved = next !== file,
-      replaced = event.changes.some(
-        (c) => c.replaced && c.to && (file === c.to || file.startsWith(c.to + '/')),
-      );
+      replaced = replacedPath(file, event.changes);
     if (!next) {
-      tabs.value = tabs.value.filter((t) => t !== tab);
+      tabs.value = tabs.value.filter((current) => current !== tab);
       continue;
     }
-    if (moved || replaced) {
-      const loaded = await api.workspaceOpen(event.lab, next);
+    const loaded = reload.get(tab.id);
+    if ((moved || replaced) && loaded) {
       const source = moved ? tab.document.source : loaded.source;
       tab.document = { ...loaded, source, documentId: tab.id };
       if (replaced && !moved) tab.savedSource = source;
@@ -576,15 +600,14 @@ async function applyFileChanges(event: FileEvent) {
       }
     }
   }
-  // A move onto an already open target keeps the moving buffer and its undo history.
   const seen = new Set<string>();
-  tabs.value = tabs.value.filter((t) => {
-    const file = t.document.file;
+  tabs.value = tabs.value.filter((tab) => {
+    const file = tab.document.file;
     if (!file) return true;
     if (
-      !moving.has(t.id) &&
+      !moving.has(tab.id) &&
       tabs.value.some(
-        (other) => other.id !== t.id && moving.has(other.id) && other.document.file === file,
+        (other) => other.id !== tab.id && moving.has(other.id) && other.document.file === file,
       )
     )
       return false;
@@ -592,19 +615,32 @@ async function applyFileChanges(event: FileEvent) {
     seen.add(file);
     return true;
   });
-  if (!tabs.value.some((t) => t.id === activeId.value)) {
+  if (!tabs.value.some((tab) => tab.id === activeId.value)) {
     activeId.value = '';
     const was = fileBusy.value;
     fileBusy.value = false;
-    if (tabs.value[0]) activateTab(tabs.value[0].id);
+    if (tabs.value[0] && !targetRemoved) activateTab(tabs.value[0].id);
+    else {
+      documentEpoch.value = '';
+      if (targetRemoved) targetSourceId.value = undefined;
+    }
     fileBusy.value = was;
   }
+  if (clipboardFiles.value === clip && clipPaths) {
+    if (clipPaths.length) {
+      clip!.paths = clipPaths;
+      clip!.absolute = absolute;
+    } else clipboardFiles.value = undefined;
+  }
+  fileEntries.value = event.files;
+  projects.value = nextProjects;
+  if (event.warnings?.length) notice.value = event.warnings.join('\n');
   refreshDirty();
   revision++;
   invalidate();
   recordState();
-  projects.value = await api.projects();
 }
+
 async function requestFiles(request: FileRequest) {
   if (busy.value) throw Error('请先停止当前任务');
   const event = await api.fileOperation(

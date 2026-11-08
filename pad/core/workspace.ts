@@ -288,73 +288,7 @@ export class WorkspaceStore {
       });
     });
   }
-  async mutate(
-    lab: string,
-    action: 'newFile' | 'newFolder' | 'rename' | 'delete',
-    file: string,
-    target?: string,
-    content?: string,
-  ) {
-    const entries = await this.list(lab);
-    workspacePath(file);
-    const key = (p: string) => p.normalize('NFC').toLowerCase();
-    const checkNew = (name: string, except?: string) => {
-      workspacePath(name);
-      const parts = name.split('/');
-      for (let i = 1; i < parts.length; i++) {
-        const parent = parts.slice(0, i).join('/'),
-          existing = entries.find((e) => e.directory && key(e.path) === key(parent));
-        if (existing && existing.path !== parent)
-          throw new Error('请保持文件夹名称的大小写：' + existing.path);
-      }
-      if (entries.some((e) => e.path !== except && key(e.path) === key(name)))
-        throw new Error('已有同名文件或文件夹：' + name);
-    };
-    if (action === 'newFile' || action === 'newFolder') checkNew(file);
-    if (action === 'rename') checkNew(target!, file);
-    if (file === 'LPMake.txt' && (action === 'delete' || action === 'rename'))
-      throw new Error('LPMake是项目构建文件，不能删除或重命名');
-    if (
-      action === 'rename' &&
-      target!
-        .normalize('NFC')
-        .toLowerCase()
-        .startsWith(file.normalize('NFC').toLowerCase() + '/')
-    )
-      throw new Error('不能把文件夹移到自身内部');
-    const state = action === 'newFile' ? await this.read(lab) : undefined,
-      initial =
-        content ??
-        (/\.c$/i.test(file)
-          ? (state?.templates?.c ?? defaultSource('c'))
-          : /\.(cpp|cc|cxx)$/i.test(file)
-            ? (state?.templates?.cpp ?? defaultSource('cpp'))
-            : '');
-    const source = await this.path(lab, file, action === 'newFile' || action === 'newFolder');
-    await this.enqueue(async () => {
-      if (action === 'newFile') {
-        await mkdir(path.dirname(source), { recursive: true });
-        await writeFile(source, initial, { encoding: 'utf8', flag: 'wx' });
-      }
-      if (action === 'newFolder') await mkdir(source, { recursive: true });
-      if (action === 'delete') await rm(source, { recursive: true, force: false });
-      if (action === 'rename') {
-        const destination = await this.path(lab, target!, true);
-        await mkdir(path.dirname(destination), { recursive: true });
-        if (key(file) === key(target!)) {
-          const intermediate = source + '.rename-' + randomUUID();
-          await rename(source, intermediate);
-          try {
-            await rename(intermediate, destination);
-          } catch (e) {
-            await rename(intermediate, source);
-            throw e;
-          }
-        } else await rename(source, destination);
-      }
-    });
-    return this.list(lab);
-  }
+
   async flush() {
     await this.tail;
   }

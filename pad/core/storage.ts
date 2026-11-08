@@ -1,3 +1,4 @@
+import { remapPath } from '../shared/file-changes';
 import { isSourceFile, sourceLanguage, editorLanguage } from '../shared/file-language';
 import { defaultTypography } from '../shared/typography';
 import { directorySnapshot, managedBuild } from './workspace-files';
@@ -958,13 +959,8 @@ export class Storage {
     });
   }
   private async reconcileWorkspace(lab: string, changes: FileChange[]) {
-    const state = await this.workspace.read(lab),
-      translate = (file: string) => {
-        for (const change of changes)
-          if (change.from && !change.copied && under(file, change.from))
-            return change.to ? change.to + file.slice(change.from.length) : undefined;
-        return file;
-      };
+    const state = await this.workspace.read(lab);
+    const translate = (file: string) => remapPath(file, changes);
     const openFiles = (state.openFiles ?? [])
         .map(translate)
         .filter((v): v is string => v !== undefined),
@@ -983,6 +979,17 @@ export class Storage {
       activeFile,
       expanded,
       ...(starters ? { starters } : {}),
+      ...(state.debugView
+        ? {
+            debugView: {
+              ...state.debugView,
+              breakpoints: state.debugView.breakpoints.flatMap((point) => {
+                const next = translate(point.path);
+                return next ? [{ ...point, path: next, verified: false }] : [];
+              }),
+            },
+          }
+        : {}),
     });
   }
   private async reconcileSources(lab: string, problem: string, changes: FileChange[]) {
@@ -1048,6 +1055,10 @@ export class Storage {
     };
     for (const change of changes) if (change.to) await adopt(change.to);
     meta.problems = { ...meta.problems, [problem]: current };
+    if (meta.view?.expanded)
+      meta.view.expanded = meta.view.expanded
+        .map((file) => remapPath(file, changes))
+        .filter((file): file is string => file !== undefined);
     await this.writeState(lab, anchor, meta);
   }
   async operateFiles(

@@ -44,7 +44,7 @@ const api: Bridge = {
   workspaceSources: (l, s) => invoke('workspace:sources', l, s),
   workspaceFiles: (l) => invoke('workspace:files', l),
   workspaceOpen: (l, f) => invoke('workspace:open', l, f),
-  workspaceFileAction: (l, a, f, t, c) => invoke('workspace:file', l, a, f, t, c),
+
   workspaceView: (l, v) => invoke('workspace:view', l, v),
   projectBuildOptions: (l) => invoke('project:build:get', l),
   saveProjectBuildOptions: (l, v) => invoke('project:build:save', l, v),

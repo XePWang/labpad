@@ -85,3 +85,55 @@ test('explicit target compiles B after activation persistence fails and an auxil
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+test('dirty file rename preserves editor history and reconciles breakpoint paths', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'labpad-review-paths-'));
+  const app = await withFixtures(_electron).launch({
+    executablePath: process.env.LABPAD_TEST_EXECUTABLE,
+    cwd: process.cwd(),
+    args: process.env.LABPAD_TEST_EXECUTABLE ? [] : ['.'],
+    env: { ...process.env, LABPAD_DATA_DIR: path.join(root, 'data'), LABPAD_SKIP_WARMUP: '1' },
+  });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('.toolbar').waitFor();
+    await page.evaluate(async () => {
+      const state = await window.labpad.bootstrap();
+      state.config.formatOnSave = false;
+      await window.labpad.saveConfig(state.config, state.dataRoot);
+      await window.labpad.createLab('PathFixture', 'project');
+      await window.labpad.nativeView('PathFixture', {
+        breakpoints: [{ path: 'main.c', line: 3, enabled: true, condition: 'value==1' }],
+        watches: [],
+      });
+    });
+    await page.reload();
+    await page.locator('.toolbar').waitFor();
+    const editor = page.locator('.cm-content');
+    const original = await editor.innerText();
+    await editor.fill(original + '\n// unsaved edit');
+    await page.evaluate(() =>
+      window.labpad.fileOperation('PathFixture', '', {
+        action: 'rename',
+        paths: ['main.c'],
+        destination: 'renamed.c',
+      }),
+    );
+    await expect(page.locator('.source-tab.active')).toContainText('renamed.c');
+    await expect(editor).toContainText('// unsaved edit');
+    await expect(page.locator('.source-tab.active .tab-dirty')).toHaveCount(1);
+    const state = await page.evaluate(() => window.labpad.nativeView('PathFixture'));
+    expect(state.breakpoints).toEqual([
+      { path: 'renamed.c', line: 3, enabled: true, condition: 'value==1', verified: false },
+    ]);
+    await page.getByRole('tab', { name: '调试', exact: true }).click();
+    await expect(page.locator('.native-debug-panel')).toContainText('renamed.c');
+    await editor.click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(editor).not.toContainText('// unsaved edit');
+  } finally {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
