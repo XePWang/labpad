@@ -71,7 +71,10 @@ export async function managedBuild(dir: string) {
     return false;
   }
 }
-export async function directorySnapshot(root: string): Promise<WorkspaceSnapshot> {
+export async function directorySnapshot(
+  root: string,
+  includeFile: (name: string) => boolean = () => true,
+): Promise<WorkspaceSnapshot> {
   const entries: Record<string, Buffer> = {};
   let bytes = 0;
   async function walk(dir: string, prefix = '') {
@@ -91,6 +94,7 @@ export async function directorySnapshot(root: string): Promise<WorkspaceSnapshot
         if (!(await managedBuild(path.join(dir, e.name))))
           await walk(path.join(dir, e.name), name + '/');
       } else if (e.isFile()) {
+        if (!includeFile(name)) continue;
         if (name !== 'labpad.project.json') workspacePath(name);
         if (Object.keys(entries).length >= 4096) throw Error('项目超过4096项 / 64MB限制');
         const content = await readFileLimited(

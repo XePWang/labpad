@@ -370,8 +370,11 @@ async function savedBuildInput(value: Draft) {
   }
   return { draft: d, saved };
 }
-async function programContext(value: Draft) {
-  const input = await savedBuildInput(value),
+async function programContext(
+  value: Draft,
+  savedInput?: Awaited<ReturnType<typeof savedBuildInput>>,
+) {
+  const input = savedInput ?? (await savedBuildInput(value)),
     options = await draftOptions(input.draft);
   return {
     ...input,
@@ -1260,10 +1263,10 @@ async function initialize() {
       (u) => u.path,
     );
   });
-  handle('workspace:files', async (lab: string,problem=config.currentProblem) =>
+  handle('workspace:files', async (lab: string, problem = config.currentProblem) =>
     (await storage.fileService(lab, problem)).list(),
   );
-  handle('workspace:open', (lab: string, file: string,problem=config.currentProblem) =>
+  handle('workspace:open', (lab: string, file: string, problem = config.currentProblem) =>
     storage.openFile(lab, problem, file, config.language),
   );
   handle('workspace:view', async (lab: string, value: any) => {
@@ -1315,7 +1318,11 @@ async function initialize() {
   });
   handle('completion:files', async (lab: string, problem: string) => {
     const service = await storage.fileService(lab, problem),
-      snapshot = await directorySnapshot(service.root);
+      project = await storage.workspace.isProject(lab),
+      snapshot = await directorySnapshot(
+        service.root,
+        (name) => isHeaderFile(name) || (project && name === 'LPMake.txt'),
+      );
     let includeDirs = ['.'];
     let forcedLanguage: Language | undefined;
     if (snapshot.files['LPMake.txt'])
@@ -2246,8 +2253,9 @@ async function initialize() {
   handle('compile:state', async (value: Draft) => {
     let saved = false;
     try {
-      saved = (await savedBuildInput(value)).saved;
-      const context = await programContext(value);
+      const input = await savedBuildInput(value);
+      saved = input.saved;
+      const context = await programContext(value, input);
       return { saved, ready: saved && compiledProgram.matches(context.key) };
     } catch {
       return { saved, ready: false };

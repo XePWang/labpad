@@ -18,10 +18,15 @@ test('terminal cat enforces the byte cap in the native process and closes file h
       await window.labpad.createLab('CatLimit', 'project');
       return (await window.labpad.bootstrap()).workspace!.scope;
     });
-    await app.evaluate(async (_, directory) => {
+    await app.evaluate(async ({ ipcMain }, directory) => {
       const fs = process.getBuiltinModule('fs/promises') as any;
       const paths = process.getBuiltinModule('path') as any;
       const original = fs.open;
+      const { AsyncLocalStorage } = process.getBuiltinModule('async_hooks')!;
+      const scope = new AsyncLocalStorage<boolean>();
+      const handlers = (ipcMain as any)._invokeHandlers;
+      const command = handlers.get('terminal:command');
+      handlers.set('terminal:command', (...args: any[]) => scope.run(true, () => command(...args)));
       await fs.writeFile(paths.join(directory, 'large.txt'), Buffer.alloc(8 * 1024 ** 2, 'a'));
       const probe = ((globalThis as any).__readProbe = {
         read: 0,
@@ -35,7 +40,7 @@ test('terminal cat enforces the byte cap in the native process and closes file h
       };
       fs.open = async (...args: any[]) => {
         const file = await original(...args);
-        if (paths.basename(String(args[0])) !== 'large.txt') return file;
+        if (!scope.getStore() || paths.basename(String(args[0])) !== 'large.txt') return file;
         const read = file.read.bind(file),
           stat = file.stat.bind(file),
           close = file.close.bind(file);
