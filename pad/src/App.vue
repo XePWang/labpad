@@ -2332,6 +2332,18 @@ onBeforeUnmount(() => {
   disposers.forEach((d) => d());
   window.removeEventListener('keydown', handleShortcut, true);
 });
+async function foldSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  await nextTick();
+  document.querySelector<HTMLButtonElement>('.source-sidebar-toggle')?.focus();
+}
+async function foldRight(collapsed: boolean) {
+  rightCollapsed.value = collapsed;
+  await nextTick();
+  document
+    .querySelector<HTMLButtonElement>(collapsed ? '.right-rail button' : '.right-collapse')
+    ?.focus();
+}
 </script>
 <template>
   <div class="app-shell" :data-theme="config?.theme || 'dark'">
@@ -2492,46 +2504,52 @@ onBeforeUnmount(() => {
           ><div class="workspace-row">
             <Splitpanes
               class="workspace"
+              :class="{ 'right-folded': rightCollapsed }"
               :maximize-panes="false"
               @resized="resized('editorPercent', $event)"
             >
               <Pane
                 class="editor-pane"
                 :size="rightCollapsed ? 100 : config.layout.editorPercent"
-                :min-size="20"
+                :min-size="rightCollapsed ? 100 : 20"
                 :max-size="rightCollapsed ? 100 : 80"
               >
                 <div class="editor-workspace">
-                  <FileTree
-                    ref="fileTree"
-                    :commit="commitTreeEdit"
-                    v-show="!sidebarCollapsed"
-                    :style="{ width: sidebarWidth + 'px' }"
-                    :lab-id="draft.problem.labId"
-                    :project="workspaceMode"
-                    :cut-paths="
-                      clipboardFiles?.cut && clipboardFiles.lab === draft.problem.labId
-                        ? clipboardFiles.paths
-                        : []
-                    "
-                    :can-paste="!!clipboardFiles"
-                    :files="fileEntries"
-                    :expanded="expanded"
-                    :active="draft.file || ''"
-                    :disabled="fileBusy || !!busy"
-                    :theme="config.theme"
-                    @open="(files) => action(() => openFiles(files))"
-                    @request="(request) => action(() => requestFiles(request))"
-                    @expand="expanded = $event"
-                    @resize="sidebarWidth = $event"
-                    @action="(value, file) => action(() => treeAction(value, file))"
-                  />
+                  <Transition name="sidebar-fold">
+                    <FileTree
+                      :key="fileScope"
+                      ref="fileTree"
+                      :inert="sidebarCollapsed"
+                      :aria-hidden="sidebarCollapsed"
+                      :commit="commitTreeEdit"
+                      v-show="!sidebarCollapsed"
+                      :style="{ width: sidebarWidth + 'px' }"
+                      :lab-id="draft.problem.labId"
+                      :project="workspaceMode"
+                      :cut-paths="
+                        clipboardFiles?.cut && clipboardFiles.lab === draft.problem.labId
+                          ? clipboardFiles.paths
+                          : []
+                      "
+                      :can-paste="!!clipboardFiles"
+                      :files="fileEntries"
+                      :expanded="expanded"
+                      :active="draft.file || ''"
+                      :disabled="fileBusy || !!busy"
+                      :theme="config.theme"
+                      @open="(files) => action(() => openFiles(files))"
+                      @request="(request) => action(() => requestFiles(request))"
+                      @expand="expanded = $event"
+                      @resize="sidebarWidth = $event"
+                      @action="(value, file) => action(() => treeAction(value, file))"
+                    />
+                  </Transition>
                   <div class="editor-content">
                     <SourceTabs
                       files-enabled
                       :workspace="workspaceMode"
                       :sidebar-collapsed="sidebarCollapsed"
-                      @sidebar="sidebarCollapsed = !sidebarCollapsed"
+                      @sidebar="foldSidebar"
                       :can-format="tabs.length > 0 && canFormat"
                       :formatting="formatting"
                       @format="action(formatCode)"
@@ -2564,8 +2582,8 @@ onBeforeUnmount(() => {
                       :execution-line="executionLine"
                       @breakpoint="breakpoint"
                       @breakpoints="changeBreakpoints"
-                      :document-id="documentEpoch"
-                      :open-ids="tabs.map((t) => t.id)"
+                      :document-id="fileScope + '\0' + documentEpoch"
+                      :open-ids="tabs.map((t) => fileScope + '\0' + t.id)"
                       :indent-size="config.indentSize"
                       :theme="config.theme"
                       :disabled="fileBusy || !!exportKind"
@@ -2616,17 +2634,19 @@ onBeforeUnmount(() => {
                 </div></Pane
               >
               <Pane
-                v-if="!rightCollapsed"
                 class="cases-pane"
-                :size="100 - config.layout.editorPercent"
-                :min-size="20"
-                :max-size="80"
+                :class="{ 'is-folded': rightCollapsed }"
+                :inert="rightCollapsed"
+                :aria-hidden="rightCollapsed"
+                :size="rightCollapsed ? 0 : 100 - config.layout.editorPercent"
+                :min-size="rightCollapsed ? 0 : 20"
+                :max-size="rightCollapsed ? 0 : 80"
                 ><div class="pane-heading cases-heading">
                   <button
                     class="icon-action right-collapse"
                     title="收起右区"
                     aria-label="收起右区"
-                    @click="rightCollapsed = true"
+                    @click="foldRight(true)"
                   >
                     <ActionIcon name="chevronRight" />
                   </button>
@@ -2678,7 +2698,7 @@ onBeforeUnmount(() => {
                       ></span
                       >{{ testSummary }}</button
                     ><button
-                      class="run-test-icon icon-action"
+                      class="run-test-icon primary icon-action"
                       :disabled="blocked || !compiledReady || !selectedCases.length"
                       :title="compiledReady ? runHint : '请先保存并编译'"
                       :aria-label="runHint"
@@ -2723,7 +2743,7 @@ onBeforeUnmount(() => {
                   ><template v-else
                     ><div class="debug-header-actions">
                       <button
-                        class="run-test-icon icon-action"
+                        class="run-test-icon primary icon-action"
                         aria-label="开始调试"
                         :title="'开始调试（' + shortcutLabel('debugStart') + '）'"
                         :disabled="blocked || nativeActive"
@@ -2740,6 +2760,7 @@ onBeforeUnmount(() => {
                   >
                 </div>
                 <NativeDebugPanel
+                  :key="fileScope"
                   v-if="workspaceMode"
                   v-show="rightTab === 'debug'"
                   :state="nativeState"
@@ -2866,22 +2887,22 @@ onBeforeUnmount(() => {
                 class="icon-action"
                 aria-label="展开右区"
                 title="展开右区"
-                @click="rightCollapsed = false"
+                @click="foldRight(false)"
               >
                 <ActionIcon name="chevronLeft" /></button
               ><template v-if="rightTab === 'tests'"
                 ><button
-                  class="run-test-icon icon-action"
+                  class="run-test-icon primary icon-action"
                   :title="compiledReady ? runHint : '请先保存并编译'"
                   :aria-label="runHint"
                   :disabled="blocked || !compiledReady || !selectedCases.length"
                   @click="action(() => run())"
                 >
                   <ActionIcon name="play" /></button
-                ><button class="rail-label" :title="testSummary" @click="rightCollapsed = false">
+                ><button class="rail-label" :title="testSummary" @click="foldRight(false)">
                   {{ testSummary }}
                 </button></template
-              ><button v-else class="rail-label" @click="rightCollapsed = false">
+              ><button v-else class="rail-label" @click="foldRight(false)">
                 <i v-if="nativeActive" class="live-dot"></i
                 >{{
                   nativeState.status === 'paused'
@@ -3365,8 +3386,13 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   flex-shrink: 0;
 }
-.icon-action:hover:not(:disabled),
-.icon-action:focus-visible {
+.app-shell[data-theme] .icon-action:not(.primary) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+.app-shell[data-theme] .icon-action:not(.primary):hover:not(:disabled),
+.app-shell[data-theme] .icon-action:not(.primary):focus-visible {
   background: var(--input);
   border-color: var(--border);
 }
@@ -3375,22 +3401,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
 }
-.icon-action.primary {
-  background: var(--accent);
-  color: white;
-}
-.run-test-icon {
-  color: var(--accent);
-}
 .icon-action:disabled {
   color: var(--muted);
   opacity: 0.45;
-}
-.debug-stop {
-  color: var(--error);
-}
-.cases-pane {
-  container-type: inline-size;
 }
 .cases-heading {
   gap: 4px;
@@ -3404,7 +3417,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
 }
-.right-tabs button {
+.app-shell .cases-heading .right-tabs button {
   border: 0;
   background: transparent;
   padding: 5px 7px;
@@ -3413,16 +3426,17 @@ onBeforeUnmount(() => {
   border-bottom: 2px solid transparent;
   border-radius: 0;
 }
-.right-tabs button.active {
+.app-shell .cases-heading .right-tabs button.active {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
-.test-summary {
+.app-shell .cases-heading .test-summary {
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
+  box-shadow: none;
   color: var(--muted);
   font-size: 11px;
   padding: 4px;
@@ -3502,8 +3516,10 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .cases-pane {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 @container (max-width:650px) {
   .case-extra-actions {
@@ -3529,28 +3545,8 @@ onBeforeUnmount(() => {
     padding: 5px 3px;
   }
 }
-</style>
-
-<style>
 .app-shell .pane-heading.cases-heading {
   justify-content: flex-start;
-}
-.app-shell .cases-heading .icon-action {
-  border-color: transparent;
-  background: transparent;
-}
-.app-shell .cases-heading .icon-action:hover:not(:disabled) {
-  border-color: var(--border);
-  background: var(--input);
-}
-.app-shell .cases-heading .right-tabs button {
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-}
-.app-shell .cases-heading .right-tabs button.active {
-  border-bottom-color: var(--accent);
 }
 .debug-source-changed {
   border-color: var(--diagnostic-warning);
@@ -3559,35 +3555,10 @@ onBeforeUnmount(() => {
 .debug-stop {
   color: var(--diagnostic-error);
 }
-</style>
-
-<style>
-.app-shell .cases-heading .test-summary {
-  background: transparent;
-  border: 1px solid transparent;
-  box-shadow: none;
-  color: var(--muted);
-}
 .app-shell .cases-heading .test-summary.all-passed {
   background: var(--success-bg);
   border-color: var(--success);
   color: var(--success);
-}
-.app-shell .cases-heading .run-test-icon,
-.app-shell .right-rail .run-test-icon {
-  background: var(--accent);
-  color: #fff;
-  border-color: transparent;
-}
-.app-shell .cases-heading .run-test-icon:hover:not(:disabled),
-.app-shell .right-rail .run-test-icon:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 90%, var(--text));
-  color: #fff;
-}
-.app-shell .run-test-icon:disabled {
-  background: var(--input);
-  color: var(--muted);
-  opacity: 0.55;
 }
 .debug-header-actions {
   display: flex;

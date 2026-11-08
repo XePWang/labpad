@@ -89,10 +89,14 @@
   background: var(--input);
   border-color: var(--accent);
 }
-.app-shell[data-theme] button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+.app-shell[data-theme] button.primary:not(:disabled) {
+  background: var(--action-bg);
+  border-color: var(--action-bg);
   color: white;
+}
+.app-shell[data-theme] button.primary:hover:not(:disabled) {
+  background: var(--action-hover);
+  border-color: var(--action-hover);
 }
 .app-shell[data-theme]
   :is(
@@ -584,4 +588,44 @@ body {
   font-size: 12px;
   line-height: 1.55;
   text-align: left;
+}
+
+/* Both sidebars retain their state and use the same motion preference. */
+.app-shell {
+  --sidebar-duration: 160ms;
+  --sidebar-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+.sidebar-fold-enter-active,
+.sidebar-fold-leave-active {
+  min-width: 0;
+  transition:
+    width var(--sidebar-duration) var(--sidebar-easing),
+    opacity var(--sidebar-duration) var(--sidebar-easing);
+}
+.sidebar-fold-enter-from,
+.sidebar-fold-leave-to {
+  width: 0 !important;
+  opacity: 0;
+}
+.workspace.splitpanes--ready > .splitpanes__pane {
+  transition:
+    width var(--sidebar-duration) var(--sidebar-easing),
+    opacity var(--sidebar-duration) var(--sidebar-easing);
+}
+.workspace.splitpanes--dragging > .splitpanes__pane {
+  transition: none;
+}
+.workspace.right-folded > .splitpanes__splitter {
+  width: 0;
+  min-width: 0;
+  pointer-events: none;
+}
+.cases-pane.is-folded {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell {
+    --sidebar-duration: 0ms;
+  }
 }

@@ -917,15 +917,6 @@ footer {
   --action-bg: #0067c0;
   --action-hover: #005fb8;
 }
-.app-shell[data-theme] button.primary:not(:disabled) {
-  background: var(--action-bg);
-  border-color: var(--action-bg);
-  color: #fff;
-}
-.app-shell[data-theme] button.primary:not(:disabled):hover {
-  background: var(--action-hover);
-  border-color: var(--action-hover);
-}
 .case-selection {
   display: flex;
 }

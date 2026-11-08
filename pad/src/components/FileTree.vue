@@ -62,6 +62,10 @@ const parentOf = (file: string) => (file.includes('/') ? file.slice(0, file.last
 onMounted(() => {
   observer = new ResizeObserver((entries) => {
     const width = Math.round(entries[0].borderBoxSize[0].inlineSize);
+    const requested = Number.parseFloat(host.value?.style.width ?? '');
+    // CSS resize updates inline width; fold transitions only change the rendered width.
+    // Do not persist an intermediate animation frame as the user's sidebar width.
+    if (Number.isFinite(requested) && Math.abs(width - requested) > 1) return;
     if (width >= 120 && width <= 420) emit('resize', width);
   });
   if (host.value) observer.observe(host.value);
