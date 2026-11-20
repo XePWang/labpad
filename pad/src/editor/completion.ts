@@ -10,6 +10,8 @@ import {
   selectedCompletionIndex,
   setSelectedCompletion,
   acceptCompletion,
+  insertCompletionText,
+  pickedCompletion,
   closeCompletion,
   moveCompletionSelection,
   startCompletion,
@@ -19,7 +21,7 @@ import {
   type Completion,
   type CompletionContext,
 } from '@codemirror/autocomplete';
-import { keymap, ViewPlugin } from '@codemirror/view';
+import { keymap, ViewPlugin, type EditorView } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { indentMore, indentLess } from '@codemirror/commands';
 import type { CompletionFiles } from '../../shared/types';
@@ -215,14 +217,61 @@ export function includedOptions(
   return options;
 }
 
+const templateType = 'keyword snippet';
+const statementBodies = new Set([
+  'IfStatement',
+  'ForStatement',
+  'WhileStatement',
+  'DoStatement',
+  'LabeledStatement',
+  'CaseStatement',
+]);
+
+function atStatementStart(tree: Tree, from: number) {
+  for (
+    let node = tree.resolveInner(from, 1);
+    node.from === from && node.parent;
+    node = node.parent
+  ) {
+    const parent = node.parent;
+    if (node.type.isError) return false;
+    if (
+      node.name.endsWith('Statement') &&
+      (parent.name === 'CompoundStatement' || statementBodies.has(parent.name))
+    )
+      return true;
+    // A lone partial word in an otherwise empty function can parse as a list initializer.
+    if (
+      node.name === 'Identifier' &&
+      parent.name === 'InitializerList' &&
+      parent.parent?.name === 'InitDeclarator' &&
+      parent.prevSibling?.name === 'FunctionDeclarator'
+    )
+      return true;
+  }
+  return false;
+}
+
+function applyWord(view: EditorView, completion: Completion, from: number, to: number) {
+  const suffix = view.state.sliceDoc(to, view.state.doc.lineAt(to).to).match(/^\w+/)?.[0] ?? '';
+  const end = to + suffix.length;
+  const transaction =
+    view.state.selection.ranges.length === 1 && view.state.sliceDoc(from, end) === completion.label
+      ? { selection: { anchor: end }, scrollIntoView: true }
+      : insertCompletionText(view.state, completion.label, from, end);
+  view.dispatch({ ...transaction, annotations: pickedCompletion.of(completion) });
+}
+
 export function sourceCompletions(
   context: CompletionContext,
   file: string,
   files: CompletionFiles,
   language: 'c' | 'cpp',
 ) {
-  const tree = ensureSyntaxTree(context.state, context.pos, 8) ?? syntaxTree(context.state);
-  let node = tree.resolveInner(context.pos, -1);
+  const line = context.state.doc.lineAt(context.pos);
+  const parsed = ensureSyntaxTree(context.state, line.to, 8);
+  const tree = parsed ?? syntaxTree(context.state);
+  const node = tree.resolveInner(context.pos, -1);
   for (let current: typeof node | null = node; current; current = current.parent)
     if (/Comment|String|CharLiteral/.test(current.name)) return null;
   const word = context.matchBefore(/[A-Za-z_]\w*/);
@@ -243,101 +292,104 @@ export function sourceCompletions(
           boost: -5,
         }))),
   ];
-  const indent = '\t',
-    snippets = [
-      snippetCompletion('if (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
-        label: 'if',
-        detail: t('if (condition) { … }'),
-        type: 'keyword',
-      }),
-      snippetCompletion(
-        'for (' +
-          '\u0024{int i = 0}' +
-          '; ' +
-          '\u0024{i < count}' +
-          '; ' +
-          '\u0024{++i}' +
-          ') {\n' +
-          indent +
-          '\u0024{}' +
-          '\n}',
-        { label: 'for', detail: t('for (init; condition; update) { … }'), type: 'keyword' },
-      ),
-      snippetCompletion('while (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
-        label: 'while',
-        detail: t('while (condition) { … }'),
-        type: 'keyword',
-      }),
-      snippetCompletion(
-        'switch (' +
-          '\u0024{value}' +
-          ') {\n' +
-          indent +
-          'case ' +
-          '\u0024{value}' +
-          ':\n' +
-          indent +
-          indent +
-          '\u0024{}' +
-          '\n' +
-          indent +
-          indent +
-          'break;\n}',
-        { label: 'switch', detail: t('switch (value) { case … }'), type: 'keyword' },
-      ),
-    ];
-  snippets.push(
-    snippetCompletion('if (\u0024{condition}) {\n\t\u0024{}\n} else {\n\t\u0024{}\n}', {
-      label: 'ifelse',
-      detail: 'if … else …',
-      type: 'keyword',
-    }),
-    snippetCompletion('do {\n\t\u0024{}\n} while (\u0024{condition});', {
-      label: 'do',
-      detail: t('do … while (condition);'),
-      type: 'keyword',
-    }),
-    snippetCompletion('return \u0024{value};', {
-      label: 'return',
-      detail: t('return value;'),
-      type: 'keyword',
-    }),
-  );
+  const prefix = word?.text ?? '';
+  const allowTemplates =
+    parsed &&
+    !qualifier &&
+    prefix &&
+    !context.state.sliceDoc(context.pos, line.to).trim() &&
+    atStatementStart(parsed, start);
+  const snippets = allowTemplates ? statementTemplates(prefix) : [];
   const unique = new Map<string, Candidate>();
-  const candidates = qualifier
+  const words = qualifier
     ? options
         .filter((option) => (option.qualified ?? option.label).startsWith(qualifier))
         .map((option) => ({
           ...option,
           label: (option.qualified ?? option.label).slice(qualifier.length),
         }))
-    : [...options, ...snippets.map((option) => ({ ...option, boost: -5 }))];
-  for (const option of candidates) {
+    : options;
+  for (const option of words) {
     const previous = unique.get(option.label);
-    if (
-      !previous ||
-      (option.boost ?? 0) > (previous.boost ?? 0) ||
-      (option.apply && !previous.apply && (option.boost ?? 0) === (previous.boost ?? 0))
-    )
-      unique.set(option.label, option);
+    if (!previous || (option.boost ?? 0) > (previous.boost ?? 0)) unique.set(option.label, option);
   }
-  const prefix = word?.text ?? '';
   return {
     from: start,
-    options: [...unique.values()].map((option) => ({
-      ...option,
-      boost: Math.min(99, (option.boost ?? 0) + (prefix && option.label === prefix ? 80 : 0)),
-    })),
-    validFor: /^\w*$/,
+    options: [
+      ...[...unique.values()].map((option) => ({
+        ...option,
+        apply: applyWord,
+        boost: Math.min(99, (option.boost ?? 0) + (prefix && option.label === prefix ? 80 : 0)),
+      })),
+      ...snippets,
+    ],
   };
+}
+
+function statementTemplates(prefix: string) {
+  const indent = '\t';
+  return [
+    snippetCompletion('if (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
+      label: 'if',
+      detail: t('if (condition) { … }'),
+      type: templateType,
+    }),
+    snippetCompletion(
+      'for (' +
+        '\u0024{int i = 0}' +
+        '; ' +
+        '\u0024{i < count}' +
+        '; ' +
+        '\u0024{++i}' +
+        ') {\n' +
+        indent +
+        '\u0024{}' +
+        '\n}',
+      { label: 'for', detail: t('for (init; condition; update) { … }'), type: templateType },
+    ),
+    snippetCompletion('while (' + '\u0024{condition}' + ') {\n' + indent + '\u0024{}' + '\n}', {
+      label: 'while',
+      detail: t('while (condition) { … }'),
+      type: templateType,
+    }),
+    snippetCompletion(
+      'switch (' +
+        '\u0024{value}' +
+        ') {\n' +
+        indent +
+        'case ' +
+        '\u0024{value}' +
+        ':\n' +
+        indent +
+        indent +
+        '\u0024{}' +
+        '\n' +
+        indent +
+        indent +
+        'break;\n}',
+      { label: 'switch', detail: t('switch (value) { case … }'), type: templateType },
+    ),
+    snippetCompletion('if (\u0024{condition}) {\n\t\u0024{}\n} else {\n\t\u0024{}\n}', {
+      label: 'if',
+      detail: 'if … else …',
+      type: templateType,
+    }),
+    snippetCompletion('do {\n\t\u0024{}\n} while (\u0024{condition});', {
+      label: 'do',
+      detail: t('do … while (condition);'),
+      type: templateType,
+    }),
+  ]
+    .filter((option) => option.label.startsWith(prefix))
+    .map((option) => ({ ...option, boost: -10 }));
 }
 
 export function completionExtension(
   source: (context: CompletionContext) => ReturnType<typeof sourceCompletions>,
 ) {
   let arrowSelected = false;
-  const move = (forward: boolean) => (view: any) => {
-    if (!completionStatus(view.state)) return false;
+  const move = (forward: boolean) => (view: EditorView) => {
+    if (view.compositionStarted || !completionStatus(view.state)) return false;
     const done = moveCompletionSelection(forward)(view);
     if (done) arrowSelected = true;
     return done;
@@ -362,18 +414,27 @@ export function completionExtension(
         {
           key: 'Tab',
           run: (view) => {
-            if (currentCompletions(view.state).length) {
-              if (selectedCompletionIndex(view.state) === null)
+            if (view.compositionStarted) return false;
+            if (nextSnippetField(view)) return true;
+            const hasSelection = view.state.selection.ranges.some((range) => !range.empty);
+            if (!hasSelection) {
+              if (arrowSelected && selectedCompletionIndex(view.state) !== null)
+                return acceptCompletion(view);
+              const first = currentCompletions(view.state)[0];
+              if (first && first.type !== templateType) {
                 view.dispatch({ effects: setSelectedCompletion(0) });
-              return acceptCompletion(view);
+                return acceptCompletion(view);
+              }
             }
-            return nextSnippetField(view) || indentMore(view);
+            closeCompletion(view);
+            return indentMore(view);
           },
         },
         { key: 'Shift-Tab', run: (view) => prevSnippetField(view) || indentLess(view) },
         {
           key: 'Enter',
           run: (view) => {
+            if (view.compositionStarted) return false;
             if (arrowSelected && selectedCompletionIndex(view.state) !== null)
               return acceptCompletion(view);
             closeCompletion(view);

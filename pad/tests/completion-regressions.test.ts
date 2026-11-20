@@ -93,6 +93,36 @@ test('local declarations beat keyword candidates while exact keywords retain pri
       exact.options.find((option) => option.label === 'constant')!.boost!,
   );
 });
+
+test('statement templates follow their keywords and respect the syntax and right-hand text', () => {
+  for (const [word, keyword] of [
+    ['i', 'if'],
+    ['fo', 'for'],
+    ['wh', 'while'],
+  ]) {
+    const options = complete('void f(){\n  ' + word + '|  \n}')!.options;
+    const ordinary = options.find(
+      (option) => option.label === keyword && option.type === 'keyword',
+    )!;
+    const template = options.find(
+      (option) => option.label === keyword && option.type === 'keyword snippet',
+    )!;
+    assert.ok(template, keyword);
+    assert.ok(ordinary.boost! > template.boost!, keyword);
+  }
+  for (const input of [
+    'void f(){\n  fo|r\n}',
+    'void f(){\n  fo| (int i = 0; i < 2; ++i) {}\n}',
+    'void f(){\n  fo| /* comment */\n}',
+    'void f(){\n  call(\n    fo|\n  );\n}',
+    'void f(){\n  int a =\n    fo|\n  ;\n}',
+    'void f(){\n  a +\n    fo|\n}',
+    'void f(){\n  fo|',
+    'struct S {\n  fo|\n};',
+    'void f(){\n  ret|\n}',
+  ])
+    assert.ok(!complete(input)!.options.some((option) => option.type === 'keyword snippet'), input);
+});
 test('include discovery uses syntax nodes, preserving quoted-header shadowing and ignoring commented directives', () => {
   const result = includedOptions('/*\n#include <math.h>\n*/\n#include "stdio.h"', 'main.c', {
     files: { 'stdio.h': 'int course_print(void);' },
