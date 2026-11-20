@@ -75,6 +75,9 @@ import {
   exportProjectTests,
 } from '../shared/test-import';
 import { readProjectArchive } from '../core/project-archive';
+import { problemSetCompiler } from '../core/build/profile';
+import type { BuildProfile } from '../shared/types';
+import type { DebugPreferences } from '../shared/debug';
 import {
   prepareWorkspaceProject,
   prepareSource,
@@ -313,14 +316,24 @@ async function requirePath(value: string, kind: PathKind) {
 async function inputIdentity(d: Draft, options: CompilerConfig) {
   return compiler.identityFor(d, options);
 }
-async function draftOptions(d: Draft) {
+function sourceProfile(draft: Draft, requested?: BuildProfile) {
+  if (draft.workspace || !draft.problem.labId || !draft.problem.problemId) return undefined;
+  if (requested !== undefined && requested !== 'debug' && requested !== 'release')
+    throw new UIError('Invalid build profile.');
+  return requested;
+}
+async function draftOptions(d: Draft, requested?: BuildProfile, debugging = false) {
   const base = d.workspace
     ? structuredClone(config.compiler)
     : effectiveCompiler(
         config.compiler,
         d.problem.labId ? await storage.buildOptions(d.problem.labId) : undefined,
       );
-  return compiler.forDraft(d, base);
+  const profile = sourceProfile(d, requested);
+  return compiler.forDraft(
+    d,
+    profile ? problemSetCompiler(base, d.language, profile, debugging) : base,
+  );
 }
 async function targetInput(value: Draft) {
   return storage.buildTarget(value, openBuffers);
@@ -397,12 +410,15 @@ async function savedBuildInput(value: Draft) {
 async function programContext(
   value: Draft,
   savedInput?: Awaited<ReturnType<typeof savedBuildInput>>,
+  requested: BuildProfile = 'debug',
 ) {
   const input = savedInput ?? (await savedBuildInput(value)),
-    options = await draftOptions(input.draft);
+    profile = sourceProfile(input.draft, requested),
+    options = await draftOptions(input.draft, profile);
   return {
     ...input,
     options,
+    profile,
     key: compilationFingerprint(input.draft, options, await inputIdentity(input.draft, options)),
   };
 }
@@ -668,13 +684,19 @@ async function bootstrap() {
     },
   };
 }
-function submissionServices() {
+function submissionServices(requested: BuildProfile = 'debug') {
   const options = structuredClone(config.compiler);
   return {
     resolve: async (value: Draft) => {
       const draft = await buildDocumentInput(value),
-        effective = await draftOptions(draft);
-      return { draft, compiler: effective, identity: await inputIdentity(draft, effective) };
+        profile = sourceProfile(draft, requested),
+        effective = await draftOptions(draft, profile);
+      return {
+        draft,
+        compiler: effective,
+        identity: await inputIdentity(draft, effective),
+        profile,
+      };
     },
     identity: (language: Language) => compiler.identity(options, language),
     format: (source: string, language: Language) => formatter.format(source, language, 4),
@@ -706,10 +728,10 @@ async function confirmUnsaved() {
   });
   return (['save', 'discard', 'cancel'] as const)[result.response];
 }
-async function startDebug(value: Draft, abort: AbortController) {
-  const context = await programContext(value);
+async function startDebug(value: Draft, abort: AbortController, profile?: BuildProfile) {
+  const context = await programContext(value, undefined, profile);
   if (!context.saved) throw new UIError('Save the files included in the build before compiling.');
-  const program = compiledProgram.require(context.key),
+  const program = compiledProgram.require(context.key, context.profile),
     settings = structuredClone(config);
   const task = (async () => {
     let directory: string | undefined, io: Awaited<ReturnType<typeof terminalProcess>> | undefined;
@@ -897,15 +919,27 @@ async function terminalProcess(
   return { pid: child.pid, finished, stop: processSession.stop };
 }
 
-async function beginNative(value: Draft, breakpoints: SourceBreakpoint[], abort: AbortController) {
+async function beginNative(
+  value: Draft,
+  breakpoints: SourceBreakpoint[],
+  abort: AbortController,
+  requested?: BuildProfile,
+) {
   await stopWarmup();
-  const context = await programContext(value);
-  if (!context.draft.workspace)
-    throw new UIError('Breakpoint debugging is available for projects only.');
-  if (!context.saved) throw new UIError('Save the source files and build configuration first.');
-  const plan = draftPlan(context.draft, context.options),
-    optimized = plan.units.some((u) => u.args.some((a) => /^-(O[123s]|Ofast|g0)$/.test(a)));
-  if (optimized || plan.units.some((u) => !u.args.some((a) => /^(-g|-[g]gdb\d*)$/.test(a)))) {
+  const { draft, saved } = await savedBuildInput(value);
+  const profile = sourceProfile(draft, requested ?? 'debug');
+  if (!draft.workspace && !profile)
+    throw new UIError('Select an experiment source file to start debugging.');
+  if (!saved) throw new UIError('Save the source files and build configuration first.');
+  const options = await draftOptions(draft, profile, true);
+  const units = draft.workspace ? draftPlan(draft, options).units : [];
+  if (
+    units.some(
+      ({ args }) =>
+        args.some((arg) => /^-(O[123s]|Ofast|g0)$/.test(arg)) ||
+        !args.some((arg) => /^(-g|-ggdb\d*)$/.test(arg)),
+    )
+  ) {
     const answer = await messageBox({
       type: 'warning',
       title: localize('Check Debug Configuration'),
@@ -928,14 +962,16 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[], abort:
       io: Awaited<ReturnType<typeof terminalProcess>> | undefined;
     let handedOff = false;
     try {
-      prepared = await compileDraft(compiler, context.draft, context.options, abort.signal);
+      prepared = await compileDraft(compiler, draft, options, abort.signal);
       judgeEvent({ type: 'compilation', compilation: prepared.compilation });
       if (prepared.compilation.status !== 'success' || abort.signal.aborted)
         return { started: false, compilation: prepared.compilation };
       nativePrepared = prepared;
-      nativeLab = context.draft.problem.labId;
-      nativeScope = storage.workspace.root(nativeLab);
-      nativeSnapshot = { ...context.draft.workspace!.files };
+      nativeLab = draft.problem.labId;
+      nativeScope = draft.workspace
+        ? storage.workspace.root(nativeLab)
+        : storage.paths(nativeLab, draft.problem.problemId, draft.language).dir;
+      nativeSnapshot = { ...(draft.workspace ?? draft.sourceFiles)?.files };
       const runDirectory = await mkdtemp(path.join(prepared.directory, 'native-'));
       await copyResources(prepared.resources, runDirectory, prepared.binaryResources);
       session = nativeSession = new NativeDebugger();
@@ -944,8 +980,8 @@ async function beginNative(value: Draft, breakpoints: SourceBreakpoint[], abort:
       });
       session.on('output', (data) => send('debug:data', { session: debugSession, data }));
       session.on('diagnostic', (data) => send('native:diagnostic', data));
-      const root = storage.workspace.root(nativeLab),
-        env = await compiler.environment(context.options);
+      const root = nativeScope,
+        env = await compiler.environment(options);
       abort.signal.throwIfAborted();
       const stopSession = () => {
         void session!.stop().catch((error) => send('native:diagnostic', String(error) + '\n'));
@@ -1533,118 +1569,135 @@ async function initialize() {
     }
     return storage.recentDocument(lab, problem, closed);
   });
-  handle('check:state', async (value: Draft) => {
+  handle('check:state', async (value: Draft, requested: BuildProfile = 'debug') => {
     const d = await buildInput(value),
-      options = await draftOptions(d);
-    return coverage(storage, d, { ...config, compiler: options }, await inputIdentity(d, options));
+      profile = sourceProfile(d, requested),
+      options = await draftOptions(d, profile);
+    return coverage(
+      storage,
+      d,
+      { ...config, compiler: options },
+      await inputIdentity(d, options),
+      profile,
+    );
   });
-  handle('check:problems', async (value: Draft, buffers: Draft[]) => {
-    const current = validateDraft(value);
-    if (await storage.workspace.isProject(current.problem.labId)) return {};
-    const project = (await storage.projects()).find((p) => p.labId === current.problem.labId),
-      states: Record<string, string> = {};
-    const identities = new Map<Language, string>();
-    for (const id of project?.problems ?? []) {
-      const value =
-          id === current.problem.problemId
-            ? current
-            : (buffers.find(
-                (b) => b.problem.problemId === id && b.problem.labId === current.problem.labId,
-              ) ?? (await storage.load(current.problem.labId, id, 'c', true))),
-        d = await buildInput(value);
-      const options = await draftOptions(d);
-      if (!identities.has(d.language))
-        identities.set(d.language, await compiler.identity(options, d.language));
-      states[id] = (
-        await coverage(
-          storage,
-          d,
-          { ...config, compiler: options },
-          await inputIdentity(d, options),
-        )
-      ).state;
-    }
-    return states;
-  });
+  handle(
+    'check:problems',
+    async (value: Draft, buffers: Draft[], requested: BuildProfile = 'debug') => {
+      const current = validateDraft(value);
+      if (await storage.workspace.isProject(current.problem.labId)) return {};
+      const project = (await storage.projects()).find((p) => p.labId === current.problem.labId),
+        states: Record<string, string> = {};
+      const identities = new Map<Language, string>();
+      for (const id of project?.problems ?? []) {
+        const value =
+            id === current.problem.problemId
+              ? current
+              : (buffers.find(
+                  (b) => b.problem.problemId === id && b.problem.labId === current.problem.labId,
+                ) ?? (await storage.load(current.problem.labId, id, 'c', true))),
+          d = await buildInput(value);
+        const profile = sourceProfile(d, requested);
+        const options = await draftOptions(d, profile);
+        if (!identities.has(d.language))
+          identities.set(d.language, await compiler.identity(options, d.language));
+        states[id] = (
+          await coverage(
+            storage,
+            d,
+            { ...config, compiler: options },
+            await inputIdentity(d, options),
+            profile,
+          )
+        ).state;
+      }
+      return states;
+    },
+  );
   handle('export:choices', async (buffers: Draft[]) => {
     requireIdle();
     await saves;
     if (!currentDocument) throw new UIError('Select an experiment first');
     return exportChoices(storage, currentDocument, buffers.map(validateDraft));
   });
-  handle('export:preview', async (kind: string, values: Draft[], includeConfig = false) => {
-    requireIdle();
-    await saves;
-    if (!values.length) throw new UIError('Select at least one source file');
-    const drafts = values.map(validateDraft);
-    if (await storage.workspace.isProject(drafts[0].problem.labId)) {
-      if (kind === 'project') {
-        const d = await buildInput(drafts[0]),
-          options = await draftOptions(d),
+  handle(
+    'export:preview',
+    async (kind: string, values: Draft[], includeConfig = false, profile?: BuildProfile) => {
+      requireIdle();
+      await saves;
+      if (!values.length) throw new UIError('Select at least one source file');
+      const drafts = values.map(validateDraft);
+      if (await storage.workspace.isProject(drafts[0].problem.labId)) {
+        if (kind === 'project') {
+          const d = await buildInput(drafts[0]),
+            options = await draftOptions(d),
+            preview = await prepareWorkspaceProject(
+              storage,
+              d,
+              { ...structuredClone(config), compiler: options },
+              [...openBuffers, ...drafts],
+              includeConfig,
+              submissionServices(),
+            ),
+            record = (await storage.workspace.read(d.problem.labId)).check;
+          if (
+            d.problem.testCases.length &&
+            (!record ||
+              record.fingerprint !== fingerprint(d, options, await inputIdentity(d, options)) ||
+              record.total !== d.problem.testCases.length) &&
+            !preview.warnings.some((w) => w.startsWith(localize('Not All Tests Passed')))
+          )
+            preview.warnings.unshift(
+              localize('Not all tests passed: the source or rules changed. Run the tests again.'),
+            );
+          return preview;
+        }
+        const d = await buildInput(drafts[0]);
+        if (!d.file) throw new UIError('Select a file first');
+        const name = path.basename(d.file),
           preview = await prepareWorkspaceProject(
             storage,
             d,
-            { ...structuredClone(config), compiler: options },
+            structuredClone(config),
             [...openBuffers, ...drafts],
-            includeConfig,
-            submissionServices(),
+            false,
+            submissionServices(profile),
           ),
           record = (await storage.workspace.read(d.problem.labId)).check;
         if (
-          d.problem.testCases.length &&
-          (!record ||
-            record.fingerprint !== fingerprint(d, options, await inputIdentity(d, options)) ||
-            record.total !== d.problem.testCases.length) &&
+          record?.fingerprint !==
+            fingerprint(d, await draftOptions(d), await inputIdentity(d, await draftOptions(d))) &&
           !preview.warnings.some((w) => w.startsWith(localize('Not All Tests Passed')))
         )
           preview.warnings.unshift(
-            localize('Not all tests passed: the source or rules changed. Run the tests again.'),
+            localize('Not all tests passed: test the current project first.'),
           );
-        return preview;
+        return {
+          kind: 'source',
+          name,
+          labId: d.problem.labId,
+          files: [{ name, source: d.source }],
+          warnings: preview.warnings,
+        };
       }
-      const d = await buildInput(drafts[0]);
-      if (!d.file) throw new UIError('Select a file first');
-      const name = path.basename(d.file),
-        preview = await prepareWorkspaceProject(
-          storage,
-          d,
-          structuredClone(config),
-          [...openBuffers, ...drafts],
-          false,
-          submissionServices(),
-        ),
-        record = (await storage.workspace.read(d.problem.labId)).check;
-      if (
-        record?.fingerprint !==
-          fingerprint(d, await draftOptions(d), await inputIdentity(d, await draftOptions(d))) &&
-        !preview.warnings.some((w) => w.startsWith(localize('Not All Tests Passed')))
-      )
-        preview.warnings.unshift(localize('Not all tests passed: test the current project first.'));
-      return {
-        kind: 'source',
-        name,
-        labId: d.problem.labId,
-        files: [{ name, source: d.source }],
-        warnings: preview.warnings,
-      };
-    }
-    const source = kind === 'source' ? await targetInput(drafts[0]) : drafts[0];
-    return kind === 'project'
-      ? prepareProject(
-          storage,
-          drafts[0],
-          { ...structuredClone(config), compiler: await draftOptions(drafts[0]) },
-          submissionServices(),
-          drafts,
-          includeConfig,
-        )
-      : prepareSource(
-          storage,
-          source,
-          { ...structuredClone(config), compiler: await draftOptions(source) },
-          submissionServices(),
-        );
-  });
+      const source = kind === 'source' ? await targetInput(drafts[0]) : drafts[0];
+      return kind === 'project'
+        ? prepareProject(
+            storage,
+            drafts[0],
+            { ...structuredClone(config), compiler: await draftOptions(drafts[0]) },
+            submissionServices(profile),
+            drafts,
+            includeConfig,
+          )
+        : prepareSource(
+            storage,
+            source,
+            { ...structuredClone(config), compiler: await draftOptions(source) },
+            submissionServices(profile),
+          );
+    },
+  );
   handle('export:write', async (value: Submission) => {
     requireIdle();
     if (
@@ -2383,13 +2436,13 @@ async function initialize() {
         window.setTitle(localize('LabPad · Keyboard Shortcuts'));
       }
   });
-  handle('compile:state', async (value: Draft) => {
+  handle('compile:state', async (value: Draft, profile?: BuildProfile) => {
     let saved = false;
     try {
       const input = await savedBuildInput(value);
       saved = input.saved;
-      const context = await programContext(value, input);
-      return { saved, ready: saved && compiledProgram.matches(context.key) };
+      const context = await programContext(value, input, profile);
+      return { saved, ready: saved && compiledProgram.matches(context.key, context.profile) };
     } catch {
       return { saved, ready: false };
     }
@@ -2407,11 +2460,10 @@ async function initialize() {
     });
     return result.response === 0;
   });
-  handle('compile', async (value: Draft) =>
+  handle('compile', async (value: Draft, profile?: BuildProfile) =>
     reserveExecution(async (abort) => {
       await stopWarmup();
-      await compiledProgram.clear();
-      const context = await programContext(value);
+      const context = await programContext(value, undefined, profile);
       if (!context.saved)
         throw new UIError('Save the files included in the build before compiling.');
       const task = compiledProgram.compile(
@@ -2419,6 +2471,7 @@ async function initialize() {
         context.draft,
         context.options,
         abort.signal,
+        context.profile,
       );
       active = task;
       try {
@@ -2433,20 +2486,20 @@ async function initialize() {
       }
     }),
   );
-  handle('judge', async (value: Draft, ids?: string[]) =>
+  handle('judge', async (value: Draft, ids?: string[], profile?: BuildProfile) =>
     reserveExecution(async (abort) => {
-      const context = await programContext(value);
+      const context = await programContext(value, undefined, profile);
       if (!context.saved)
         throw new UIError('Save the files included in the build before compiling.');
       const d = context.draft,
         options = context.options,
-        program = compiledProgram.require(context.key);
+        program = compiledProgram.require(context.key, context.profile);
       const task = (async () => {
         const hash = fingerprint(d, options, await inputIdentity(d, options));
-        const previous = await storedCheck(storage, d);
-        await storage.recordCheck(d, checkRecord(d, hash, undefined, previous));
+        const previous = await storedCheck(storage, d, context.profile);
+        await storage.recordCheck(d, checkRecord(d, hash, undefined, previous), context.profile);
         const result = await judge(compiler, d, options, abort.signal, judgeEvent, ids, program);
-        await storage.recordCheck(d, checkRecord(d, hash, result, previous));
+        await storage.recordCheck(d, checkRecord(d, hash, result, previous), context.profile);
         return result;
       })();
       active = task;
@@ -2506,8 +2559,27 @@ async function initialize() {
         })
       ).response === 0,
   );
-  handle('native:start', (value: Draft, points: SourceBreakpoint[]) =>
-    reserveExecution((abort) => beginNative(value, points, abort)),
+  handle('native:confirm-profile', async () => {
+    const answer = await messageBox({
+      type: 'warning',
+      title: localize('Debug a Release Build'),
+      message: localize('Release optimization can move breakpoints or make variables unavailable.'),
+      detail: localize(
+        'Continuing in Release keeps -O2 and adds debugging information for this session.',
+      ),
+      buttons: [
+        localize('Switch to Debug and Start (Recommended)'),
+        localize('Debug with Release'),
+        localize('Cancel'),
+      ],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    return (['debug', 'release', null] as const)[answer.response] ?? null;
+  });
+  handle('native:start', (value: Draft, points: SourceBreakpoint[], profile?: BuildProfile) =>
+    reserveExecution((abort) => beginNative(value, points, abort, profile)),
   );
   handle('native:control', async (action: string) => {
     if (!nativeSession || !['continue', 'pause', 'next', 'stepIn', 'stepOut'].includes(action))
@@ -2533,7 +2605,7 @@ async function initialize() {
   });
   handle('native:breakpoints', async (values: SourceBreakpoint[]) => {
     if (!nativeSession || !nativeActive()) return;
-    const base = storage.workspace.root(nativeLab),
+    const base = nativeScope,
       deferred = openBuffers
         .filter(
           (d) => d.file && d.problem.labId === nativeLab && nativeSnapshot[d.file] !== d.source,
@@ -2545,45 +2617,50 @@ async function initialize() {
     );
     return nativeView();
   });
-  handle(
-    'native:view',
-    async (lab: string, value?: { breakpoints: SourceBreakpoint[]; watches: string[] }) => {
-      if (!(await storage.workspace.isProject(lab))) return { breakpoints: [], watches: [] };
-      if (value) {
+  handle('native:view', async (lab: string, value?: DebugPreferences, target?: Draft) => {
+    const workspace = await storage.workspace.isProject(lab);
+    if (!workspace && (!target || target.problem.labId !== lab || !target.problem.problemId))
+      return { breakpoints: [], watches: [] };
+    const source = workspace ? undefined : await targetInput(target!);
+    if (value) {
+      if (
+        !Array.isArray(value.breakpoints) ||
+        value.breakpoints.length > 256 ||
+        !Array.isArray(value.watches) ||
+        value.watches.length > 100
+      )
+        throw new UIError('Invalid debug view settings');
+      const breakpoints = value.breakpoints.map((b) => {
+        workspacePath(b.path);
         if (
-          !Array.isArray(value.breakpoints) ||
-          value.breakpoints.length > 256 ||
-          !Array.isArray(value.watches) ||
-          value.watches.length > 100
+          !Number.isSafeInteger(b.line) ||
+          b.line < 1 ||
+          typeof b.enabled !== 'boolean' ||
+          (b.condition !== undefined &&
+            (typeof b.condition !== 'string' || b.condition.length > 1024))
         )
-          throw new UIError('Invalid debug view settings');
-        const breakpoints = value.breakpoints.map((b) => {
-          workspacePath(b.path);
-          if (
-            !Number.isSafeInteger(b.line) ||
-            b.line < 1 ||
-            typeof b.enabled !== 'boolean' ||
-            (b.condition !== undefined &&
-              (typeof b.condition !== 'string' || b.condition.length > 1024))
-          )
-            throw new UIError('Invalid breakpoint settings');
-          return {
-            path: b.path,
-            line: b.line,
-            enabled: b.enabled,
-            ...(b.condition ? { condition: b.condition } : {}),
-          };
-        });
-        if (value.watches.some((w) => typeof w !== 'string' || w.length > 1024))
-          throw new UIError('Invalid watch settings');
-        await storage.workspace.update(lab, { debugView: { breakpoints, watches: value.watches } });
-      }
-      return (await storage.workspace.read(lab)).debugView ?? { breakpoints: [], watches: [] };
-    },
-  );
+          throw new UIError('Invalid breakpoint settings');
+        return {
+          path: b.path,
+          line: b.line,
+          enabled: b.enabled,
+          ...(b.condition ? { condition: b.condition } : {}),
+        };
+      });
+      if (value.watches.some((w) => typeof w !== 'string' || w.length > 1024))
+        throw new UIError('Invalid watch settings');
+      const debugView = { breakpoints, watches: value.watches };
+      if (source) return storage.sourceDebugView(source, debugView);
+      await storage.workspace.update(lab, { debugView });
+    }
+    if (source) return storage.sourceDebugView(source);
+    return (await storage.workspace.read(lab)).debugView ?? { breakpoints: [], watches: [] };
+  });
   handle('cancel', stop);
   handle('debug:stop', stop);
-  handle('debug:start', (value: Draft) => reserveExecution((abort) => startDebug(value, abort)));
+  handle('debug:start', (value: Draft, profile?: BuildProfile) =>
+    reserveExecution((abort) => startDebug(value, abort, profile)),
+  );
   ipcMain.on('debug:ack', (event, id: number, size: number) => {
     if (
       event.sender === win.webContents &&

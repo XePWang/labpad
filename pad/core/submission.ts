@@ -9,6 +9,7 @@ import { defaultSource } from '../shared/defaults';
 import { filePart, validateDraft } from '../shared/validate';
 import { Storage, exportName } from './storage';
 import type {
+  BuildProfile,
   CompilerConfig,
   Config,
   Draft,
@@ -21,7 +22,12 @@ import type {
 import type { CheckRecord } from '../shared/project-format';
 export type Submission = ExportPreview;
 export interface SubmissionServices {
-  resolve?(draft: Draft): Promise<{ draft: Draft; compiler: CompilerConfig; identity: string }>;
+  resolve?(draft: Draft): Promise<{
+    draft: Draft;
+    compiler: CompilerConfig;
+    identity: string;
+    profile?: BuildProfile;
+  }>;
   identity(language: Language): Promise<string>;
   format(source: string, language: Language): Promise<string>;
 }
@@ -113,24 +119,27 @@ export function checkRecord(
     cases: ordered,
   };
 }
-export async function storedCheck(storage: Storage, draft: Draft) {
+export async function storedCheck(storage: Storage, draft: Draft, profile?: BuildProfile) {
   if (draft.workspace) return (await storage.workspace.read(draft.problem.labId)).check;
   const state = await storage.projectState(
     draft.problem.labId,
     draft.problem.problemId,
     draft.language,
   );
-  return draft.documentId
-    ? state.documents?.find((v) => v.id === draft.documentId)?.check
-    : state.checks[draft.language];
+  if (draft.documentId) {
+    const document = state.documents?.find((v) => v.id === draft.documentId);
+    return profile === 'debug' ? document?.debugCheck : document?.check;
+  }
+  return profile === 'debug' ? state.debugChecks?.[draft.language] : state.checks[draft.language];
 }
 export async function coverage(
   storage: Storage,
   draft: Draft,
   config: Config,
   identity: string,
+  profile?: BuildProfile,
 ): Promise<Coverage> {
-  const record = await storedCheck(storage, draft),
+  const record = await storedCheck(storage, draft, profile),
     total = draft.problem.testCases.length;
   if (!total || !record) return { state: '未测', cases: [] };
   if (record.fingerprint !== fingerprint(draft, config.compiler, identity))
@@ -175,9 +184,15 @@ export function submissionFolder(config: Config, labId: string) {
   );
   return values.join('_');
 }
-async function testStatus(storage: Storage, draft: Draft, config: Config, identity: string) {
+async function testStatus(
+  storage: Storage,
+  draft: Draft,
+  config: Config,
+  identity: string,
+  profile?: BuildProfile,
+) {
   if (!draft.problem.testCases.length) return localize('No Test Cases');
-  const record = await storedCheck(storage, draft);
+  const record = await storedCheck(storage, draft, profile);
   if (!record) return localize('Not Yet Tested');
   if (record.fingerprint !== fingerprint(draft, config.compiler, identity))
     return localize('The source or compiler changed; run the tests again');
@@ -206,6 +221,7 @@ export async function prepareSource(
       context?.draft ?? draft,
       context ? { ...config, compiler: context.compiler } : config,
       context?.identity ?? (await services.identity(draft.language)),
+      context?.profile,
     );
   if (status)
     warnings.push(
@@ -313,6 +329,7 @@ export async function prepareProject(
         context?.draft ?? draft,
         context ? { ...config, compiler: context.compiler } : config,
         context?.identity ?? identities.get(draft.language)!,
+        context?.profile,
       );
     if (status) unpassed.push(label + '（' + status + '）');
     const n = (counts.get(id) ?? 0) + 1;

@@ -8,6 +8,10 @@ export interface SourceBreakpoint {
   message?: string;
   adapterId?: number;
 }
+export interface DebugPreferences {
+  breakpoints: SourceBreakpoint[];
+  watches: string[];
+}
 export interface DebugFrame {
   id: number;
   name: string;

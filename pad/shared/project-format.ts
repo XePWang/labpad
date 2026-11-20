@@ -40,6 +40,8 @@ export interface SourceDocument {
   externalPath?: string;
   starter?: string;
   check?: CheckRecord;
+  debugCheck?: CheckRecord;
+  debugView?: import('./debug').DebugPreferences;
 }
 export interface ProblemState {
   documents?: SourceDocument[];
@@ -47,6 +49,7 @@ export interface ProblemState {
   language: Language;
   starters: Partial<Record<Language, string>>;
   checks: Partial<Record<Language, CheckRecord>>;
+  debugChecks?: Partial<Record<Language, CheckRecord>>;
   sources: Partial<Record<Language, { path: string; encoding: string }>>;
 }
 export interface LabState {

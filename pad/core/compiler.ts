@@ -47,9 +47,10 @@ export class Compiler {
         path.join(tmpdir(), 'labpad-compiler-cache-' + (process.getuid?.() ?? 'user')),
     );
   }
-  async environment(config?: CompilerConfig): Promise<NodeJS.ProcessEnv> {
-    const root = await this.session;
-    const cache = this.cache.directory;
+  async environment(config?: CompilerContext): Promise<NodeJS.ProcessEnv> {
+    const cache = config?.cacheScope
+      ? path.join(this.cache.directory, config.cacheScope)
+      : this.cache.directory;
     await mkdir(cache, { recursive: true });
     return {
       ...(config ? compilerEnvironment(process.env, config) : process.env),
@@ -181,7 +182,7 @@ export class Compiler {
   async compile(
     source: string,
     language: Language,
-    config: CompilerConfig,
+    config: CompilerContext,
     signal?: AbortSignal,
     input?: { snapshot: WorkspaceSnapshot; file: string },
   ): Promise<Prepared> {

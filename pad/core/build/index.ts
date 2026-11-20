@@ -1,7 +1,7 @@
 import { t as localize } from '../../shared/i18n';
 import { cleanupAll, cleanupText, addCleanupNotes } from '../cleanup';
 import { prepareBuildDirectory } from '../artifacts';
-import { draftPlan, buildOptionsSignature, standaloneSource } from './plan';
+import { draftPlan, buildOptionsSignature, standaloneSource, type CompilerContext } from './plan';
 import {
   mkdir,
   readFile,
@@ -31,7 +31,7 @@ export interface BuildLocation {
 export async function compileDraft(
   compiler: Compiler,
   draft: Draft,
-  config: CompilerConfig,
+  config: CompilerContext,
   signal?: AbortSignal,
   location?: BuildLocation,
 ): Promise<Prepared> {

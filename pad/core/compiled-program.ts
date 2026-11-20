@@ -1,36 +1,44 @@
 import { UIError } from '../shared/i18n';
 import { compileDraft } from './build';
 import type { Compiler } from './compiler';
-import type { Draft, CompilerConfig, Compilation } from '../shared/types';
+import type { Draft, BuildProfile, Compilation } from '../shared/types';
+import type { CompilerContext } from './build/plan';
 export type PreparedProgram = Awaited<ReturnType<typeof compileDraft>>;
 export class CompiledProgram {
-  private current?: { key: string; program: PreparedProgram };
+  private readonly programs = new Map<
+    BuildProfile | undefined,
+    { key: string; program: PreparedProgram }
+  >();
   constructor(private compiler: Compiler) {}
-  matches(key: string) {
-    return this.current?.key === key;
+  matches(key: string, profile?: BuildProfile) {
+    return this.programs.get(profile)?.key === key;
   }
-  require(key: string): PreparedProgram {
-    if (!this.current || this.current.key !== key)
+  require(key: string, profile?: BuildProfile): PreparedProgram {
+    const current = this.programs.get(profile);
+    if (!current || current.key !== key)
       throw new UIError('Save your changes, then click Compile.');
-    return this.current.program;
+    return current.program;
   }
   async clear() {
-    const previous = this.current;
-    this.current = undefined;
-    await previous?.program.cleanup();
+    const previous = [...this.programs.values()];
+    this.programs.clear();
+    await Promise.all(previous.map(({ program }) => program.cleanup()));
   }
   async compile(
     key: string,
     draft: Draft,
-    options: CompilerConfig,
+    options: CompilerContext,
     signal?: AbortSignal,
+    profile?: BuildProfile,
   ): Promise<Compilation> {
-    await this.clear();
+    const previous = this.programs.get(profile);
+    this.programs.delete(profile);
+    await previous?.program.cleanup();
     let prepared: PreparedProgram | undefined;
     try {
       prepared = await compileDraft(this.compiler, draft, options, signal);
       if (prepared.compilation.status === 'success' && !signal?.aborted) {
-        this.current = { key, program: prepared };
+        this.programs.set(profile, { key, program: prepared });
         return prepared.compilation;
       }
       const result = prepared.compilation;

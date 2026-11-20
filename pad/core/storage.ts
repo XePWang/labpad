@@ -37,7 +37,16 @@ import {
 } from '../shared/validate';
 import { parseLabPackage, labDraft } from '../shared/project-format';
 import type { CheckRecord, LabState, ProblemState, SourceDocument } from '../shared/project-format';
-import type { Config, Draft, LoadedDraft, Language, Problem, Project } from '../shared/types';
+import type {
+  BuildProfile,
+  Config,
+  Draft,
+  LoadedDraft,
+  Language,
+  Problem,
+  Project,
+} from '../shared/types';
+import type { DebugPreferences } from '../shared/debug';
 export function decodeText(bytes: Buffer): { text: string; encoding: string } {
   if (
     bytes.length >= 2 &&
@@ -424,7 +433,7 @@ export class Storage {
       await this.writeState(labId, problemId, meta);
     });
   }
-  recordCheck(draft: Draft, record: CheckRecord) {
+  recordCheck(draft: Draft, record: CheckRecord, profile?: BuildProfile) {
     const d = structuredClone(validateDraft(draft));
     if (d.workspace)
       return this.workspace.update(d.problem.labId, { check: structuredClone(record) });
@@ -432,12 +441,37 @@ export class Storage {
       const meta = await this.readState(d.problem.labId, d.problem.problemId),
         state = this.stateFor(meta, d.problem.problemId, d.language);
       state.starters[d.language] ??= defaultSource(d.language);
-      state.checks[d.language] = structuredClone(record);
       const version = state.documents?.find((v) => v.id === d.documentId);
-      if (version) version.check = structuredClone(record);
+      if (profile === 'debug') {
+        state.debugChecks ??= {};
+        state.debugChecks[d.language] = structuredClone(record);
+        if (version) version.debugCheck = structuredClone(record);
+      } else {
+        state.checks[d.language] = structuredClone(record);
+        if (version) version.check = structuredClone(record);
+      }
       meta.problems = { ...meta.problems, [d.problem.problemId]: state };
       await this.writeState(d.problem.labId, d.problem.problemId, meta);
     });
+  }
+  async sourceDebugView(draft: Draft, value?: DebugPreferences): Promise<DebugPreferences> {
+    const { labId, problemId } = draft.problem;
+    if (value)
+      return this.enqueue(async () => {
+        const meta = await this.readState(labId, problemId);
+        const version = meta.problems[problemId]?.documents?.find((v) => v.id === draft.documentId);
+        if (!version) return { breakpoints: [], watches: [] };
+        version.debugView = structuredClone(value);
+        await this.writeState(labId, problemId, meta);
+        return value;
+      });
+    const state = await this.projectState(labId, problemId, draft.language);
+    return (
+      state.documents?.find((v) => v.id === draft.documentId)?.debugView ?? {
+        breakpoints: [],
+        watches: [],
+      }
+    );
   }
   documentPath(labId: string, problemId: string, version: SourceDocument) {
     workspacePath(version.file);

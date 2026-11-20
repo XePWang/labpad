@@ -43,6 +43,7 @@ function check(
   );
 }
 export interface CompilerContext extends CompilerConfig {
+  cacheScope?: string;
   linkTarget?: string;
 }
 export const msvcTarget = (target: string | undefined) =>

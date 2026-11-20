@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { t } from '../i18n';
 import { rememberMenuFocus, restoreMenuFocus } from '../menu-focus';
 import {
   DropdownMenuRoot,
@@ -15,6 +14,7 @@ defineProps<{
   label: string;
   items: {
     label: string;
+    detail?: string;
     value: string;
     separator?: boolean;
     disabled?: boolean;
@@ -25,6 +25,7 @@ defineProps<{
   compact?: boolean;
   triggerClass?: string;
   owner?: string;
+  accessibleLabel?: string;
 }>();
 const emit = defineEmits<{ select: [value: string]; closeAutoFocus: [event: Event] }>();
 function closeMenu(event: Event) {
@@ -38,8 +39,8 @@ function closeMenu(event: Event) {
       :disabled="disabled"
       class="action-menu-trigger"
       :class="[triggerClass, { 'is-compact': compact }]"
-      :aria-label="label"
-      :title="label"
+      :aria-label="accessibleLabel ?? label"
+      :title="accessibleLabel ?? label"
     >
       <ActionIcon v-if="compact" name="more" />
       <template v-else
@@ -85,14 +86,15 @@ function closeMenu(event: Event) {
             <span class="menu-check" aria-hidden="true">{{
               item.checked === 'indeterminate' ? '−' : item.checked ? '✓' : ''
             }}</span
-            >{{ t(item.label) }}
+            >{{ item.label }}
+            <span v-if="item.detail" class="action-menu-detail">{{ item.detail }}</span>
           </DropdownMenuCheckboxItem>
           <DropdownMenuItem
             v-else
             class="action-menu-item"
             :disabled="item.disabled"
             @select="emit('select', item.value)"
-            >{{ t(item.label) }}</DropdownMenuItem
+            >{{ item.label }}</DropdownMenuItem
           >
         </template>
       </DropdownMenuContent>
@@ -137,6 +139,11 @@ function closeMenu(event: Event) {
 .menu-check {
   position: absolute;
   left: 10px;
+}
+.action-menu-detail {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
 }
 .action-menu-item[data-highlighted] {
   background: var(--accent);

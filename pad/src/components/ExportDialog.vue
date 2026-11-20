@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from 'reka-ui';
-import type { Draft, ExportProblem, ExportPreview } from '../../shared/types';
+import type { BuildProfile, Draft, ExportProblem, ExportPreview } from '../../shared/types';
 const props = defineProps<{
   kind: 'source' | 'project';
   current: Draft;
@@ -21,6 +21,7 @@ const props = defineProps<{
   studentId: string;
   suspended: boolean;
   workspace?: boolean;
+  profile?: BuildProfile;
 }>();
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -93,6 +94,7 @@ async function next() {
       props.kind,
       JSON.parse(JSON.stringify(drafts.value)),
       includeConfig.value,
+      props.profile,
     );
     if (preview.value.warnings.length) {
       step.value = 'warning';

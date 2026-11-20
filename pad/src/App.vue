@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t, uiLanguage, setLanguage, msg, errorText, type UIText, UIError } from './i18n';
-import type { CompletionFiles } from '../shared/types';
+import type { BuildProfile, CompletionFiles } from '../shared/types';
 import { isHeaderFile } from '../shared/file-language';
 import {
   idle,
@@ -164,6 +164,10 @@ const results = ref<Record<string, CaseResult>>({}),
   finished = ref(false);
 const phase = computed(() => {
   void uiLanguage.value;
+  if (!nativeActive.value && buildProfile.value && execution.value.kind === 'idle') {
+    if (execution.value.outcome === 'ready' || execution.value.outcome === 'compiled')
+      return compiledReady.value ? t('Compilation Successful') : t('Not Compiled');
+  }
   return nativeActive.value && !nativeStarting.value
     ? nativeMessage(nativeState.value.status)
     : taskMessage(execution.value);
@@ -277,6 +281,28 @@ const compilerChoiceOpen = ref(false),
 const workspaceMode = computed(
   () => projects.value.find((p) => p.labId === draft.value?.problem.labId)?.mode === 'project',
 );
+const buildProfiles = ref(new Map<string, BuildProfile>());
+const buildProfile = computed(() => {
+  const problem = draft.value?.problem;
+  if (workspaceMode.value || !problem?.labId || !problem.problemId) return undefined;
+  return buildProfiles.value.get(problem.labId) ?? 'debug';
+});
+const breakpointDebugging = computed(() => workspaceMode.value || !!buildProfile.value);
+const buildProfileLabel = (profile: BuildProfile) => (profile === 'debug' ? 'Debug' : 'Release');
+const buildProfileItems = computed(() => [
+  {
+    label: 'Debug',
+    detail: t('-g -O0 · Breakpoints, stepping, and variables'),
+    value: 'debug',
+    checked: buildProfile.value === 'debug',
+  },
+  {
+    label: 'Release',
+    detail: t('-O2 · Optimized build for performance testing'),
+    value: 'release',
+    checked: buildProfile.value === 'release',
+  },
+]);
 const includedSources = ref<string[] | null>(null),
   membershipMessage = ref('');
 let membershipTimer: ReturnType<typeof setTimeout> | undefined;
@@ -454,15 +480,22 @@ async function selectFrame(id: number) {
   }
 }
 async function startNative(restart = false) {
-  if (nativeStarting.value || busy.value) return;
+  if (!breakpointDebugging.value || nativeStarting.value || busy.value) return;
   const id = beginExecution('native');
+  let profile = buildProfile.value;
   try {
+    if (profile === 'release' && !restart) {
+      const choice = await api.confirmDebugProfile();
+      if (!choice || !ownsExecution(id)) return;
+      if (choice === 'debug') selectBuildProfile(choice);
+      profile = choice;
+    }
     clearTimeout(saveTimer);
     await saveTail;
     if (!ownsExecution(id)) return;
-    const state = await api.compileState(snapshot());
+    const state = await api.compileState(snapshot(), profile);
     if (!ownsExecution(id)) return;
-    if (tabs.value.some((tab) => tab.dirty) || !state.saved) {
+    if (compileDirty.value || !state.saved) {
       if (!(await (restart ? api.confirmRestart() : api.confirmCompile()))) return;
       await saveAll();
       if (!ownsExecution(id)) return;
@@ -473,9 +506,9 @@ async function startNative(restart = false) {
     rightCollapsed.value = false;
     bottomTab.value = 'debug';
     debugEpoch.value++;
-    const result = await api.nativeStart(snapshot(), clone(sourceBreakpoints.value));
+    const result = await api.nativeStart(snapshot(), clone(sourceBreakpoints.value), profile);
     if (!ownsExecution(id)) return;
-    if (result.compilation) showCompilation(result.compilation);
+    if (result.compilation) showCompilation(result.compilation, profile);
     if (result.needsBuild) {
       endExecution(id, 'ready');
       await openBuildSettings();
@@ -658,7 +691,7 @@ watch(
   { flush: 'post' },
 );
 const testHeaderItems = computed(() => [
-  ...(!showBothRightTabs.value && workspaceMode.value
+  ...(!showBothRightTabs.value && breakpointDebugging.value
     ? [{ label: t('Switch to Debug'), value: 'tab' }]
     : []),
   ...(!showTestSummary.value
@@ -693,7 +726,7 @@ const testHeaderItems = computed(() => [
 ]);
 const debugHeaderItems = computed(() => [
   ...(!showBothRightTabs.value ? [{ label: t('Switch to Test Cases'), value: 'tab' }] : []),
-  ...(!fullHeader.value
+  ...(!fullHeader.value && workspaceMode.value
     ? [
         {
           label: t('Build Settings…'),
@@ -1304,6 +1337,19 @@ function invalidate(outcome: Outcome = 'changed') {
   if (!nativeActive.value) setIdle(outcome);
   queueChecks();
 }
+function selectBuildProfile(value: string) {
+  if (
+    (value !== 'debug' && value !== 'release') ||
+    !buildProfile.value ||
+    value === buildProfile.value
+  )
+    return;
+  buildProfiles.value.set(draft.value!.problem.labId, value);
+  revision++;
+  problemStates.value = {};
+  compilationFailed.value = false;
+  invalidate('ready');
+}
 function queueChecks() {
   clearTimeout(checkTimer);
   checkTimer = setTimeout(
@@ -1317,13 +1363,15 @@ function queueChecks() {
 async function refreshChecks() {
   if (!draft.value || (!activeId.value && !workspaceMode.value) || busy.value) return;
   const d = snapshot(),
+    profile = buildProfile.value,
     epoch = revision,
     taskEpoch = executionEpoch;
-  const compiled = await api.compileState(d),
-    state = await api.checkState(d),
+  const compiled = await api.compileState(d, profile),
+    state = await api.checkState(d, profile),
     states = await api.problemStates(
       d,
       tabs.value.map((t) => ({ ...clone(t.document), problem: clone(d.problem) })),
+      profile,
     );
   if (
     revision !== epoch ||
@@ -1546,6 +1594,15 @@ function activateTab(id: string, focus = true) {
   if (fileBusy.value || busy.value || !!exportKind.value || id === activeId.value) return;
   const tab = tabs.value.find((t) => t.id === id);
   if (!tab) return;
+  if (
+    !workspaceMode.value &&
+    nativeActive.value &&
+    !tab.document.auxiliary &&
+    id !== targetSourceId.value
+  ) {
+    notice.value = msg('Stop debugging before switching source versions.');
+    return;
+  }
   clearTimeout(saveTimer);
   pauseSave = true;
   const problem = clone(draft.value!.problem);
@@ -1962,10 +2019,11 @@ function exportDone(file: string) {
   exportKind.value = null;
   notice.value = msg('Exported: {0}', file);
 }
-function showCompilation(c: Compilation) {
+function showCompilation(c: Compilation, profile?: BuildProfile) {
   compilationFailed.value = c.status === 'CE';
   diagnostics.value = diagnosticCounts(c.stdout, c.stderr);
   diagnosticRevision.value++;
+  if (profile) logEntries.value.push(msg('\nBuild Profile: {0}\n', buildProfileLabel(profile)));
   logEntries.value = [
     msg(
       'Compile Command\n{0}\n\n{1}{2}\nCompilation: {3} · {4} ms\n',
@@ -1987,13 +2045,14 @@ const compileDirty = computed(() =>
 async function compile() {
   if (busy.value || nativeStarting.value || nativeActive.value) return;
   const id = beginExecution('compile');
+  const profile = buildProfile.value;
   let started = false,
     runAfter = false;
   try {
     clearTimeout(saveTimer);
     await saveTail;
     if (!ownsExecution(id)) return;
-    const state = await api.compileState(snapshot());
+    const state = await api.compileState(snapshot(), profile);
     if (!ownsExecution(id)) return;
     if (compileDirty.value || !state.saved) {
       if (!(await api.confirmCompile()) || !ownsExecution(id)) return;
@@ -2009,10 +2068,11 @@ async function compile() {
     diagnostics.value = { warnings: 0, errors: 0 };
     debugEpoch.value++;
     started = true;
-    const result = await api.compile(snapshot());
+    const result = await api.compile(snapshot(), profile);
     if (!ownsExecution(id)) return;
-    showCompilation(result);
-    compiledReady.value = result.status === 'success' && (await api.compileState(snapshot())).ready;
+    showCompilation(result, profile);
+    compiledReady.value =
+      result.status === 'success' && (await api.compileState(snapshot(), profile)).ready;
     endExecution(
       id,
       result.status === 'success' ? 'compiled' : result.status === 'cancelled' ? 'stopped' : 'ce',
@@ -2045,7 +2105,7 @@ async function debug() {
   debugRunning.value = false;
   bottomTab.value = 'debug';
   try {
-    await api.debugStart(snapshot());
+    await api.debugStart(snapshot(), buildProfile.value);
   } catch (error) {
     endExecution(id, 'terminal-failed');
     throw error;
@@ -2073,11 +2133,14 @@ async function run(ids?: string[]) {
   finished.value = false;
   bottomTab.value = 'output';
   try {
-    const result = await api.judge(snapshot(), chosen);
+    const profile = buildProfile.value;
+    if (profile)
+      logEntries.value.push(msg('\nTest Build Profile: {0}\n', buildProfileLabel(profile)));
+    const result = await api.judge(snapshot(), chosen, profile);
     if (!ownsExecution(id)) return;
     if (result.cleanupWarnings?.length)
       logEntries.value.push(msg('\n[Cleanup Incomplete] {0}', result.cleanupWarnings.join('; ')));
-    const coverage = await api.checkState(snapshot());
+    const coverage = await api.checkState(snapshot(), profile);
     if (!ownsExecution(id)) return;
     problemStates.value[draft.value!.problem.problemId] = coverage.state;
     if (result.status === 'error') {
@@ -2340,7 +2403,7 @@ function installShortcuts() {
           return;
         }
         if (id.startsWith('debug')) {
-          if (!workspaceMode.value) return;
+          if (!breakpointDebugging.value) return;
           event.preventDefault();
           event.stopPropagation();
           const controls: Record<string, () => Promise<unknown>> = {
@@ -2646,7 +2709,11 @@ watch(
   },
 );
 watch(
-  () => [draft.value?.problem.labId, draft.value?.problem.problemId],
+  () => [
+    draft.value?.problem.labId,
+    draft.value?.problem.problemId,
+    workspaceMode.value ? undefined : targetSourceId.value,
+  ],
   async () => {
     const token = viewToken(),
       request = ++debugPrefsRevision;
@@ -2662,8 +2729,12 @@ watch(
     sourceBreakpoints.value = [];
     watches.value = [];
     try {
-      if (token.workspace) {
-        const value = await api.nativeView(token.lab);
+      if (breakpointDebugging.value) {
+        const value = await api.nativeView(
+          token.lab,
+          undefined,
+          token.workspace ? undefined : snapshot(),
+        );
         if (current()) {
           sourceBreakpoints.value = value.breakpoints;
           watches.value = value.watches;
@@ -2692,15 +2763,17 @@ watch(
 watch(
   () => [sourceBreakpoints.value, watches.value],
   () => {
-    if (loadingDebugPrefs || !workspaceMode.value) return;
+    if (loadingDebugPrefs || !breakpointDebugging.value) return;
     const token = viewToken(),
+      target = token.workspace ? undefined : snapshot(),
       value = { breakpoints: clone(sourceBreakpoints.value), watches: clone(watches.value) };
-    clearTimeout(debugPrefTimers.get(token.lab));
+    const key = JSON.stringify([token.lab, token.problem, target?.target]);
+    clearTimeout(debugPrefTimers.get(key));
     debugPrefTimers.set(
-      token.lab,
+      key,
       setTimeout(() => {
-        debugPrefTimers.delete(token.lab);
-        void api.nativeView(token.lab, value).catch((reason) => {
+        debugPrefTimers.delete(key);
+        void api.nativeView(token.lab, value, target).catch((reason) => {
           if (ownsView(token)) reportOperationError(reason);
         });
       }, 250),
@@ -2811,8 +2884,21 @@ async function foldRight(collapsed: boolean) {
                 :theme="config.theme"
                 @select="(value) => action(() => fileAction(() => selectProblem(value)))" /></label
           ></template>
+          <template v-if="buildProfile">
+            <span class="build-profile-divider" aria-hidden="true"></span>
+            <ActionMenu
+              owner="toolbar"
+              trigger-class="build-profile-trigger"
+              :label="buildProfileLabel(buildProfile)"
+              :accessible-label="t('Build Profile: {0}', buildProfileLabel(buildProfile))"
+              :items="buildProfileItems"
+              :theme="config.theme"
+              :disabled="blocked"
+              @select="selectBuildProfile"
+            />
+          </template>
           <div class="run-actions">
-            <template v-if="workspaceMode && nativeActive"
+            <template v-if="nativeActive"
               ><button
                 class="primary icon-action"
                 :title="nativeState.status === 'paused' ? t('Continue (F5)') : t('Pause')"
@@ -3037,7 +3123,7 @@ async function foldRight(collapsed: boolean) {
                       :language="editorLanguage"
                       :completion-enabled="config.completionEnabled"
                       :completion-files="completionFiles"
-                      :debug-enabled="workspaceMode"
+                      :debug-enabled="breakpointDebugging && isCodeFile(draft.file ?? '')"
                       :breakpoints="displayPoints"
                       :execution-line="executionLine"
                       @breakpoint="breakpoint"
@@ -3133,7 +3219,7 @@ async function foldRight(collapsed: boolean) {
                     >
                       {{ t('Test Cases') }}</button
                     ><button
-                      v-if="workspaceMode"
+                      v-if="breakpointDebugging"
                       v-show="showBothRightTabs || rightTab === 'debug'"
                       role="tab"
                       :aria-selected="rightTab === 'debug'"
@@ -3215,6 +3301,7 @@ async function foldRight(collapsed: boolean) {
                       >
                         <ActionIcon name="play" /></button
                       ><button
+                        v-if="workspaceMode"
                         v-show="fullHeader"
                         :disabled="blocked || nativeActive"
                         @click="action(openBuildSettings)"
@@ -3239,7 +3326,7 @@ async function foldRight(collapsed: boolean) {
                 </div>
                 <NativeDebugPanel
                   :key="fileScope"
-                  v-if="workspaceMode"
+                  v-if="breakpointDebugging"
                   v-show="rightTab === 'debug'"
                   :state="nativeState"
                   :breakpoints="displayPoints"
@@ -3885,6 +3972,7 @@ async function foldRight(collapsed: boolean) {
       ref="exportDialog"
       :workspace="workspaceMode"
       :kind="exportKind"
+      :profile="buildProfile"
       :current="exportCurrent"
       :buffers="exportBuffers"
       :theme="config.theme"

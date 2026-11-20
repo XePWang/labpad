@@ -983,6 +983,14 @@ footer {
   height: 30px;
   max-width: 150px;
 }
+.build-profile-divider {
+  flex: 0 0 1px;
+  height: 16px;
+  background: var(--border);
+}
+.toolbar .build-profile-trigger {
+  flex: none;
+}
 @media (max-width: 800px), (max-height: 600px) {
   .brandbar {
     display: none;

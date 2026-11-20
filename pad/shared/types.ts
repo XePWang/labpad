@@ -1,6 +1,7 @@
 import type { Typography } from './typography';
 import type { WorkspaceSnapshot, WorkspaceFile, ProjectBuildOptions } from './workspace';
 export type Language = 'c' | 'cpp';
+export type BuildProfile = 'debug' | 'release';
 export type Verdict = 'AC' | 'WA' | 'CE' | 'RE' | 'TLE' | 'OLE';
 export type Comparison =
   | { type: 'strictText'; ignoreTrailingSpaces?: boolean; ignoreFinalNewlines?: boolean }
@@ -230,6 +231,7 @@ export interface Bridge {
   nativeStart(
     draft: Draft,
     breakpoints: import('./debug').SourceBreakpoint[],
+    profile?: BuildProfile,
   ): Promise<{
     started: boolean;
     needsBuild?: boolean;
@@ -252,8 +254,10 @@ export interface Bridge {
   ): Promise<import('./debug').NativeDebugState | undefined>;
   nativeView(
     lab: string,
-    value?: { breakpoints: import('./debug').SourceBreakpoint[]; watches: string[] },
-  ): Promise<{ breakpoints: import('./debug').SourceBreakpoint[]; watches: string[] }>;
+    value?: import('./debug').DebugPreferences,
+    target?: Draft,
+  ): Promise<import('./debug').DebugPreferences>;
+  confirmDebugProfile(): Promise<BuildProfile | null>;
   onNativeState(callback: (state: import('./debug').NativeDebugState) => void): () => void;
   onNativeDiagnostic(callback: (data: string) => void): () => void;
 
@@ -313,10 +317,15 @@ export interface Bridge {
     kind: 'source' | 'project',
     drafts: Draft[],
     includeConfig?: boolean,
+    profile?: BuildProfile,
   ): Promise<ExportPreview>;
   writeExport(value: ExportPreview): Promise<string | null>;
-  checkState(draft: Draft): Promise<Coverage>;
-  problemStates(draft: Draft, buffers: Draft[]): Promise<Record<string, TestState>>;
+  checkState(draft: Draft, profile?: BuildProfile): Promise<Coverage>;
+  problemStates(
+    draft: Draft,
+    buffers: Draft[],
+    profile?: BuildProfile,
+  ): Promise<Record<string, TestState>>;
   saveProblem(problem: Problem, expected?: Problem): Promise<void>;
   bootstrap(): Promise<Bootstrap>;
   reloadDocument(): Promise<Bootstrap>;
@@ -374,18 +383,18 @@ export interface Bridge {
   revealPath(value: string, kind: PathKind): Promise<void>;
   revealSource(file: string): Promise<void>;
   importIO(labId: string, problemId: string): Promise<Problem | null>;
-  importProject(): Promise<
-    (Bootstrap & { updatedProblems?: Problem[]; editBuild?: boolean }) | null
-  >;
+  importProject(
+    source?: 'file' | 'folder',
+  ): Promise<(Bootstrap & { updatedProblems?: Problem[]; editBuild?: boolean }) | null>;
   exportTests(kind: 'current' | 'project', problem: Problem): Promise<string | null>;
   showProblemFile(draft: Draft): Promise<void>;
-  compile(draft: Draft): Promise<Compilation>;
-  compileState(draft: Draft): Promise<{ saved: boolean; ready: boolean }>;
+  compile(draft: Draft, profile?: BuildProfile): Promise<Compilation>;
+  compileState(draft: Draft, profile?: BuildProfile): Promise<{ saved: boolean; ready: boolean }>;
   confirmCompile(): Promise<boolean>;
   confirmRestart(): Promise<boolean>;
-  judge(draft: Draft, ids?: string[]): Promise<JudgeResult>;
+  judge(draft: Draft, ids?: string[], profile?: BuildProfile): Promise<JudgeResult>;
   cancel(): Promise<void>;
-  debugStart(draft: Draft): Promise<void>;
+  debugStart(draft: Draft, profile?: BuildProfile): Promise<void>;
   debugInput(data: string): void;
   debugResize(cols: number, rows: number): void;
   debugStop(): Promise<void>;
