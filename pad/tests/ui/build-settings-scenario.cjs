@@ -16,7 +16,7 @@ async function runBuildSettingsScenario(electron,{executable,cwd,evidence}){
  async function applyBuild(){await build().getByRole('button',{name:'应用',exact:true}).click();await until(()=>build().count().then(n=>n===0),'build applied');}
  async function edit(text){await editor().fill(text);await until(async()=>(await state()).draft.source===text,'editor synchronized');}
  async function saveAll(){await menu('保存','保存全部');await until(()=>page.locator('.tab-dirty').count().then(n=>n===0),'save all');}
- async function load(file){await app.evaluate((_,p)=>globalThis.__files=[p],file);await menu('导入','导入实验项目');}
+ async function load(file){await app.evaluate((_,p)=>globalThis.__files=[p],file);await menu('导入','导入实验项目…');}
  async function run(expected='AC'){await compileAndRun(page);await until(()=>page.getByRole('button',{name:/^编译$/}).isEnabled(),'build finished',120000);await until(()=>page.locator('.verdict.'+expected.toLowerCase()).count().then(n=>n>=1),'verdict '+expected,120000);}
  const setCode='#include <stdio.h>\nint main(void){puts("42");return 0;}\n';
  const setOptions={inheritDefaults:false,cArgs:['-std=c11','-DPROJECT_TOKEN=42'],cppArgs:['-std=c++20'],linkArgs:[]};

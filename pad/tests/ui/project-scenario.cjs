@@ -31,7 +31,7 @@ async function runProjectScenario(electron,{executable,cwd,evidence}){
  try{
   await prepare();await openApplicationSettings(page);await page.getByRole('checkbox',{name:'保存时自动格式化'}).uncheck();await button('保存设置').click();await page.getByRole('dialog').waitFor({state:'hidden'});
   const project=path.join(dir,'project.json');await fs.writeFile(project,JSON.stringify(fixture));await files([project]);
-  await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入测试点','导入实验项目']);await page.getByRole('menuitem',{name:'导入实验项目',exact:true}).click();await until(()=>topic(page).inputValue().then(v=>v==='Lab 2-1'),'import');await idle();
+  await button('导入').click();assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['导入源码','导入测试点','导入实验项目…','导入实验文件夹…']);await page.getByRole('menuitem',{name:'导入实验项目…',exact:true}).click();await until(()=>topic(page).inputValue().then(v=>v==='Lab 2-1'),'import');await idle();
   assert.equal(await page.locator('.editor-heading').count(),0);assert.equal(await tabs().count(),1);assert.equal((await state()).draft.source,echo);
   await page.screenshot({path:path.join(evidence,'workspace-dark.png')});pass('project import, exact menu order, C/C++ templates, single tab bar and no duplicate title');
   await editor().click();await page.keyboard.press('End');await until(()=>button('格式化代码').evaluate(e=>Number(getComputedStyle(e.parentElement).opacity)>0.95),'format shown');

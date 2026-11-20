@@ -1,8 +1,16 @@
 import { UIError } from '../shared/i18n';
-import { readArchiveFile } from './read-file';
+import { readArchiveFile, readEditableFile } from './read-file';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { workspacePath, uniquePaths, type WorkspaceSnapshot } from '../shared/workspace';
-import { snapshotBytes } from './workspace-files';
+import { directorySnapshot, snapshotBytes } from './workspace-files';
+import { lstat, opendir } from 'node:fs/promises';
+import path from 'node:path';
+
+const descriptorName = 'labpad.project.json';
+const archiveJunk = new Set(['__macosx', '.ds_store', 'thumbs.db']);
+function isArchiveJunk(name: string) {
+  return archiveJunk.has(name.toLowerCase());
+}
 async function readEntry(archive: ZipFile, entry: Entry, limit = 8 * 1024 ** 2): Promise<Buffer> {
   return new Promise((resolve, reject) =>
     archive.openReadStream(entry, (error, stream) => {
@@ -58,6 +66,7 @@ export async function archiveSnapshot(data: Buffer): Promise<WorkspaceSnapshot> 
       const name = entry.fileName;
       if (
         name.endsWith('/') ||
+        name.split('/').some(isArchiveJunk) ||
         excluded.some((prefix) => name.startsWith(prefix)) ||
         /(?:^|\/)(?:\.labpad|\.labpad-project\.json|\.labpad-candidate\.json)$/.test(name)
       )
@@ -103,12 +112,25 @@ export function restorePackage(
     throw new UIError(
       'The ZIP is missing labpad.project.json. Import an archive that includes the project configuration.',
     );
-  const value = JSON.parse(files['labpad.project.json'].replace(/^\uFEFF/, ''));
+  return restoreFiles(JSON.parse(files[descriptorName].replace(/^\uFEFF/, '')), {
+    files,
+    binaryFiles,
+  });
+}
+
+function restoreFiles(
+  value: any,
+  { files, binaryFiles = {} }: WorkspaceSnapshot,
+  fromFolder = false,
+) {
   const content = (name: string) => {
     workspacePath(name);
     if (Object.hasOwn(files, name)) return files[name];
     if (Object.hasOwn(binaryFiles, name)) return binaryFiles[name];
-    throw new UIError('File missing from ZIP: {0}', name);
+    throw new UIError(
+      fromFolder ? 'File missing from experiment folder: {0}' : 'File missing from ZIP: {0}',
+      name,
+    );
   };
   if (value.mode === 'project') {
     if (!Array.isArray(value.files)) throw new UIError('The configuration is missing files');
@@ -131,4 +153,53 @@ export function restorePackage(
 export async function readProjectArchive(file: string) {
   const snapshot = await archiveSnapshot(await readArchiveFile(file));
   return restorePackage(snapshot.files, snapshot.binaryFiles);
+}
+
+async function readDescriptor(root: string) {
+  const file = path.join(root, descriptorName);
+  const entry = await lstat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (!entry) return undefined;
+  if (!entry.isFile()) throw new UIError('labpad.project.json must be a regular file.');
+  const source = (await readEditableFile(file)).toString('utf8');
+  const value = JSON.parse(source.replace(/^\uFEFF/, ''));
+  if (
+    value?.kind !== 'labpad.project' ||
+    ![1, 2].includes(value.schemaVersion) ||
+    !['problem-set', 'project'].includes(value.mode ?? 'problem-set') ||
+    typeof value.labId !== 'string' ||
+    !Array.isArray(value.mode === 'project' ? value.files : value.problems)
+  )
+    throw new UIError('labpad.project.json does not describe a LabPad experiment.');
+  return value;
+}
+
+export async function readProjectFolder(directory: string) {
+  let root = directory;
+  if (!(await lstat(root)).isDirectory())
+    throw new UIError('Choose an extracted LabPad experiment folder.');
+  let descriptor = await readDescriptor(root);
+  if (!descriptor) {
+    let wrapper: string | undefined;
+    for await (const entry of await opendir(root)) {
+      if (isArchiveJunk(entry.name)) continue;
+      if (wrapper || !entry.isDirectory()) {
+        wrapper = undefined;
+        break;
+      }
+      wrapper = entry.name;
+    }
+    if (wrapper) {
+      root = path.join(root, wrapper);
+      if ((await lstat(root)).isDirectory()) descriptor = await readDescriptor(root);
+    }
+  }
+  if (!descriptor)
+    throw new UIError(
+      'No labpad.project.json was found. Choose the experiment folder or its single enclosing folder.',
+    );
+  const snapshot = await directorySnapshot(root, (name) => name !== descriptorName, isArchiveJunk);
+  return restoreFiles(descriptor, snapshot, true);
 }

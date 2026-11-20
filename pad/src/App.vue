@@ -617,7 +617,8 @@ const toolbarItems = computed(() => [
     disabled: blocked.value,
   },
   { label: t('Import Test Cases'), value: 'import:io', disabled: blocked.value },
-  { label: t('Import Experiment'), value: 'import:project', disabled: blocked.value },
+  { label: t('Import Experiment…'), value: 'import:project', disabled: blocked.value },
+  { label: t('Import Experiment Folder…'), value: 'import:folder', disabled: blocked.value },
   { label: t('Export Source'), value: 'export:source', separator: true, disabled: blocked.value },
   { label: t('Export Experiment'), value: 'export:project', disabled: blocked.value },
   { label: t('Export Current Test Cases'), value: 'export:currentTests', disabled: blocked.value },
@@ -1960,8 +1961,8 @@ async function formatCode() {
     formatting.value = false;
   }
 }
-async function importProject() {
-  const result = await api.importProject();
+async function importProject(source: 'file' | 'folder') {
+  const result = await api.importProject(source);
   if (!result) return;
   if (result.updatedProblems) {
     const problem = result.updatedProblems.find(
@@ -1990,7 +1991,13 @@ async function importProject() {
 }
 async function chooseImport(value: string) {
   await fileAction(
-    value === 'source' ? importSourceFile : value === 'project' ? importProject : importIO,
+    value === 'source'
+      ? importSourceFile
+      : value === 'project'
+        ? () => importProject('file')
+        : value === 'folder'
+          ? () => importProject('folder')
+          : importIO,
   );
 }
 async function chooseExport(value: string) {
@@ -2990,7 +2997,8 @@ async function foldRight(collapsed: boolean) {
               :items="[
                 { label: t('Import Source'), value: 'source' },
                 { label: t('Import Test Cases'), value: 'io' },
-                { label: t('Import Experiment'), value: 'project' },
+                { label: t('Import Experiment…'), value: 'project' },
+                { label: t('Import Experiment Folder…'), value: 'folder' },
               ]"
               :disabled="blocked"
               @select="action(() => chooseImport($event))"

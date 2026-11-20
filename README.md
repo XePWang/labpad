@@ -8,6 +8,8 @@ LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项
 
 ## 文档与快速开始
 
+开发分支加入了 rc.2 的题集 Debug / Release、断点调试和实验文件夹导入。参阅 rc.2 的[学生指南补充](doc/1.0.0-rc.2/student-guide.md)、[助教指南补充](doc/1.0.0-rc.2/ta-guide.md)和[技术说明补充](doc/1.0.0-rc.2/maintainer-guide.md)。下方安装步骤和截图对应 rc.1 发布包。
+
 | 使用者 | 文档 |
 | --- | --- |
 | 同学 | [学生指南](doc/1.0.0-rc.1/student-guide.md)：下载安装、编写自测、源码版本、导出上传与 FAQ |

@@ -76,6 +76,7 @@ export async function managedBuild(dir: string) {
 export async function directorySnapshot(
   root: string,
   includeFile: (name: string) => boolean = () => true,
+  ignoreEntry: (name: string) => boolean = () => false,
 ): Promise<WorkspaceSnapshot> {
   const entries: Record<string, Buffer> = {};
   let bytes = 0;
@@ -83,6 +84,7 @@ export async function directorySnapshot(
     for (const e of await readdir(dir, { withFileTypes: true })) {
       const name = prefix + e.name;
       if (
+        ignoreEntry(e.name) ||
         e.name === '.git' ||
         e.name === '.work' ||
         e.name === '.labpad' ||

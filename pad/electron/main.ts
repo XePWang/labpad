@@ -74,7 +74,7 @@ import {
   exportIO,
   exportProjectTests,
 } from '../shared/test-import';
-import { readProjectArchive } from '../core/project-archive';
+import { readProjectArchive, readProjectFolder } from '../core/project-archive';
 import { problemSetCompiler } from '../core/build/profile';
 import type { BuildProfile } from '../shared/types';
 import type { DebugPreferences } from '../shared/debug';
@@ -2214,21 +2214,49 @@ async function initialize() {
       currentDocument.problem = imported.problem;
     return imported.problem;
   });
-  handle('project:import', async () => {
+  handle('project:import', async (source: 'file' | 'folder' = 'file') => {
     requireIdle();
     await saves;
-    const selected = await dialog.showOpenDialog(win, {
-      title: localize('Import Experiment'),
-      properties: ['openFile'],
-      filters: [{ name: localize('Experiment JSON'), extensions: ['json', 'zip'] }],
-    });
-    if (selected.canceled) return null;
-    const value = (
-        path.extname(selected.filePaths[0]).toLowerCase() === '.zip'
-          ? await readProjectArchive(selected.filePaths[0])
-          : await readJSON(selected.filePaths[0])
-      ) as any,
-      target = (await storage.projects()).find((p) => p.labId === value?.labId),
+    const folder = source === 'folder';
+    const selected = await dialog.showOpenDialog(
+      win,
+      folder
+        ? { title: localize('Import Experiment Folder'), properties: ['openDirectory'] }
+        : {
+            title: localize('Import Experiment'),
+            properties: ['openFile'],
+            filters: [
+              { name: localize('All Experiment Files'), extensions: ['zip', 'json'] },
+              { name: localize('ZIP Archives'), extensions: ['zip'] },
+              { name: localize('JSON Experiment Files'), extensions: ['json'] },
+            ],
+          },
+    );
+    const file = selected.filePaths[0];
+    if (selected.canceled || !file) return null;
+    let value: any;
+    try {
+      value = folder
+        ? await readProjectFolder(file)
+        : path.extname(file).toLowerCase() === '.zip'
+          ? await readProjectArchive(file)
+          : await readJSON(file);
+      if (folder) {
+        if (value.mode === 'project') parseWorkspacePackage(value);
+        else parseLabPackage(value);
+      }
+    } catch (error) {
+      if (!folder) throw error;
+      await messageBox({
+        type: 'error',
+        title: localize('Import Experiment Folder'),
+        message: localize('Could not import this experiment folder.'),
+        detail: error instanceof Error ? error.message : String(error),
+        buttons: [localize('OK')],
+      });
+      return null;
+    }
+    const target = (await storage.projects()).find((p) => p.labId === value?.labId),
       testsOnly = value?.kind === 'labpad.projectTests';
     let update = testsOnly;
     if (target && !testsOnly) {
