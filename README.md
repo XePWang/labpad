@@ -2,13 +2,15 @@
 
 LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项目、编写代码、比较测试输出，再导出源码或实验 ZIP。助教可用同一判题内核在命令行批量测试提交文件。
 
-当前版本：**1.0.0-rc.1（发布候选）**。[下载](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.1) · [全部版本](https://github.com/XePWang/labpad/releases)
+已发布 **v1.0.0-rc.1**。[下载](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.1) · [全部版本](https://github.com/XePWang/labpad/releases)
+
+**v1.0.0-rc.2** 候选新增题集的 Debug / Release 和断点调试、实验文件夹导入，并修正已有语句的补全行为。[更新说明](doc/1.0.0-rc.2/release-notes.md) · [平台验证](doc/1.0.0-rc.2/verification.md)
 
 支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig、离线格式化器和完整调试器，完整解压后启动即可。macOS 的签名及实机核验范围见[版本验证记录](doc/1.0.0-rc.1/verification.md)。
 
 ## 文档与快速开始
 
-开发分支加入了 rc.2 的题集 Debug / Release、断点调试和实验文件夹导入。参阅 rc.2 的[学生指南补充](doc/1.0.0-rc.2/student-guide.md)、[助教指南补充](doc/1.0.0-rc.2/ta-guide.md)和[技术说明补充](doc/1.0.0-rc.2/maintainer-guide.md)。下方安装步骤和截图对应 rc.1 发布包。
+下方安装步骤和截图对应 rc.1 发布包。rc.2 的操作变化见[学生指南补充](doc/1.0.0-rc.2/student-guide.md)、[助教指南补充](doc/1.0.0-rc.2/ta-guide.md)与[技术说明补充](doc/1.0.0-rc.2/maintainer-guide.md)。
 
 | 使用者 | 文档 |
 | --- | --- |
@@ -18,7 +20,7 @@ LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项
 
 1. 下载对应桌面包，完整解压并启动 LabPad。
 2. 在“设置”中填写班号、姓名、学号。
-3. “导入 → 导入实验项目”，选择课程 JSON。
+3. 从「导入 → 导入实验项目」选择课程 ZIP 或 JSON。在 rc.2 中，可选择「导入实验文件夹…」导入已解压的实验。
 4. 题集选择题号，多文件项目使用文件树；编写并保存后按 F9 或 Ctrl+Enter 编译，再点击“运行全部测试点”自测。没有测试点时，编译成功自动进入终端。
 5. “导出 → 导出实验项目”，选择提交内容及是否附带配置，检查提醒，生成 ZIP 后上传课程平台。
 
@@ -189,11 +191,18 @@ labpad grade lab2 --student 7355608
 Linux 批测默认使用 Bubblewrap；安装与环境预检、CSV 字段和可信夹具的直接运行方式见助教指南。
 
 
-项目的右区提供断点调试，题集保留单文件编译；两种模式都有文件区、基础补全和命令终端。Tab 接受补全候选，Enter 仅在方向键明确选中后接受。调试允许编辑源码，重启前确认保存；参与会话的文件不能移动、重命名或删除。
+项目的右区提供断点调试。rc.2 也可调试题集中的当前源码版本，题号旁可选择 Debug（默认）或 Release。两种模式都有文件区、基础补全和命令终端。Tab 接受单词候选，Enter 在方向键选中候选后接受。rc.2 的语句模板需用方向键选中或点击，编辑已有语句时保留右侧表达式。调试中可编辑源码，重启前确认保存。参与会话的文件需在调试结束后移动、重命名或删除。
 
 终端 lpmake 只查当前目录的 LPMake.txt，build / run / clean 可简写 b / r / c；命令构建写当前目录 build/，GUI 编译仍用临时目录。测试点首行的运行图标按勾选范围执行。完整操作见学生指南。
 
 ## 版本更新
+
+### 1.0.0-rc.2
+
+- **新增** 题集构型和断点调试，支持导入解压后的实验文件夹。
+- **修改** 单词补全保留右侧代码，语句模板排在关键字之后。实验项目选择器提供全部实验项目、ZIP、JSON 三种筛选。
+
+Windows x64 与 Linux x64 已通过补全、题集构型调试、实验文件夹导入及 Lab 1–4 回归。macOS arm64 实机待验。[rc.2 更新说明](doc/1.0.0-rc.2/release-notes.md) · [平台验证](doc/1.0.0-rc.2/verification.md)
 
 ### 1.0.0-rc.1
 
