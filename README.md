@@ -365,10 +365,9 @@ npm run native
 npm run tools -- linux-x64
 npm run build
 npm test
-xvfb-run -a npm run test:ui
 npm run cli -- --help
 ~~~
 
-源码在 pad，构建与工具链在 .work。开发使用 Node.js 24；build 生成桌面、worker 与 CLI。工具链目标可选 linux-x64、win-x64、mac-arm64；设置 LABPAD_TEST_EXECUTABLE 可以测试实际发布包。构建、打包、运行时目录及文档维护约定见维护者说明。
+源码在 pad，构建与工具链在 .work。开发使用 Node.js 24；build 生成桌面、worker 与 CLI。工具链目标可选 linux-x64、win-x64、mac-arm64；npm test 运行单测示例。完整回归由维护者在本地 test 目录运行，使用实际成品归档复验发布。构建、打包、运行时目录及文档维护约定见维护者说明。
 
 项目采用 MIT；各依赖按其许可证分发。[第三方声明](pad/THIRD_PARTY_NOTICES.md)

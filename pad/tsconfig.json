@@ -26,7 +26,7 @@
     "electron/**/*.ts",
     "core/**/*.ts",
     "shared/**/*.ts",
-    "tests/**/*.ts",
+    "test/**/*.ts",
     "*.ts",
     "cli/**/*.ts"
   ]

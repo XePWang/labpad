@@ -150,5 +150,7 @@ vite.config.ts.timestamp-*
 
 # AI workspace
 .work/
+# Maintainer-local regression suite and fixtures
+/test/
 # Local application data
 labpad/

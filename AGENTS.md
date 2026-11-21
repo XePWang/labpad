@@ -1,6 +1,6 @@
 # LabPad development
 
-Develop and run Git operations in this repository. Keep generated tools, builds and test evidence under .work.
+Develop and run Git operations in this repository. Keep generated tools and builds under .work. Maintain the private regression suite, fixtures and retained verification evidence under the ignored test directory. Git tracks the standalone unit test example in pad/test.
 
 Use the existing TypeScript core for both desktop and CLI. Preserve complete source versions and select a winner per student, lab and problem; never merge passing cases across different source versions.
 
