@@ -2,11 +2,11 @@
 
 LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项目、编写代码、比较测试输出，再导出源码或实验 ZIP。助教可用同一判题内核在命令行批量测试提交文件。
 
-已发布 **v1.0.0-rc.1**。[下载](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.1) · [全部版本](https://github.com/XePWang/labpad/releases)
+**当前候选 v1.0.0-rc.2** 已完成三平台桌面包和 Linux CLI 归档，四份归档均通过 SHA-256 校验。[更新说明](doc/1.0.0-rc.2/release-notes.md) · [归档与平台验证](doc/1.0.0-rc.2/verification.md)
 
-**v1.0.0-rc.2** 候选新增题集的 Debug / Release 和断点调试、实验文件夹导入，并修正已有语句的补全行为。[更新说明](doc/1.0.0-rc.2/release-notes.md) · [平台验证](doc/1.0.0-rc.2/verification.md)
+GitHub 已发布 **v1.0.0-rc.1**。[下载 rc.1](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.1) · [全部版本](https://github.com/XePWang/labpad/releases)
 
-支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig、离线格式化器和完整调试器，完整解压后启动即可。macOS 的签名及实机核验范围见[版本验证记录](doc/1.0.0-rc.1/verification.md)。
+支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig、离线格式化器和完整调试器，完整解压后启动即可。rc.2 的 macOS arm64 归档已完成签名、代码页哈希与资源封签核验，实机待验。[macOS 核验记录](doc/1.0.0-rc.2/verification.md#macos-arm64-归档核验)
 
 ## 文档与快速开始
 
