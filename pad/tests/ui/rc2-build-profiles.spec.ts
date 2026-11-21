@@ -4,11 +4,25 @@ import path from 'node:path';
 import { qualityFixture } from './quality-fixture';
 import type { Compilation } from '../../shared/types';
 
-for (const language of ['c', 'cpp'] as const) {
+type Toolchain = { name: string; kind: 'gcc' | 'clang'; cPath: string; cppPath: string };
+const configured: Toolchain[] = JSON.parse(process.env.LABPAD_TEST_TOOLCHAINS ?? '[]');
+if (!configured.length && process.env.LABPAD_RC2_GCC && process.env.LABPAD_RC2_GXX)
+  configured.push({
+    name: 'GCC',
+    kind: 'gcc',
+    cPath: process.env.LABPAD_RC2_GCC,
+    cppPath: process.env.LABPAD_RC2_GXX,
+  });
+const scenarios = (configured.length ? configured : [undefined]).flatMap((toolchain) =>
+  (['c', 'cpp'] as const).map((language) => ({ toolchain, language })),
+);
+
+for (const { language, toolchain } of scenarios) {
   test(
     'topic ' +
       language +
-      ' uses the selected build for compilation and keeps debug sessions isolated',
+      ' uses the selected build for compilation and keeps debug sessions isolated' +
+      (toolchain ? ' with ' + toolchain.name : ''),
     async () => {
       test.setTimeout(240000);
       const { app, page, root, close } = await qualityFixture();
@@ -62,16 +76,12 @@ for (const language of ['c', 'cpp'] as const) {
             };
           }) as typeof dialog.showMessageBox;
         }, filename);
-        if (process.env.LABPAD_RC2_GCC && process.env.LABPAD_RC2_GXX) {
-          await page.evaluate(
-            async ([cPath, cppPath]) => {
-              const { config, dataRoot } = await window.labpad.bootstrap();
-              config.compiler = { ...config.compiler, mode: 'custom', kind: 'gcc', cPath, cppPath };
-              await window.labpad.saveConfig(config, dataRoot);
-            },
-            [process.env.LABPAD_RC2_GCC, process.env.LABPAD_RC2_GXX],
-          );
-        }
+        if (toolchain)
+          await page.evaluate(async ({ kind, cPath, cppPath }) => {
+            const { config, dataRoot } = await window.labpad.bootstrap();
+            config.compiler = { ...config.compiler, mode: 'custom', kind, cPath, cppPath };
+            await window.labpad.saveConfig(config, dataRoot);
+          }, toolchain);
         await page.evaluate(() => {
           (window as any).__buildResults = [];
           window.labpad.onJudge((event) => {
@@ -81,6 +91,8 @@ for (const language of ['c', 'cpp'] as const) {
         });
         const lastCompilation = () =>
           page.evaluate(() => (window as any).__buildResults.at(-1) as Compilation | undefined);
+        const compileCount = () =>
+          page.evaluate(() => (window as any).__buildResults.length as number);
         const lastCommand = async () => (await lastCompilation())!.command;
         const optimization = (args: string[]) => args.filter((arg) => arg.startsWith('-O'));
         const chooseProfile = async (value: 'Debug' | 'Release') => {
@@ -91,8 +103,9 @@ for (const language of ['c', 'cpp'] as const) {
           await expect(picker).toHaveText(value);
         };
         const clickCompile = async () => {
+          const before = await compileCount();
           await compile.click();
-          await expect.poll(lastCompilation, { timeout: 90000 }).toBeDefined();
+          await expect.poll(compileCount, { timeout: 90000 }).toBeGreaterThan(before);
           const result = (await lastCompilation())!;
           expect(result.status, JSON.stringify(result)).toBe('success');
           await expect(phase).toHaveText('编译成功', { timeout: 90000 });
@@ -112,6 +125,10 @@ for (const language of ['c', 'cpp'] as const) {
         await chooseProfile('Release');
         await clickCompile();
         const release = await lastCommand();
+        if (toolchain)
+          expect(path.normalize(release[0])).toBe(
+            path.normalize(language === 'c' ? toolchain.cPath : toolchain.cppPath),
+          );
         expect(optimization(release)).toEqual(['-O2']);
         await runTests.click();
         await expect(page.locator('.verdict.ac')).toHaveCount(1);
@@ -201,6 +218,14 @@ for (const language of ['c', 'cpp'] as const) {
           await expect(page.locator('.debug-source-changed')).toHaveCount(0);
           await page.getByRole('button', { name: '停止调试', exact: true }).click();
         }
+        await expect(picker).toBeEnabled();
+        await page.getByRole('tab', { name: '测试点', exact: true }).click();
+        if ((await picker.innerText()) !== 'Debug') await chooseProfile('Debug');
+        await clickCompile();
+        expect(optimization(await lastCommand())).toEqual(['-O0']);
+        await runTests.click();
+        await expect(page.locator('.verdict.ac')).toHaveCount(1);
+        await expect(runTests).toBeEnabled();
       } finally {
         await close();
       }
