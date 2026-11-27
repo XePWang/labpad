@@ -29,10 +29,19 @@ Windows 核心跳过项涉及 POSIX 目录权限、POSIX 可执行夹具、Bubbl
 
 ## 归档与第三方许可
 
-解包核对了两端桌面 `app.asar` 和 CLI 的 `labpad.cjs`。RE2JS 2.10.0 随三个产物交付，`THIRD_PARTY_LICENSES.txt` 包含包内完整 MIT 许可文本。来源与版权信息见 [第三方声明](../../pad/THIRD_PARTY_NOTICES.md)。
+解包核对了三端桌面 `app.asar` 和 CLI 的 `labpad.cjs`。RE2JS 2.10.0 随四份归档交付，`THIRD_PARTY_LICENSES.txt` 包含包内完整 MIT 许可文本。来源与版权信息见 [第三方声明](../../pad/THIRD_PARTY_NOTICES.md)。
 
 | 归档文件 | SHA-256 |
 | --- | --- |
 | `LabPad-1.0.0-rc.3-win-x64.zip` | `c42df3f0c2b0ce12c0122ff7c3a13bfcf6d2d9a7b906f285c77e45bbebca5a49` |
 | `LabPad-1.0.0-rc.3-linux-x64.tar.gz` | `dae0a1b75406bd2c74a7caafd1bb081e3e6e780e82fe8199260259d245710ecc` |
 | `LabPad-1.0.0-rc.3-cli-linux-x64.tar.gz` | `2d1550229c452c14dda2fd54af868d7750cab191170b34da0a9bc82cacb2ea8d` |
+| `LabPad-1.0.0-rc.3-mac-arm64.zip` | `46f6b6b0c6c7a40f6d2696760e464a6001d72e3aef11997d3816f1e9573a5439` |
+
+## macOS arm64 归档核验
+
+补包于 2026 年 11 月 27 日从 `v1.0.0-rc.3`（`094af67`）在 Linux 交叉构建，使用 rcodesign 0.29.0 完成 ad-hoc 签名。macOS 包尚未公证，实机运行待验。
+
+- 解压后核对应用版本与标识、ZIP CRC、14 个符号链接和执行权限。终端的 `spawn-helper` 已补齐执行权限，归档内采用 Apple Silicon 的 node-pty 本机模块。
+- 27 个 Mach-O 均为 arm64。重算 136,393 个代码页哈希，核对 9 个 Bundle 封签、4,704 个资源文件摘要和 10 个嵌套代码 CDHash。主程序 CDHash 为 `26654ba543958341af82fb1ad979d24098451af8`。
+- 渲染资源与已验收 Linux 包逐字节一致。主进程、预加载脚本和格式化 Worker 的差异仅为构建工具写入的模块路径标签。

@@ -2,11 +2,11 @@
 
 LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项目、编写代码、比较测试输出，再导出源码或实验 ZIP。助教可用同一判题内核在命令行批量测试提交文件。
 
-**v1.0.0-rc.3（预发行）** 新增计时报告等开放格式输出的自动机判题。提供 Windows x64、Linux x64 桌面包与 Linux x64 CLI。[下载 rc.3](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.3) · [更新说明](doc/1.0.0-rc.3/release-notes.md) · [验证记录](doc/1.0.0-rc.3/verification.md) · [全部版本](https://github.com/XePWang/labpad/releases)
+**v1.0.0-rc.3（预发行）** 新增计时报告等开放格式输出的自动机判题。提供 Windows x64、Linux x64 和 macOS arm64 桌面包及 Linux x64 CLI。[下载 rc.3](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.3) · [更新说明](doc/1.0.0-rc.3/release-notes.md) · [验证记录](doc/1.0.0-rc.3/verification.md) · [全部版本](https://github.com/XePWang/labpad/releases)
 
 [rc.3 学生指南](doc/1.0.0-rc.3/student-guide.md) · [助教指南](doc/1.0.0-rc.3/ta-guide.md) · [规则与技术说明](doc/1.0.0-rc.3/maintainer-guide.md)
 
-桌面包自带 Zig、离线格式化器和完整调试器，完整解压后启动即可。macOS arm64 可下载 rc.2 归档，签名、代码页哈希与资源封签已核验，实机待验。[下载 rc.2](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.2) · [macOS 核验记录](doc/1.0.0-rc.2/verification.md#macos-arm64-归档核验)
+桌面包自带 Zig、离线格式化器和完整调试器，请完整解压后运行。macOS arm64 归档采用 ad-hoc 签名，实机运行待验。[macOS 核验记录](doc/1.0.0-rc.3/verification.md#macos-arm64-归档核验)
 
 ## 文档与快速开始
 

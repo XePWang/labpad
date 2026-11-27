@@ -13,6 +13,6 @@
 - 修复仅保存格式样例时触发源码格式化、导致已有 AC 失效的问题。
 - 超长输出使用限长预览，`cases.csv` 的诊断限长并转义引号与公式。归档内附 RE2JS 的完整 MIT 许可。
 
-本次提供 Windows x64、Linux x64 桌面包及 Linux x64 CLI，均已完成全量回归与归档校验。macOS arm64 待实机验证，本次无归档。
+Windows x64、Linux x64 桌面包及 Linux x64 CLI 已完成全量回归与归档校验。macOS arm64（Apple Silicon）包在 Linux 上交叉构建，已核验架构、ad-hoc 签名、代码页哈希和资源封签。macOS 包尚未公证，实机运行待验。
 
 [学生指南](student-guide.md) · [助教指南](ta-guide.md) · [规则与技术说明](maintainer-guide.md) · [验证记录](verification.md)
