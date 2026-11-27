@@ -57,7 +57,11 @@ export function fingerprint(draft: Draft, compiler: CompilerConfig, identity: st
         p.timeLimitMs,
         p.outputLimitBytes,
         p.comparison,
-        p.testCases.map((t) => [t.id, t.input, t.expectedOutput, t.comparison ?? p.comparison]),
+        p.testCases.map((test) => {
+          const rule = test.comparison ?? p.comparison;
+          const expected = rule.type === 'automaton' ? null : test.expectedOutput;
+          return [test.id, test.input, expected, rule];
+        }),
         options,
         identity,
       ]),

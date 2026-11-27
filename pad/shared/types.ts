@@ -1,9 +1,11 @@
 import type { Typography } from './typography';
 import type { WorkspaceSnapshot, WorkspaceFile, ProjectBuildOptions } from './workspace';
+import type { AutomatonComparison, AutomatonFailure } from './automaton';
 export type Language = 'c' | 'cpp';
 export type BuildProfile = 'debug' | 'release';
 export type Verdict = 'AC' | 'WA' | 'CE' | 'RE' | 'TLE' | 'OLE';
 export type Comparison =
+  | AutomatonComparison
   | { type: 'strictText'; ignoreTrailingSpaces?: boolean; ignoreFinalNewlines?: boolean }
   | { type: 'wcmp' }
   | { type: 'floatTokens'; absoluteTolerance?: number; relativeTolerance?: number };
@@ -136,6 +138,7 @@ export interface CaseResult {
   exitCode: number | null;
   signal: string | null;
   message: string;
+  automatonFailure?: AutomatonFailure;
 }
 export interface JudgeResult {
   cleanupWarnings?: string[];

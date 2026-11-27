@@ -1,12 +1,14 @@
 import { UIError, t as localize } from './i18n';
+import { compileAutomaton } from './automaton';
 import type { Comparison } from './types';
 export function validateComparison(
   value: unknown,
   label = localize('Comparison Rules'),
 ): Comparison {
   const rule = value as Comparison;
-  if (!rule || !['wcmp', 'floatTokens', 'strictText'].includes(rule.type))
-    throw new UIError('{0}: type must be wcmp, floatTokens, or strictText', label);
+  if (!rule || !['wcmp', 'floatTokens', 'strictText', 'automaton'].includes(rule.type))
+    throw new UIError('{0}: type must be wcmp, floatTokens, strictText, or automaton', label);
+  if (rule.type === 'automaton') compileAutomaton(rule, label);
   if (rule.type === 'floatTokens') {
     const values = [rule.absoluteTolerance, rule.relativeTolerance];
     if (

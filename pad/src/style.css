@@ -515,6 +515,22 @@ p {
   padding: 0 12px 12px;
   overflow-wrap: anywhere;
 }
+.checker-trace {
+  margin: 0 12px 12px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.checker-trace summary {
+  cursor: pointer;
+}
+.checker-trace ol,
+.checker-trace p {
+  margin: 4px 0 0;
+}
+.checker-trace ol {
+  list-style: none;
+  padding: 0;
+}
 .added {
   background: #1c5740;
   color: #a7f2c7;

@@ -7,6 +7,7 @@ import { compileDraft, copyResources } from './build';
 import { Compiler } from './compiler';
 import { runProcess } from './process';
 import { strictText } from '../shared/comparison';
+import { checkAutomaton, compileAutomaton, type AutomatonComparison } from '../shared/automaton';
 import { validateDraft } from '../shared/validate';
 import type { Draft, CompilerConfig, JudgeEvent, JudgeResult, CaseResult } from '../shared/types';
 export async function judge(
@@ -48,6 +49,7 @@ export async function judge(
     }
     if (prepared.compilation.status === 'CE') return result;
     runDirectory = await mkdtemp(path.join(prepared.directory, 'tests-'));
+    const automata = new Map<AutomatonComparison, ReturnType<typeof compileAutomaton>>();
     for (const [index, test] of draft.problem.testCases.entries()) {
       if (ids && !ids.includes(test.id)) continue;
       if (signal?.aborted) {
@@ -89,7 +91,14 @@ export async function judge(
       else if (r.code !== 0 || r.signal) c.verdict = 'RE';
       else {
         const comparison = test.comparison ?? draft.problem.comparison;
-        if (comparison.type === 'strictText') {
+        if (comparison.type === 'automaton') {
+          const plan = automata.get(comparison) ?? compileAutomaton(comparison);
+          automata.set(comparison, plan);
+          const checked = checkAutomaton(c.stdout, plan);
+          c.verdict = checked.accepted ? 'AC' : 'WA';
+          c.message = checked.message;
+          if (!checked.accepted) c.automatonFailure = checked.failure;
+        } else if (comparison.type === 'strictText') {
           const checked = strictText(c.stdout, test.expectedOutput, comparison);
           c.verdict = checked.accepted ? 'AC' : 'WA';
           c.message = checked.message;

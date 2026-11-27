@@ -1,6 +1,6 @@
 {
   "name": "labpad",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "description": "C 语言实验自测与源码导出工具",
   "author": "LabPad contributors",
   "license": "MIT",
@@ -46,6 +46,7 @@
     "node-pty": "1.1.0",
     "picomatch": "4.0.7",
     "proper-lockfile": "4.1.2",
+    "re2js": "2.10.0",
     "reka-ui": "2.11.0",
     "splitpanes": "4.1.2",
     "string-width": "4.2.3",

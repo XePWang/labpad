@@ -64,6 +64,7 @@ import type {
   LayoutConfig,
   LoadedDraft,
   SaveResult,
+  TestCase,
   TestState,
 } from '../shared/types';
 const api = window.labpad,
@@ -72,6 +73,9 @@ const draft = ref<Draft>(),
   config = ref<Config>(),
   settings = ref<Config>(),
   projects = ref<Project[]>([]);
+function isFormatExample(test: TestCase) {
+  return (test.comparison ?? draft.value?.problem.comparison)?.type === 'automaton';
+}
 const fileScope = ref('');
 const dataRoot = ref(''),
   settingsRoot = ref(''),
@@ -3424,12 +3428,13 @@ async function foldRight(collapsed: boolean) {
                           spellcheck="false"
                         ></textarea></label
                       ><label
-                        >{{ t('Expected Output') }}<span>expected</span
+                        >{{ isFormatExample(test) ? t('Format Example') : t('Expected Output') }}
+                        <span>{{ isFormatExample(test) ? 'sample' : 'expected' }}</span
                         ><textarea
                           v-model="test.expectedOutput"
                           :disabled="blocked"
-                          :aria-label="t('Expected Output {0}', test.id)"
-                          :placeholder="t('Enter the complete expected output')"
+                          :aria-label="t(isFormatExample(test) ? 'Format Example {0}' : 'Expected Output {0}', test.id)"
+                          :placeholder="t(isFormatExample(test) ? 'Optional example of valid output' : 'Enter the complete expected output')"
                           spellcheck="false"
                         ></textarea>
                       </label>
@@ -3437,14 +3442,14 @@ async function foldRight(collapsed: boolean) {
                     <div class="actual-heading">
                       <span>{{ t('Actual Output') }}</span
                       ><button
-                        v-if="results[test.id]"
+                        v-if="results[test.id] && !isFormatExample(test)"
                         @click="diffOpen[test.id] = !diffOpen[test.id]"
                       >
                         {{ diffOpen[test.id] ? t('Show Original') : t('Show Diff') }}
                       </button>
                     </div>
                     <OutputDiff
-                      v-if="diffOpen[test.id] && results[test.id]"
+                      v-if="diffOpen[test.id] && results[test.id] && !isFormatExample(test)"
                       :expected="test.expectedOutput"
                       :actual="results[test.id].stdout"
                     />
@@ -3456,6 +3461,17 @@ async function foldRight(collapsed: boolean) {
                     <pre v-if="results[test.id]?.message" class="checker-message">{{
                       results[test.id].message
                     }}</pre>
+                    <details v-if="results[test.id]?.automatonFailure" class="checker-trace" open>
+                      <summary>{{ t('Execution Trace') }}</summary>
+                      <p v-if="!results[test.id].automatonFailure?.trace.length">
+                        {{ t('No lines matched before this failure') }}
+                      </p>
+                      <ol v-else>
+                        <li v-for="step in results[test.id].automatonFailure?.trace" :key="step.line">
+                          {{ t('Line {0} · {1} → {2}', step.line, step.state, step.nextState) }}
+                        </li>
+                      </ol>
+                    </details>
                   </article>
                 </div>
               </Pane>

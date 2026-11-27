@@ -603,7 +603,14 @@ export async function runGrade(
       workspace?.files.find((f) => f.path === 'LPMake.txt')?.content,
       workspace?.build,
       value.allowStudentBuild ?? false,
-      problems,
+      problems.map((problem) => ({
+        ...problem,
+        testCases: problem.testCases.map((test) =>
+          (test.comparison ?? problem.comparison).type === 'automaton'
+            ? { ...test, expectedOutput: '' }
+            : test,
+        ),
+      })),
       value.weights,
       roster,
       isolation,
