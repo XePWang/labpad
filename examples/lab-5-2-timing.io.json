@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "kind": "labpad.testCases",
+  "timeLimitMs": 120000,
+  "testCases": [
+    {
+      "id": "timing-format",
+      "input": "",
+      "expectedOutput": "Data size: 50000\nselectionSort uses 0.250 seconds!\nbubbleSort uses 1.125 seconds!\ninsertSort uses 0.031 seconds!\nquickSort uses 0.003 seconds!\n",
+      "comparison": {
+        "type": "automaton",
+        "ignoreTrailingSpaces": true,
+        "template": {
+          "lines": [
+            "Data size: {{positiveInteger}}",
+            "selectionSort uses {{seconds3}} seconds!",
+            "bubbleSort uses {{seconds3}} seconds!",
+            "insertSort uses {{seconds3}} seconds!",
+            "quickSort uses {{seconds3}} seconds!"
+          ]
+        }
+      }
+    }
+  ]
+}

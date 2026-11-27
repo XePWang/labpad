@@ -4,6 +4,8 @@ LabPad 是面向 C/C++ 程序设计实验的本地自测工具：导入课程项
 
 **v1.0.0-rc.2（预发行）** 提供三平台桌面包与 Linux CLI，四份归档均通过 SHA-256 校验。[下载 rc.2](https://github.com/XePWang/labpad/releases/tag/v1.0.0-rc.2) · [更新说明](doc/1.0.0-rc.2/release-notes.md) · [归档与平台验证](doc/1.0.0-rc.2/verification.md) · [全部版本](https://github.com/XePWang/labpad/releases)
 
+**v1.0.0-rc.3 开发版** 支持计时报告等开放格式输出的自动机判题。[学生指南](doc/1.0.0-rc.3/student-guide.md) · [助教指南](doc/1.0.0-rc.3/ta-guide.md) · [规则与技术说明](doc/1.0.0-rc.3/maintainer-guide.md) · [验证记录](doc/1.0.0-rc.3/verification.md)
+
 支持 Windows x64、Linux x64、macOS arm64。桌面包自带 Zig、离线格式化器和完整调试器，完整解压后启动即可。rc.2 的 macOS arm64 归档已完成签名、代码页哈希与资源封签核验，实机待验。[macOS 核验记录](doc/1.0.0-rc.2/verification.md#macos-arm64-归档核验)
 
 ## 文档与快速开始
@@ -131,6 +133,7 @@ add_files("./*.c", "./*.cpp")
 - wcmp：按空白分隔 token 比较，保留提示语、标点及数值字面量，3.0 与 3.00 不同。
 - floatTokens：数值满足绝对误差或相对误差任一条件即通过，其他 token 精确匹配。
 - strictText：比较文本、缩进和换行，统一 CRLF/LF；默认保留行尾空白及末尾换行。
+- automaton（rc.3）：用逐行模板或状态表检查完整 stdout。模板可组合预设字段与正则。测试点的 `expectedOutput` 显示为「格式样例」，失败显示行号与执行轨迹。[写法与限额](doc/1.0.0-rc.3/maintainer-guide.md)
 
 整题 comparison 提供默认值，每个测试点可以完整覆盖。例如：
 
@@ -193,6 +196,13 @@ labpad grade lab2 --student 7355608
 Linux 批测默认使用 Bubblewrap；安装与环境预检、CSV 字段和可信夹具的直接运行方式见助教指南。
 
 ## 版本更新
+
+### 1.0.0-rc.3
+
+2026-11-27
+
+- 新增自动机比较规则与失败轨迹，桌面与 CLI 共用内核。
+- 新增 Lab 5 计时格式示例，兼容 `heapSort` 和 `heapsort`。[更新说明](doc/1.0.0-rc.3/release-notes.md)
 
 ### 1.0.0-rc.2
 
