@@ -6,6 +6,7 @@ import { readFile, writeFile, mkdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { stringify } from 'csv-stringify/sync';
+import { expectedOutputForJudgment } from '../shared/judgment-rules';
 import { parse } from 'csv-parse/sync';
 import lockfile from 'proper-lockfile';
 import writeFileAtomic from '../core/atomic-file';
@@ -605,11 +606,10 @@ export async function runGrade(
       value.allowStudentBuild ?? false,
       problems.map((problem) => ({
         ...problem,
-        testCases: problem.testCases.map((test) =>
-          (test.comparison ?? problem.comparison).type === 'automaton'
-            ? { ...test, expectedOutput: '' }
-            : test,
-        ),
+        testCases: problem.testCases.map((test) => {
+          const expectedOutput = expectedOutputForJudgment(test, problem.comparison);
+          return expectedOutput === null ? { ...test, expectedOutput: '' } : test;
+        }),
       })),
       value.weights,
       roster,

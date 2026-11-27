@@ -245,8 +245,6 @@ function compileMachine(value: unknown, label: string, ignoreTrailingSpaces: boo
     edgeCount += edges.length;
     if (edgeCount > limits.transitions)
       invalid(label, t('Use up to {0} transitions per machine', limits.transitions));
-    if (accept.has(name) && edges.length)
-      invalid(stateLabel, t('An accepting state must have no outgoing transitions'));
     states.set(
       name,
       edges.map((edge: unknown, index: number) => {
@@ -323,7 +321,9 @@ export function checkAutomaton(stdout: string, plan: Automaton) {
     const preview = () =>
       stdout.slice(offset, Math.min(end, offset + limits.description)) +
       (end - offset > limits.description ? '…' : '');
-    if (plan.accept.has(state)) return fail('extra', t('end of file'), preview());
+    const edges = plan.states.get(state)!;
+    if (!edges.length && plan.accept.has(state))
+      return fail('extra', t('end of file'), preview());
     if (line > limits.steps)
       return fail('limit', t('at most {0} output lines', limits.steps), preview());
     if (end - offset > limits.line)
@@ -331,7 +331,6 @@ export function checkAutomaton(stdout: string, plan: Automaton) {
 
     const raw = stdout.slice(offset, end);
     const text = plan.ignoreTrailingSpaces ? trimTrailingSpaces(raw) : raw;
-    const edges = plan.states.get(state)!;
     let next: Transition | undefined;
     for (const edge of edges) {
       remaining -= Math.max(1, text.length) * edge.match.cost;
@@ -341,7 +340,14 @@ export function checkAutomaton(stdout: string, plan: Automaton) {
         break;
       }
     }
-    if (!next) return fail('mismatch', expected(edges), preview());
+    if (!next) {
+      const wanted = expected(edges);
+      return fail(
+        'mismatch',
+        plan.accept.has(state) ? t('end of file or {0}', wanted) : wanted,
+        preview(),
+      );
+    }
     trace.push({ line, state, nextState: next.to });
     if (trace.length > limits.trace) trace.shift();
     state = next.to;

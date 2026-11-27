@@ -49,6 +49,7 @@ import ResultHelp from './components/ResultHelp.vue';
 import ExportDialog from './components/ExportDialog.vue';
 import { formatShortcut } from '../shared/shortcut-display';
 import { operationError } from '../shared/errors';
+import { judgmentRules } from '../shared/judgment-rules';
 import { createKeybindingsHandler, parseKeybinding, matchKeybindingPress } from 'tinykeys';
 import ActionMenu from './components/ActionMenu.vue';
 import type {
@@ -75,6 +76,15 @@ const draft = ref<Draft>(),
   projects = ref<Project[]>([]);
 function isFormatExample(test: TestCase) {
   return (test.comparison ?? draft.value?.problem.comparison)?.type === 'automaton';
+}
+function actualOutput(test: TestCase) {
+  const result = results.value[test.id];
+  if (!result) return t('(no output yet)');
+  const { stdout } = result;
+  const previewLength = 4096;
+  if (isFormatExample(test) && stdout.length > previewLength)
+    return stdout.slice(0, previewLength) + '\n' + t('[Output preview truncated]');
+  return stdout || t('(empty output)');
 }
 const fileScope = ref('');
 const dataRoot = ref(''),
@@ -1514,11 +1524,28 @@ function enqueueSave(input: Draft, id: number): Promise<SaveResult> {
   return task;
 }
 watch(
+  [
+    () => draft.value?.source,
+    () => draft.value?.language,
+    () => draft.value?.documentId,
+    () => draft.value?.file,
+    () => draft.value?.auxiliary,
+    () => draft.value?.target,
+    () => draft.value?.sourceFiles,
+    () => draft.value?.workspace,
+    () => draft.value && JSON.stringify(judgmentRules(draft.value.problem)),
+  ],
+  () => {
+    if (pauseSave || !draft.value) return;
+    revision++;
+    invalidate();
+  },
+  { deep: true, flush: 'sync' },
+);
+watch(
   draft,
   () => {
     if (pauseSave || !draft.value) return;
-    compiledReady.value = false;
-    revision++;
     const tab = activeTab.value;
     if (tab) {
       tab.document = {
@@ -1535,7 +1562,6 @@ watch(
     refreshDirty();
     footerPulse.value = '';
     recordState();
-    invalidate();
     clearTimeout(saveTimer);
     if (config.value?.saveMode === 'auto' && !fileBusy.value) {
       saveTimer = setTimeout(() => void action(saveAll), 350);
@@ -1662,9 +1688,11 @@ async function saveRules() {
 async function saveNow() {
   clearTimeout(saveTimer);
   await saveTail;
-  const result = activeTab.value
-    ? await enqueueSave(snapshot(), activeTab.value.revision)
-    : undefined;
+  const tab = activeTab.value;
+  const result =
+    tab && (tab.dirty || !rulesDirty.value)
+      ? await enqueueSave(snapshot(), tab.revision)
+      : undefined;
   if (!result?.problem) await saveRules();
 }
 async function saveAll() {
@@ -1674,7 +1702,9 @@ async function saveAll() {
     throw new UIError(
       'Both the test panel and problem file have changed. Keep one set of edits before saving.',
     );
-  for (const tab of [...tabs.value].filter((item) => item.dirty || tabs.value.length === 1))
+  for (const tab of tabs.value.filter(
+    (item) => item.dirty || (tabs.value.length === 1 && !rulesDirty.value),
+  ))
     await enqueueSave(
       { ...clone(tab.document), problem: clone(draft.value!.problem) },
       tab.revision,
@@ -3453,11 +3483,7 @@ async function foldRight(collapsed: boolean) {
                       :expected="test.expectedOutput"
                       :actual="results[test.id].stdout"
                     />
-                    <pre v-else class="actual-output">{{
-                      results[test.id]
-                        ? results[test.id].stdout || t('(empty output)')
-                        : t('(no output yet)')
-                    }}</pre>
+                    <pre v-else class="actual-output">{{ actualOutput(test) }}</pre>
                     <pre v-if="results[test.id]?.message" class="checker-message">{{
                       results[test.id].message
                     }}</pre>

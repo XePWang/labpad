@@ -3,6 +3,7 @@ import { buildOptionsSignature } from './build/plan';
 import { ConfigError } from '../shared/lpmake';
 import { workspacePath, workspacePackage } from '../shared/workspace';
 import { rulesOf } from '../shared/test-import';
+import { judgmentRules } from '../shared/judgment-rules';
 import { createHash } from 'node:crypto';
 import { zipSync, strToU8 } from 'fflate';
 import { defaultSource } from '../shared/defaults';
@@ -52,16 +53,7 @@ export function fingerprint(draft: Draft, compiler: CompilerConfig, identity: st
               ),
             ]
           : draft.source.replace(/^\uFEFF/, ''),
-        p.labId,
-        p.problemId,
-        p.timeLimitMs,
-        p.outputLimitBytes,
-        p.comparison,
-        p.testCases.map((test) => {
-          const rule = test.comparison ?? p.comparison;
-          const expected = rule.type === 'automaton' ? null : test.expectedOutput;
-          return [test.id, test.input, expected, rule];
-        }),
+        ...judgmentRules(p),
         options,
         identity,
       ]),
